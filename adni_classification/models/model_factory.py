@@ -6,6 +6,7 @@ from typing import Dict, Any, Type, Optional
 import torch
 import torch.nn as nn
 import monai.networks.nets as monai_nets
+from adni_classification.models.simple_cnn import Simple3DCNN
 
 
 class BaseModel(nn.Module, ABC):
@@ -143,6 +144,7 @@ class ModelFactory:
     _models: Dict[str, Type[BaseModel]] = {
         "resnet3d": ResNet3D,
         "densenet3d": DenseNet3D,
+        "simple3dcnn": Simple3DCNN,
     }
     
     @classmethod
