@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 from wandb.sdk.wandb_run import Run as WandbRun
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
@@ -57,7 +57,7 @@ def train_epoch(
 
         # Mixed precision training
         if use_mixed_precision and scaler is not None:
-            with autocast(enabled=True, device_type='cuda'):
+            with autocast(device_type='cuda'):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 # Scale loss for gradient accumulation
@@ -139,7 +139,7 @@ def validate(
             labels = batch["label"].to(device)
 
             if use_mixed_precision:
-                with autocast(enabled=True, device_type='cuda'):
+                with autocast(device_type='cuda'):
                     outputs = model(images)
                     loss = criterion(outputs, labels)
             else:
