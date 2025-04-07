@@ -11,7 +11,7 @@ from wandb.sdk.wandb_run import Run as WandbRun
 from torch.cuda.amp import autocast, GradScaler
 
 from adni_classification.models.model_factory import ModelFactory
-from adni_classification.datasets.adni_dataset import ADNIDataset
+from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
 from adni_classification.utils.visualization import visualize_batch, visualize_predictions, plot_training_history
 from adni_classification.config.config import Config
 
@@ -36,7 +36,6 @@ def train_epoch(
         criterion: Loss function
         optimizer: Optimizer
         device: Device to train on
-        epoch: Current epoch
         wandb_run: Weights & Biases run object (optional)
         log_batch_metrics: Whether to log batch-level metrics
         gradient_accumulation_steps: Number of steps to accumulate gradients
@@ -52,8 +51,9 @@ def train_epoch(
     total = 0
     optimizer.zero_grad()
 
-    for batch_idx, (images, labels) in enumerate(train_loader):
-        images, labels = images.to(device), labels.to(device)
+    for batch_idx, batch in enumerate(train_loader):
+        images = batch["image"].to(device)
+        labels = batch["label"].to(device)
 
         # Mixed precision training
         if use_mixed_precision and scaler is not None:
@@ -134,8 +134,9 @@ def validate(
     total = 0
 
     with torch.no_grad():
-        for batch_idx, (images, labels) in enumerate(val_loader):
-            images, labels = images.to(device), labels.to(device)
+        for batch in val_loader:
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
 
             if use_mixed_precision:
                 with autocast('cuda'):
@@ -182,19 +183,29 @@ def main():
             config=config.to_dict(),
         )
 
-    # Create datasets
+    # Create datasets with transforms
+    train_transform = get_transforms(
+        mode="train",
+        resize_size=tuple(config.data.resize_size),
+        resize_mode=config.data.resize_mode
+    )
+
+    val_transform = get_transforms(
+        mode="val",
+        resize_size=tuple(config.data.resize_size),
+        resize_mode=config.data.resize_mode
+    )
+
     train_dataset = ADNIDataset(
         csv_path=config.data.train_csv_path,
         img_dir=config.data.img_dir,
-        resize_size=config.data.resize_size,
-        resize_mode=config.data.resize_mode,
+        transform=train_transform
     )
 
     val_dataset = ADNIDataset(
         csv_path=config.data.val_csv_path,
         img_dir=config.data.img_dir,
-        resize_size=config.data.resize_size,
-        resize_mode=config.data.resize_mode,
+        transform=val_transform
     )
 
     # Create data loaders
@@ -271,7 +282,7 @@ def main():
 
         # Train for one epoch
         train_loss, train_acc = train_epoch(
-            model, train_loader, criterion, optimizer, device, epoch, wandb_run,
+            model, train_loader, criterion, optimizer, device, wandb_run,
             gradient_accumulation_steps=gradient_accumulation_steps,
             scaler=scaler,
             use_mixed_precision=use_mixed_precision
@@ -281,8 +292,7 @@ def main():
 
         # Validate
         val_loss, val_acc = validate(
-            model, val_loader, criterion, device, epoch, wandb_run,
-            use_mixed_precision=use_mixed_precision
+            model, val_loader, criterion, device, use_mixed_precision=use_mixed_precision
         )
         val_losses.append(val_loss)
         val_accs.append(val_acc)
