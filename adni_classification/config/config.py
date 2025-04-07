@@ -1,6 +1,7 @@
 """Configuration management for ADNI classification."""
 
 import os
+import datetime
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union, Dict, Any
 
@@ -32,6 +33,15 @@ class ModelConfig:
 
 
 @dataclass
+class CheckpointConfig:
+    """Checkpoint configuration."""
+    save_best: bool = True
+    save_latest: bool = True
+    save_regular: bool = True
+    save_frequency: int = 1  # Save a regular checkpoint every N epochs
+
+
+@dataclass
 class TrainingConfig:
     """Training configuration."""
     batch_size: int
@@ -42,6 +52,7 @@ class TrainingConfig:
     output_dir: str
     gradient_accumulation_steps: int = 1
     mixed_precision: bool = False
+    checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
 @dataclass
@@ -68,15 +79,28 @@ class Config:
         """Create a Config object from a dictionary."""
         data_config = DataConfig(**config_dict.get("data", {}))
         model_config = ModelConfig(**config_dict.get("model", {}))
-        training_config = TrainingConfig(**config_dict.get("training", {}))
+
+        # Handle the checkpoint config if present
+        training_dict = config_dict.get("training", {})
+        checkpoint_dict = training_dict.pop("checkpoint", {}) if "checkpoint" in training_dict else {}
+        checkpoint_config = CheckpointConfig(**checkpoint_dict)
+
+        # Create training config with the checkpoint config
+        training_config = TrainingConfig(**training_dict, checkpoint=checkpoint_config)
+
         wandb_config = WandbConfig(**config_dict.get("wandb", {}))
 
-        return cls(
+        config = cls(
             data=data_config,
             model=model_config,
             training=training_config,
             wandb=wandb_config,
         )
+
+        # Post-process: Generate output directory based on run_name and timestamp
+        config._post_process()
+
+        return config
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "Config":
@@ -84,6 +108,30 @@ class Config:
         with open(yaml_path, "r") as f:
             config_dict = yaml.safe_load(f)
         return cls.from_dict(config_dict)
+
+    def _post_process(self) -> None:
+        """Post-process the configuration.
+
+        This includes:
+        - Generating a unique output directory based on run_name and timestamp
+        - If no run_name is specified, use the model name and timestamp
+        """
+        # Generate timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Generate run_name if not provided
+        if not self.wandb.run_name:
+            model_identifier = f"{self.model.name}"
+            if self.model.name == "resnet3d" and self.model.model_depth:
+                model_identifier = f"{self.model.name}{self.model.model_depth}"
+            self.wandb.run_name = f"{model_identifier}_{timestamp}"
+
+        # Update output directory to include run_name and timestamp if it doesn't already
+        if self.training.output_dir == "outputs" or not self.training.output_dir:
+            self.training.output_dir = os.path.join("outputs", f"{self.wandb.run_name}")
+        elif os.path.basename(self.training.output_dir) != self.wandb.run_name:
+            # If output directory is specified but doesn't match run_name, append run_name
+            self.training.output_dir = os.path.join(self.training.output_dir, f"{self.wandb.run_name}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Config object to a dictionary."""
@@ -113,6 +161,12 @@ class Config:
                 "output_dir": self.training.output_dir,
                 "gradient_accumulation_steps": self.training.gradient_accumulation_steps,
                 "mixed_precision": self.training.mixed_precision,
+                "checkpoint": {
+                    "save_best": self.training.checkpoint.save_best,
+                    "save_latest": self.training.checkpoint.save_latest,
+                    "save_regular": self.training.checkpoint.save_regular,
+                    "save_frequency": self.training.checkpoint.save_frequency,
+                },
             },
             "wandb": {
                 "use_wandb": self.wandb.use_wandb,

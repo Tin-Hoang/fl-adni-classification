@@ -57,7 +57,7 @@ def train_epoch(
 
         # Mixed precision training
         if use_mixed_precision and scaler is not None:
-            with autocast('cuda'):
+            with autocast(enabled=True, device_type='cuda'):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 # Scale loss for gradient accumulation
@@ -139,7 +139,7 @@ def validate(
             labels = batch["label"].to(device)
 
             if use_mixed_precision:
-                with autocast('cuda'):
+                with autocast(enabled=True, device_type='cuda'):
                     outputs = model(images)
                     loss = criterion(outputs, labels)
             else:
@@ -157,15 +157,150 @@ def validate(
     return avg_loss, avg_accuracy
 
 
+def save_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scaler: Optional[GradScaler],
+    epoch: int,
+    train_loss: float,
+    val_loss: float,
+    val_acc: float,
+    is_best: bool,
+    output_dir: str,
+    model_name: str,
+    train_losses: List[float],
+    val_losses: List[float],
+    train_accs: List[float],
+    val_accs: List[float],
+    checkpoint_config: Any
+) -> None:
+    """Save training checkpoint.
+
+    Args:
+        model: The model to save
+        optimizer: The optimizer state to save
+        scaler: The GradScaler to save (if using mixed precision)
+        epoch: Current epoch number
+        train_loss: Training loss
+        val_loss: Validation loss
+        val_acc: Validation accuracy
+        is_best: Whether this is the best model so far
+        output_dir: Directory to save the checkpoint
+        model_name: Name of the model for saving
+        train_losses: History of training losses
+        val_losses: History of validation losses
+        train_accs: History of training accuracies
+        val_accs: History of validation accuracies
+        checkpoint_config: Configuration for checkpoint saving behavior
+    """
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'train_loss': train_loss,
+        'val_loss': val_loss,
+        'val_acc': val_acc,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'train_accs': train_accs,
+        'val_accs': val_accs,
+    }
+
+    # Add scaler state if using mixed precision
+    if scaler is not None:
+        checkpoint['scaler_state_dict'] = scaler.state_dict()
+
+    # Save regular checkpoint based on configuration
+    if checkpoint_config.save_regular and epoch % checkpoint_config.save_frequency == 0:
+        torch.save(
+            checkpoint,
+            os.path.join(output_dir, f"{model_name}_checkpoint_epoch_{epoch}.pth")
+        )
+
+    # Save latest checkpoint (overwrite) based on configuration
+    if checkpoint_config.save_latest:
+        torch.save(
+            checkpoint,
+            os.path.join(output_dir, f"{model_name}_checkpoint_latest.pth")
+        )
+
+    # Save best model if this is the best validation accuracy and enabled in configuration
+    if is_best and checkpoint_config.save_best:
+        print(f"New best model with validation accuracy: {val_acc:.2f}%")
+        torch.save(
+            checkpoint,
+            os.path.join(output_dir, f"{model_name}_checkpoint_best.pth")
+        )
+        # Also save just the model state dict for compatibility
+        torch.save(
+            model.state_dict(),
+            os.path.join(output_dir, f"{model_name}_best.pth")
+        )
+
+
+def load_checkpoint(
+    checkpoint_path: str,
+    model: nn.Module,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    scaler: Optional[GradScaler] = None,
+) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float]:
+    """Load training checkpoint.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        model: The model to load state into
+        optimizer: The optimizer to load state into (optional)
+        scaler: The GradScaler to load state into (optional)
+
+    Returns:
+        Tuple of (model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc)
+    """
+    checkpoint = torch.load(checkpoint_path)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+
+    if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    if scaler is not None and 'scaler_state_dict' in checkpoint:
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
+    start_epoch = checkpoint.get('epoch', 0)
+
+    # Initialize history lists if they don't exist in the checkpoint
+    train_losses = checkpoint.get('train_losses', [])
+    val_losses = checkpoint.get('val_losses', [])
+    train_accs = checkpoint.get('train_accs', [])
+    val_accs = checkpoint.get('val_accs', [])
+
+    # Get the best validation accuracy
+    best_val_acc = checkpoint.get('val_acc', 0.0)
+    if val_accs:
+        best_val_acc = max(best_val_acc, max(val_accs))
+
+    return model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc
+
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Train ADNI classification model")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     parser.add_argument("--visualize", action="store_true", help="Visualize samples and predictions")
+    parser.add_argument("--resume", type=str, help="Path to checkpoint to resume from")
+    parser.add_argument("--best", action="store_true", help="Resume from best checkpoint instead of latest")
     args = parser.parse_args()
 
     # Load configuration
     config = Config.from_yaml(args.config)
+
+    # Create output directory
+    os.makedirs(config.training.output_dir, exist_ok=True)
+
+    # Save the processed configuration to the output directory
+    config_output_path = os.path.join(config.training.output_dir, "config.yaml")
+    config.to_yaml(config_output_path)
+    print(f"Saved configuration to {config_output_path}")
+    print(f"Output directory: {config.training.output_dir}")
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -250,14 +385,11 @@ def main():
         weight_decay=config.training.weight_decay,
     )
 
-    # Create output directory
-    os.makedirs(config.training.output_dir, exist_ok=True)
-
     # Initialize mixed precision training if enabled
     scaler = None
     use_mixed_precision = getattr(config.training, "mixed_precision", False)
     if use_mixed_precision:
-        scaler = GradScaler('cuda')
+        scaler = GradScaler()
         print("Using mixed precision training")
 
     # Get gradient accumulation steps
@@ -265,20 +397,45 @@ def main():
     if gradient_accumulation_steps > 1:
         print(f"Using gradient accumulation with {gradient_accumulation_steps} steps")
 
-    # Visualize training samples if requested
-    if args.visualize:
-        print("Visualizing training samples...")
-        visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
-
-    # Training loop
+    # Initialize training history variables
+    start_epoch = 0
     train_losses = []
     val_losses = []
     train_accs = []
     val_accs = []
     best_val_acc = 0.0
 
-    for epoch in range(1, config.training.num_epochs + 1):
-        print(f"Epoch {epoch}/{config.training.num_epochs}")
+    # Resume from checkpoint if specified
+    if args.resume:
+        # Determine which checkpoint to load
+        if args.best:
+            model_name = config.model.name
+            checkpoint_path = os.path.join(config.training.output_dir, f"{model_name}_checkpoint_best.pth")
+            if os.path.isfile(checkpoint_path):
+                args.resume = checkpoint_path
+                print(f"Resuming from best checkpoint: {checkpoint_path}")
+            else:
+                print(f"No best checkpoint found at: {checkpoint_path}")
+
+        if os.path.isfile(args.resume):
+            print(f"Resuming training from checkpoint: {args.resume}")
+            model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc = load_checkpoint(
+                args.resume, model, optimizer, scaler
+            )
+            # We need to increment the epoch as start_epoch is the last completed epoch
+            start_epoch += 1
+            print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
+        else:
+            print(f"No checkpoint found at: {args.resume}")
+
+    # Visualize training samples if requested
+    if args.visualize:
+        print("Visualizing training samples...")
+        visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
+
+    # Training loop
+    for epoch in range(start_epoch, config.training.num_epochs):
+        print(f"Epoch {epoch + 1}/{config.training.num_epochs}")
 
         # Train for one epoch
         train_loss, train_acc = train_epoch(
@@ -307,24 +464,39 @@ def main():
                     "val/loss": val_loss,
                     "val/accuracy": val_acc,
                 },
-                step=epoch,
+                step=epoch + 1,
             )
 
-        # Save best model
-        if val_acc > best_val_acc:
+        # Check if this is the best model
+        is_best = val_acc > best_val_acc
+        if is_best:
             best_val_acc = val_acc
-            torch.save(
-                model.state_dict(),
-                os.path.join(config.training.output_dir, f"{config.model.name}_best.pth"),
-            )
-            print(f"Saved best model with validation accuracy: {val_acc:.2f}%")
+
+        # Save checkpoint
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            epoch=epoch + 1,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            val_acc=val_acc,
+            is_best=is_best,
+            output_dir=config.training.output_dir,
+            model_name=config.model.name,
+            train_losses=train_losses,
+            val_losses=val_losses,
+            train_accs=train_accs,
+            val_accs=val_accs,
+            checkpoint_config=config.training.checkpoint
+        )
 
         # Visualize predictions every 10 epochs if requested
-        if args.visualize and epoch % 10 == 0:
+        if args.visualize and (epoch + 1) % 10 == 0:
             print("Visualizing predictions...")
             visualize_predictions(
                 model, val_loader, device, num_samples=4,
-                save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch}.png")
+                save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch + 1}.png")
             )
 
     # Plot training history

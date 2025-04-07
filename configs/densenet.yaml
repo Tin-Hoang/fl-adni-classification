@@ -23,6 +23,11 @@ training:
   weight_decay: 0.01
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/densenet"
+  checkpoint:
+    save_best: true
+    save_latest: true
+    save_regular: false
+    save_frequency: 10
 
 # Weights & Biases configuration
 wandb:

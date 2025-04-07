@@ -21,6 +21,11 @@ training:
   output_dir: "outputs/resnet18_low_memory"
   gradient_accumulation_steps: 4
   mixed_precision: true
+  checkpoint:
+    save_best: true
+    save_latest: true
+    save_regular: false
+    save_frequency: 10
 
 wandb:
   use_wandb: true
