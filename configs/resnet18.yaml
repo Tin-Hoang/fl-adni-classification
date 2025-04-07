@@ -6,22 +6,29 @@ data:
   resize_mode: "trilinear"
 
 model:
-  name: "resnet3d"  # Using ResNet3D model
-  num_classes: 3  # AD, MCI, CN
-  model_depth: 18  # ResNet-18
+  name: "resnet3d"
+  num_classes: 3
+  model_depth: 18
   pretrained: false
   weights_path: null
 
 training:
-  batch_size: 2  # Small batch size for small dataset
+  batch_size: 2
   num_epochs: 100
-  learning_rate: 0.0001  # Lower learning rate for stability
-  weight_decay: 0.01  # Higher weight decay for regularization
+  learning_rate: 0.0001
+  weight_decay: 0.01
   num_workers: 4
-  output_dir: "outputs"
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
+  gradient_accumulation_steps: 1
+  mixed_precision: false
+  checkpoint:
+    save_best: true
+    save_latest: true
+    save_regular: false
+    save_frequency: 10
 
 wandb:
-  use_wandb: false  # Set to true to enable Weights & Biases tracking
+  use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["resnet18"]  # Add tags to categorize your runs

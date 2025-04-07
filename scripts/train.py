@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 import wandb
 from wandb.sdk.wandb_run import Run as WandbRun
 from torch.amp import autocast, GradScaler
+import torch.multiprocessing as mp
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
@@ -318,6 +319,14 @@ def main():
             config=config.to_dict(),
         )
 
+    # Set multiprocessing method to spawn for better cleanup
+    if config.training.num_workers > 0:
+        try:
+            mp.set_start_method('spawn', force=True)
+        except RuntimeError:
+            # The method might already be set
+            pass
+
     # Create datasets with transforms
     train_transform = get_transforms(
         mode="train",
@@ -343,12 +352,14 @@ def main():
         transform=val_transform
     )
 
-    # Create data loaders
+    # Create data loaders with proper multiprocessing settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
         shuffle=True,
         num_workers=config.training.num_workers,
+        pin_memory=True if torch.cuda.is_available() else False,
+        persistent_workers=True if config.training.num_workers > 0 else False,
     )
 
     val_loader = DataLoader(
@@ -356,6 +367,8 @@ def main():
         batch_size=config.training.batch_size,
         shuffle=False,
         num_workers=config.training.num_workers,
+        pin_memory=True if torch.cuda.is_available() else False,
+        persistent_workers=True if config.training.num_workers > 0 else False,
     )
 
     # Create model
