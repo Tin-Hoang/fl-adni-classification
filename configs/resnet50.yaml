@@ -22,12 +22,14 @@ training:
   learning_rate: 0.0001
   weight_decay: 0.01
   output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
+  gradient_accumulation_steps: 4
+  mixed_precision: false
 
 # Weights & Biases configuration
 wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["resnet"]
-  notes: "ResNet3D model for ADNI classification"
+  tags: ["resnet50"]
+  notes: "ResNet50 model for ADNI classification"
   run_name: "resnet50-codetest"

@@ -1,0 +1,31 @@
+data:
+  train_csv_path: "data/train.csv"
+  val_csv_path: "data/val.csv"
+  img_dir: "data/images"
+  resize_size: [128, 128, 128]  # Reduced from [224, 224, 224]
+  resize_mode: "trilinear"
+
+model:
+  name: "resnet3d"
+  num_classes: 3  # AD, MCI, CN
+  model_depth: 50
+  pretrained: false
+  weights_path: null
+
+training:
+  batch_size: 1  # Reduced from 2
+  num_epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  num_workers: 4
+  output_dir: "outputs/resnet50_low_memory"
+  gradient_accumulation_steps: 4  # Added to simulate larger batch size
+  mixed_precision: true  # Added to reduce memory usage
+
+wandb:
+  use_wandb: false
+  project: "adni-classification"
+  entity: null
+  tags: ["resnet3d", "low-memory", "experiment"]
+  notes: "ResNet3D-50 with reduced memory usage for small dataset"
+  run_name: "resnet50_low_memory"

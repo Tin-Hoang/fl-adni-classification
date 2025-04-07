@@ -24,6 +24,6 @@ wandb:
   use_wandb: false  # Set to true to enable Weights & Biases tracking
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["resnet3d", "resnet18", "small-dataset"]  # Add tags to categorize your runs
+  tags: ["resnet18"]  # Add tags to categorize your runs
   notes: "Using ResNet3D-18 for small dataset"  # Add notes to describe your experiment
-  run_name: "resnet3d-18"  # Add run name to describe your experiment
+  run_name: "resnet18-codetest"  # Add run name to describe your experiment
