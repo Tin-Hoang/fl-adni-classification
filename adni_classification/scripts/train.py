@@ -95,7 +95,7 @@ def validate(
     val_loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    wandb_run: Optional[wandb.Run] = None,
+    wandb_run: Optional[WandbRun] = None,
 ) -> tuple[float, float]:
     """Validate the model.
 

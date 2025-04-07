@@ -56,7 +56,7 @@ class ResNet3D(BaseModel):
             n_input_channels=1,
             shortcut_type="A",
             spatial_dims=3,
-            n_classes=num_classes
+            num_classes=num_classes
         )
 
         # Load pretrained weights if specified
