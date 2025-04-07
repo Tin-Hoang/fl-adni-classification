@@ -21,7 +21,7 @@ class DataConfig:
 class ModelConfig:
     """Model configuration."""
     name: str
-    num_classes: int
+    num_classes: int = 3
     pretrained: bool = False
     weights_path: Optional[str] = None
     # ResNet specific parameters
@@ -60,76 +60,47 @@ class Config:
     model: ModelConfig
     training: TrainingConfig
     wandb: WandbConfig = field(default_factory=WandbConfig)
-    
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
         """Create a Config instance from a dictionary.
-        
+
         Args:
             config_dict: Dictionary containing configuration values
-            
+
         Returns:
             Config instance
         """
         data_config = DataConfig(**config_dict.get('data', {}))
-        
-        # Handle model-specific parameters
-        model_dict = config_dict.get('model', {})
-        model_name = model_dict.get('name', 'resnet3d')
-        
-        # Create model config with default values
-        model_config = ModelConfig(
-            name=model_name,
-            num_classes=model_dict.get('num_classes', 3),
-            pretrained=model_dict.get('pretrained', False),
-            weights_path=model_dict.get('weights_path', None),
-        )
-        
-        # Add model-specific parameters
-        if model_name == 'resnet3d':
-            model_config.model_depth = model_dict.get('model_depth', 50)
-        elif model_name == 'densenet3d':
-            model_config.growth_rate = model_dict.get('growth_rate', 32)
-            model_config.block_config = tuple(model_dict.get('block_config', [6, 12, 24, 16]))
-        
+        model_config = ModelConfig(**config_dict.get('model', {}))
         training_config = TrainingConfig(**config_dict.get('training', {}))
-        
-        # Handle wandb configuration
-        wandb_dict = config_dict.get('wandb', {})
-        wandb_config = WandbConfig(
-            use_wandb=wandb_dict.get('use_wandb', False),
-            project=wandb_dict.get('project', "fl-adni-classification"),
-            entity=wandb_dict.get('entity', "tin-hoang"),
-            tags=wandb_dict.get('tags', []),
-            notes=wandb_dict.get('notes', None),
-            run_name=wandb_dict.get('run_name', ""),
-        )
-        
+        wandb_config = WandbConfig(**config_dict.get('wandb', {}))
+
         return cls(
             data=data_config,
             model=model_config,
             training=training_config,
             wandb=wandb_config
         )
-    
+
     @classmethod
     def from_yaml(cls, yaml_path: str) -> 'Config':
         """Load configuration from a YAML file.
-        
+
         Args:
             yaml_path: Path to the YAML configuration file
-            
+
         Returns:
             Config instance
         """
         with open(yaml_path, 'r') as f:
             config_dict = yaml.safe_load(f)
-        
+
         return cls.from_dict(config_dict)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert the configuration to a dictionary.
-        
+
         Returns:
             Dictionary representation of the configuration
         """
@@ -167,17 +138,17 @@ class Config:
                 'run_name': self.wandb.run_name,
             },
         }
-    
+
     def to_yaml(self, yaml_path: str) -> None:
         """Save the configuration to a YAML file.
-        
+
         Args:
             yaml_path: Path to save the YAML configuration file
         """
         config_dict = self.to_dict()
-        
+
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(yaml_path), exist_ok=True)
-        
+
         with open(yaml_path, 'w') as f:
-            yaml.dump(config_dict, f, default_flow_style=False) 
+            yaml.dump(config_dict, f, default_flow_style=False)

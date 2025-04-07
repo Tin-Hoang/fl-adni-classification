@@ -1,0 +1,29 @@
+data:
+  train_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  val_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  img_dir: "data/ADNI/codetest"
+  resize_size: [160, 160, 160]
+  resize_mode: "trilinear"
+
+model:
+  name: "resnet3d"  # Using ResNet3D model
+  num_classes: 3  # AD, MCI, CN
+  model_depth: 18  # ResNet-18
+  pretrained: false
+  weights_path: null
+
+training:
+  batch_size: 2  # Small batch size for small dataset
+  num_epochs: 100
+  learning_rate: 0.0001  # Lower learning rate for stability
+  weight_decay: 0.01  # Higher weight decay for regularization
+  num_workers: 4
+  output_dir: "outputs"
+
+wandb:
+  use_wandb: false  # Set to true to enable Weights & Biases tracking
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["resnet3d", "resnet18", "small-dataset"]  # Add tags to categorize your runs
+  notes: "Using ResNet3D-18 for small dataset"  # Add notes to describe your experiment
+  run_name: "resnet3d-18"  # Add run name to describe your experiment

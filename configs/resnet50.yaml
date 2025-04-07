@@ -8,8 +8,9 @@ data:
 
 # Model configuration
 model:
-  name: "resnet3d"
-  num_classes: 3
+  name: "resnet3d"  # Using ResNet3D model
+  num_classes: 3  # AD, MCI, CN
+  model_depth: 50  # ResNet depth (18, 34, 50, 101, 152)
   pretrained: false
   weights_path: null
 
@@ -29,4 +30,4 @@ wandb:
   entity: "tin-hoang"
   tags: ["resnet"]
   notes: "ResNet3D model for ADNI classification"
-  run_name: "resnet-codetest"
+  run_name: "resnet50-codetest"
