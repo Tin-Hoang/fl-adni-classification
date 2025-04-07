@@ -13,19 +13,19 @@ model:
   weights_path: null
 
 training:
-  batch_size: 1  # Reduced from 2
+  batch_size: 1
   num_epochs: 100
   learning_rate: 0.0001
   weight_decay: 0.01
   num_workers: 4
   output_dir: "outputs/resnet18_low_memory"
-  gradient_accumulation_steps: 4  # Added to simulate larger batch size
-  mixed_precision: true  # Added to reduce memory usage
+  gradient_accumulation_steps: 4
+  mixed_precision: true
 
 wandb:
-  use_wandb: false
-  project: "adni-classification"
-  entity: null
-  tags: ["resnet3d", "low-memory", "resnet18", "experiment"]
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["low-memory", "codetest"]
   notes: "ResNet3D-18 with reduced memory usage for small dataset"
   run_name: "resnet18_low_memory"
