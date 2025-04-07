@@ -20,15 +20,15 @@ training:
   batch_size: 4
   num_epochs: 100
   learning_rate: 0.0001
-  weight_decay: 0.01 
+  weight_decay: 0.01
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/densenet"
 
 # Weights & Biases configuration
 wandb:
-  use_wandb: true  # Set to true to enable Weights & Biases tracking
+  use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["densenet"]  # Add tags to categorize your runs
-  notes: "DenseNet3D model for ADNI classification"  # Add notes to describe your experiment 
-  run_name: "densenet-codetest"  # Add run name to describe your experiment 
+  tags: ["densenet"]
+  notes: "DenseNet3D model for ADNI classification"
+  run_name: "densenet-codetest"

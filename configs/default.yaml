@@ -20,10 +20,11 @@ training:
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
 
+# Weights & Biases configuration
 wandb:
-  use_wandb: false  # Set to true to enable Weights & Biases tracking
+  use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: []  # Add tags to categorize your runs
-  notes: null  # Add notes to describe your experiment 
-  run_name: "default"  # Add run name to describe your experiment 
+  tags: []
+  notes: null
+  run_name: "default"

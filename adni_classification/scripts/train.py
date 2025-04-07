@@ -2,7 +2,7 @@
 
 import os
 import argparse
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Tuple
 from datetime import datetime
 
 import torch
@@ -12,6 +12,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import wandb
+from wandb.sdk.wandb_run import Run as WandbRun
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
@@ -33,8 +34,9 @@ def train_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
-    wandb_run: Optional[wandb.Run] = None,
-) -> float:
+    epoch: int,
+    wandb_run: Optional[WandbRun] = None,
+) -> Tuple[float, float]:
     """Train for one epoch.
 
     Args:
@@ -43,10 +45,11 @@ def train_epoch(
         criterion: Loss function
         optimizer: Optimizer
         device: Device to train on
+        epoch: Current epoch
         wandb_run: Weights & Biases run object (optional)
 
     Returns:
-        Average training loss for the epoch
+        Tuple of (average training loss for the epoch, average training accuracy for the epoch)
     """
     model.train()
     total_loss = 0.0
@@ -272,7 +275,7 @@ def main():
 
         # Train for one epoch
         train_loss, train_acc = train_epoch(
-            model, train_loader, criterion, optimizer, device, wandb_run
+            model, train_loader, criterion, optimizer, device, epoch, wandb_run
         )
         train_losses.append(train_loss)
         train_accs.append(train_acc)
