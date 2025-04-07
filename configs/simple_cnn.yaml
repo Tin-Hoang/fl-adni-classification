@@ -1,0 +1,28 @@
+data:
+  train_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  val_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  img_dir: "data/ADNI/codetest"
+  resize_size: [160, 160, 160]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
+
+model:
+  name: "simple3dcnn"  # Using our simple 3D CNN
+  num_classes: 3  # AD, MCI, CN
+  pretrained: false
+  weights_path: null
+
+training:
+  batch_size: 2  # Small batch size for small dataset
+  num_epochs: 100
+  learning_rate: 0.0001  # Lower learning rate for stability
+  weight_decay: 0.01  # Higher weight decay for regularization
+  num_workers: 4
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/simple_cnn"
+
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["simple-cnn", "codetest"]
+  notes: "Using a simple 3D CNN for small dataset"
+  run_name: "simple-cnn-codetest"
