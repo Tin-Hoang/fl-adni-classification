@@ -1,0 +1,32 @@
+# Data configuration
+data:
+  train_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv"
+  val_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv"
+  img_dir: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI"
+
+# Model configuration
+model:
+  name: "densenet3d"
+  num_classes: 3  # AD, MCI, CN
+  growth_rate: 32
+  block_config: [6, 12, 24, 16]
+  pretrained: false
+  weights_path: null
+
+# Training configuration
+training:
+  batch_size: 8
+  num_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 4
+  output_dir: "outputs/densenet"
+
+# Weights & Biases configuration
+wandb:
+  use_wandb: true  # Set to true to enable Weights & Biases tracking
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["densenet"]  # Add tags to categorize your runs
+  notes: "DenseNet3D model for ADNI classification"  # Add notes to describe your experiment 
+  run_name: "densenet-codetest"  # Add run name to describe your experiment 

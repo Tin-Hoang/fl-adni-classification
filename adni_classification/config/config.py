@@ -1,0 +1,179 @@
+"""Configuration management for ADNI classification."""
+
+import os
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Union, Dict, Any
+
+import yaml
+
+
+@dataclass
+class DataConfig:
+    """Data configuration."""
+    train_csv_path: str
+    val_csv_path: str
+    img_dir: str
+
+
+@dataclass
+class ModelConfig:
+    """Model configuration."""
+    name: str
+    num_classes: int
+    pretrained: bool = False
+    weights_path: Optional[str] = None
+    # ResNet specific parameters
+    model_depth: Optional[int] = None
+    # DenseNet specific parameters
+    growth_rate: Optional[int] = None
+    block_config: Optional[Tuple[int, ...]] = None
+
+
+@dataclass
+class TrainingConfig:
+    """Training configuration."""
+    batch_size: int
+    num_workers: int
+    num_epochs: int
+    learning_rate: float
+    weight_decay: float
+    output_dir: str
+
+
+@dataclass
+class WandbConfig:
+    """Weights & Biases configuration."""
+    use_wandb: bool = False
+    project: str = "fl-adni-classification"
+    entity: str = "tin-hoang"
+    tags: List[str] = field(default_factory=list)
+    notes: str = ""
+    run_name: str = ""
+
+
+@dataclass
+class Config:
+    """Main configuration class."""
+    data: DataConfig
+    model: ModelConfig
+    training: TrainingConfig
+    wandb: WandbConfig = field(default_factory=WandbConfig)
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
+        """Create a Config instance from a dictionary.
+        
+        Args:
+            config_dict: Dictionary containing configuration values
+            
+        Returns:
+            Config instance
+        """
+        data_config = DataConfig(**config_dict.get('data', {}))
+        
+        # Handle model-specific parameters
+        model_dict = config_dict.get('model', {})
+        model_name = model_dict.get('name', 'resnet3d')
+        
+        # Create model config with default values
+        model_config = ModelConfig(
+            name=model_name,
+            num_classes=model_dict.get('num_classes', 3),
+            pretrained=model_dict.get('pretrained', False),
+            weights_path=model_dict.get('weights_path', None),
+        )
+        
+        # Add model-specific parameters
+        if model_name == 'resnet3d':
+            model_config.model_depth = model_dict.get('model_depth', 50)
+        elif model_name == 'densenet3d':
+            model_config.growth_rate = model_dict.get('growth_rate', 32)
+            model_config.block_config = tuple(model_dict.get('block_config', [6, 12, 24, 16]))
+        
+        training_config = TrainingConfig(**config_dict.get('training', {}))
+        
+        # Handle wandb configuration
+        wandb_dict = config_dict.get('wandb', {})
+        wandb_config = WandbConfig(
+            use_wandb=wandb_dict.get('use_wandb', False),
+            project=wandb_dict.get('project', "fl-adni-classification"),
+            entity=wandb_dict.get('entity', "tin-hoang"),
+            tags=wandb_dict.get('tags', []),
+            notes=wandb_dict.get('notes', None),
+            run_name=wandb_dict.get('run_name', ""),
+        )
+        
+        return cls(
+            data=data_config,
+            model=model_config,
+            training=training_config,
+            wandb=wandb_config
+        )
+    
+    @classmethod
+    def from_yaml(cls, yaml_path: str) -> 'Config':
+        """Load configuration from a YAML file.
+        
+        Args:
+            yaml_path: Path to the YAML configuration file
+            
+        Returns:
+            Config instance
+        """
+        with open(yaml_path, 'r') as f:
+            config_dict = yaml.safe_load(f)
+        
+        return cls.from_dict(config_dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the configuration to a dictionary.
+        
+        Returns:
+            Dictionary representation of the configuration
+        """
+        return {
+            'data': {
+                'train_csv_path': self.data.train_csv_path,
+                'val_csv_path': self.data.val_csv_path,
+                'img_dir': self.data.img_dir,
+            },
+            'model': {
+                'name': self.model.name,
+                'num_classes': self.model.num_classes,
+                'pretrained': self.model.pretrained,
+                'weights_path': self.model.weights_path,
+                'model_depth': self.model.model_depth,
+                'growth_rate': self.model.growth_rate,
+                'block_config': self.model.block_config,
+            },
+            'training': {
+                'batch_size': self.training.batch_size,
+                'num_workers': self.training.num_workers,
+                'num_epochs': self.training.num_epochs,
+                'learning_rate': self.training.learning_rate,
+                'weight_decay': self.training.weight_decay,
+                'output_dir': self.training.output_dir,
+            },
+            'wandb': {
+                'use_wandb': self.wandb.use_wandb,
+                'project': self.wandb.project,
+                'entity': self.wandb.entity,
+                'tags': self.wandb.tags,
+                'notes': self.wandb.notes,
+                'run_name': self.wandb.run_name,
+            },
+        }
+    
+    def to_yaml(self, yaml_path: str) -> None:
+        """Save the configuration to a YAML file.
+        
+        Args:
+            yaml_path: Path to save the YAML configuration file
+        """
+        config_dict = self.to_dict()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(yaml_path), exist_ok=True)
+        
+        with open(yaml_path, 'w') as f:
+            yaml.dump(config_dict, f, default_flow_style=False) 

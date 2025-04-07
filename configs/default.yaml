@@ -1,0 +1,27 @@
+data:
+  train_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_4_06_2025.csv"
+  val_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv"
+  img_dir: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI"
+
+model:
+  name: "resnet3d"  # Options: "resnet3d", "densenet3d"
+  num_classes: 3  # AD, MCI, CN
+  model_depth: 50  # For ResNet3D
+  pretrained: false
+  weights_path: null
+
+training:
+  batch_size: 8
+  num_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_workers: 4
+  output_dir: "outputs"
+
+wandb:
+  use_wandb: false  # Set to true to enable Weights & Biases tracking
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: []  # Add tags to categorize your runs
+  notes: null  # Add notes to describe your experiment 
+  run_name: "default"  # Add run name to describe your experiment 

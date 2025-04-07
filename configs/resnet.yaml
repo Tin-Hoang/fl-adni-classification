@@ -1,0 +1,30 @@
+# Data configuration
+data:
+  train_csv_path: "data/adni_train.csv"
+  val_csv_path: "data/adni_val.csv"
+  img_dir: "data/images"
+
+# Model configuration
+model:
+  name: "resnet3d"
+  num_classes: 3
+  pretrained: false
+  weights_path: null
+
+# Training configuration
+training:
+  batch_size: 4
+  num_workers: 4
+  num_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  output_dir: "outputs" 
+
+# Weights & Biases configuration
+wandb:
+  use_wandb: false  # Set to true to enable Weights & Biases tracking
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["resnet"]  # Add tags to categorize your runs
+  notes: "ResNet3D model for ADNI classification"  # Add notes to describe your experiment 
+  run_name: "resnet-codetest"  # Add run name to describe your experiment 
