@@ -2,8 +2,7 @@
 
 import os
 import argparse
-import sys
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from datetime import datetime
 
 import torch
@@ -17,10 +16,6 @@ import wandb
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
 from adni_classification.config import Config
-
-# Add project root to Python path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-sys.path.insert(0, project_root)
 
 
 def parse_args() -> argparse.Namespace:
@@ -222,7 +217,12 @@ def main():
         # Train
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device, wandb_run)
         print(f"Training Loss: {train_loss:.4f}")
-        
+        if wandb_run is not None:
+            wandb_run.log({
+                "train/epoch": epoch + 1,
+                "train/loss": train_loss,
+                "train/learning_rate": optimizer.param_groups[0]["lr"],
+            })
         # Validate
         val_loss, val_acc = validate(model, val_loader, criterion, device)
         print(f"Validation Loss: {val_loss:.4f}")
@@ -231,11 +231,10 @@ def main():
         # Log metrics to wandb
         if wandb_run is not None:
             wandb_run.log({
-                "epoch": epoch + 1,
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-                "val_accuracy": val_acc,
-                "learning_rate": optimizer.param_groups[0]["lr"],
+                "val/epoch": epoch + 1,
+                "val/loss": val_loss,
+                "val/accuracy": val_acc,
+                "val/learning_rate": optimizer.param_groups[0]["lr"],
             })
         
         # Update learning rate
@@ -246,12 +245,8 @@ def main():
             best_val_loss = val_loss
             model_path = os.path.join(output_dir, "best_model.pth")
             torch.save(model.state_dict(), model_path)
-            print("Saved best model")
-            
-            # Log best model to wandb
-            if wandb_run is not None:
-                wandb_run.save(model_path)
-    
+            print(f"Saved best model to: {model_path}")
+
     # Close wandb run
     if wandb_run is not None:
         wandb_run.finish()
