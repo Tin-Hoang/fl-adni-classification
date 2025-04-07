@@ -13,6 +13,8 @@ class DataConfig:
     train_csv_path: str
     val_csv_path: str
     img_dir: str
+    resize_size: Tuple[int, int, int] = (160, 160, 160)  # Default resize dimensions
+    resize_mode: str = "trilinear"  # Default resize mode
 
 
 @dataclass
@@ -136,6 +138,8 @@ class Config:
                 'train_csv_path': self.data.train_csv_path,
                 'val_csv_path': self.data.val_csv_path,
                 'img_dir': self.data.img_dir,
+                'resize_size': self.data.resize_size,
+                'resize_mode': self.data.resize_mode,
             },
             'model': {
                 'name': self.model.name,

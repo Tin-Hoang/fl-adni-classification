@@ -2,7 +2,7 @@
 
 import os
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from torch.utils.data import Dataset
 import monai
 from monai.transforms import (
@@ -16,6 +16,7 @@ from monai.transforms import (
     RandFlipd,
     RandRotate90d,
     ToTensord,
+    Resized,
 )
 
 
@@ -151,11 +152,13 @@ class ADNIDataset(Dataset):
         return data_dict
 
 
-def get_transforms(mode: str = "train") -> monai.transforms.Compose:
+def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160, 160, 160), resize_mode: str = "trilinear") -> monai.transforms.Compose:
     """Get transforms for training or validation.
     
     Args:
         mode: Either "train" or "val"
+        resize_size: Tuple of (height, width, depth) for resizing
+        resize_mode: Interpolation mode for resizing
         
     Returns:
         A Compose transform
@@ -174,6 +177,11 @@ def get_transforms(mode: str = "train") -> monai.transforms.Compose:
                     b_min=0.0,
                     b_max=1.0,
                     clip=True,
+                ),
+                Resized(
+                    keys=["image"],
+                    spatial_size=resize_size,
+                    mode=resize_mode,
                 ),
                 RandAffined(
                     keys=["image"],
@@ -201,6 +209,11 @@ def get_transforms(mode: str = "train") -> monai.transforms.Compose:
                     b_min=0.0,
                     b_max=1.0,
                     clip=True,
+                ),
+                Resized(
+                    keys=["image"],
+                    spatial_size=resize_size,
+                    mode=resize_mode,
                 ),
                 ToTensord(keys=["image", "label"]),
             ]

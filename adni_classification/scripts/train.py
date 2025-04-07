@@ -138,13 +138,21 @@ def main():
     train_dataset = ADNIDataset(
         csv_path=config.data.train_csv_path,
         img_dir=config.data.img_dir,
-        transform=get_transforms("train"),
+        transform=get_transforms(
+            "train",
+            resize_size=config.data.resize_size,
+            resize_mode=config.data.resize_mode
+        ),
     )
     
     val_dataset = ADNIDataset(
         csv_path=config.data.val_csv_path,
         img_dir=config.data.img_dir,
-        transform=get_transforms("val"),
+        transform=get_transforms(
+            "val",
+            resize_size=config.data.resize_size,
+            resize_mode=config.data.resize_mode
+        ),
     )
     
     # Create data loaders

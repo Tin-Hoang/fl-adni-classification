@@ -3,6 +3,8 @@ data:
   train_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv"
   val_csv_path: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv"
   img_dir: "data/ADNI/ADNI1_Complete_1Yr_3T/ADNI"
+  resize_size: [160, 160, 160]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
 
 # Model configuration
 model:

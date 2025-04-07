@@ -3,6 +3,8 @@ data:
   train_csv_path: "data/adni_train.csv"
   val_csv_path: "data/adni_val.csv"
   img_dir: "data/images"
+  resize_size: [160, 160, 160]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
 
 # Model configuration
 model:
