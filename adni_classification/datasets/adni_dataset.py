@@ -163,61 +163,55 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
     Returns:
         A Compose transform
     """
+    common_transforms = [
+        LoadImaged(keys=["image"]),
+        EnsureChannelFirstd(keys=["image"]),
+        Orientationd(keys=["image"], axcodes="RAS"),
+        Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
+        # More robust intensity scaling using percentiles
+        ScaleIntensityRanged(
+            keys=["image"],
+            a_min=0.0,  # Use percentiles instead of fixed values
+            a_max=100.0,
+            b_min=0.0,
+            b_max=1.0,
+            clip=True,
+        ),
+        Resized(
+            keys=["image"],
+            spatial_size=resize_size,
+            mode=resize_mode,
+        ),
+    ]
+
     if mode == "train":
-        return Compose(
-            [
-                LoadImaged(keys=["image"]),
-                EnsureChannelFirstd(keys=["image"]),
-                Orientationd(keys=["image"], axcodes="RAS"),
-                Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
-                ScaleIntensityRanged(
-                    keys=["image"],
-                    a_min=-1000,
-                    a_max=1000,
-                    b_min=0.0,
-                    b_max=1.0,
-                    clip=True,
-                ),
-                Resized(
-                    keys=["image"],
-                    spatial_size=resize_size,
-                    mode=resize_mode,
-                ),
-                RandAffined(
-                    keys=["image"],
-                    prob=0.5,
-                    rotate_range=(0.05, 0.05, 0.05),
-                    scale_range=(0.1, 0.1, 0.1),
-                    mode=("bilinear"),
-                ),
-                RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-                RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
-                ToTensord(keys=["image", "label"]),
-            ]
-        )
+        train_transforms = [
+            # Stronger augmentation for small dataset
+            RandAffined(
+                keys=["image"],
+                prob=0.8,  # Increased probability
+                rotate_range=(0.1, 0.1, 0.1),  # Increased rotation
+                scale_range=(0.2, 0.2, 0.2),  # Increased scaling
+                mode=("bilinear"),
+            ),
+            RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
+            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),  # Added flip in another axis
+            RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
+            # Add noise augmentation
+            monai.transforms.RandGaussianNoised(
+                keys=["image"],
+                prob=0.5,
+                mean=0.0,
+                std=0.1,
+            ),
+            ToTensord(keys=["image", "label"]),
+        ]
+        return Compose(common_transforms + train_transforms)
     else:  # val
-        return Compose(
-            [
-                LoadImaged(keys=["image"]),
-                EnsureChannelFirstd(keys=["image"]),
-                Orientationd(keys=["image"], axcodes="RAS"),
-                Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
-                ScaleIntensityRanged(
-                    keys=["image"],
-                    a_min=-1000,
-                    a_max=1000,
-                    b_min=0.0,
-                    b_max=1.0,
-                    clip=True,
-                ),
-                Resized(
-                    keys=["image"],
-                    spatial_size=resize_size,
-                    mode=resize_mode,
-                ),
-                ToTensord(keys=["image", "label"]),
-            ]
-        )
+        val_transforms = [
+            ToTensord(keys=["image", "label"]),
+        ]
+        return Compose(common_transforms + val_transforms)
 
 
 def test_image_path_mapping():

@@ -17,12 +17,12 @@ model:
 
 # Training configuration
 training:
-  batch_size: 8
+  batch_size: 2
   num_epochs: 100
-  learning_rate: 0.001
-  weight_decay: 0.0001
+  learning_rate: 0.0001
+  weight_decay: 0.01 
   num_workers: 4
-  output_dir: "outputs/densenet"
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/densenet"
 
 # Weights & Biases configuration
 wandb:

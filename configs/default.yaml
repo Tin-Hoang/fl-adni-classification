@@ -13,12 +13,12 @@ model:
   weights_path: null
 
 training:
-  batch_size: 8
+  batch_size: 2
   num_epochs: 100
-  learning_rate: 0.001
-  weight_decay: 0.0001
+  learning_rate: 0.0001  # Reduced learning rate for stability
+  weight_decay: 0.01  # Increased weight decay for regularization
   num_workers: 4
-  output_dir: "outputs"
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
 
 wandb:
   use_wandb: false  # Set to true to enable Weights & Biases tracking
