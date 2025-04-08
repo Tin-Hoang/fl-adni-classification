@@ -10,15 +10,14 @@ from adni_classification.models.base_model import BaseModel
 class DenseNet3D(BaseModel):
     """3D DenseNet model for ADNI classification."""
 
-    def __init__(self, num_classes: int = 3, growth_rate: int = 32, block_config: Tuple[int, ...] = (6, 12, 24, 16), pretrained: bool = False, weights_path: Optional[str] = None):
+    def __init__(self, num_classes: int = 3, growth_rate: int = 32, block_config: Tuple[int, ...] = (6, 12, 24, 16), pretrained_checkpoint: Optional[str] = None):
         """Initialize DenseNet3D model.
 
         Args:
             num_classes: Number of output classes
             growth_rate: Growth rate for DenseNet
             block_config: Number of layers in each dense block
-            pretrained: Whether to use pretrained weights
-            weights_path: Path to pretrained weights file
+            pretrained_checkpoint: Path to pretrained weights file
         """
         super().__init__(num_classes)
 
@@ -33,18 +32,18 @@ class DenseNet3D(BaseModel):
         )
 
         # Load pretrained weights if specified
-        if pretrained and weights_path:
-            self.load_pretrained_weights(weights_path)
+        if pretrained_checkpoint:
+            self.load_pretrained_weights(pretrained_checkpoint)
 
-    def load_pretrained_weights(self, weights_path: str) -> None:
+    def load_pretrained_weights(self, pretrained_checkpoint: str) -> None:
         """Load pretrained weights from file.
 
         Args:
-            weights_path: Path to pretrained weights file
+            pretrained_checkpoint: Path to pretrained weights file
         """
-        state_dict = torch.load(weights_path, map_location=torch.device('cpu'))
+        state_dict = torch.load(pretrained_checkpoint, map_location=torch.device('cpu'))
         self.model.load_state_dict(state_dict)
-        print(f"Loaded pretrained weights from {weights_path}")
+        print(f"Loaded pretrained weights from {pretrained_checkpoint}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the model.

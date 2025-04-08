@@ -12,8 +12,7 @@ model:
   num_classes: 3  # AD, MCI, CN
   growth_rate: 32
   block_config: [6, 12, 24, 16]
-  pretrained: false
-  weights_path: null
+  pretrained_checkpoint: null
 
 # Training configuration
 training:
@@ -23,6 +22,8 @@ training:
   weight_decay: 0.01
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/densenet"
+  visualize: false
+  lr_scheduler: "plateau"
   checkpoint:
     save_best: true
     save_latest: true

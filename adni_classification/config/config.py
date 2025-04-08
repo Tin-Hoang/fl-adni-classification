@@ -14,7 +14,7 @@ class DataConfig:
     train_csv_path: str
     val_csv_path: str
     img_dir: str
-    resize_size: List[int] = field(default_factory=lambda: [224, 224, 224])
+    resize_size: List[int] = field(default_factory=lambda: [160, 160, 160])
     resize_mode: str = "trilinear"
 
 
@@ -23,8 +23,7 @@ class ModelConfig:
     """Model configuration."""
     name: str
     num_classes: int = 3
-    pretrained: bool = False
-    weights_path: Optional[str] = None
+    pretrained_checkpoint: Optional[str] = None
     # ResNet specific parameters
     model_depth: Optional[int] = None
     # DenseNet specific parameters
@@ -52,6 +51,8 @@ class TrainingConfig:
     output_dir: str
     gradient_accumulation_steps: int = 1
     mixed_precision: bool = False
+    visualize: bool = False
+    lr_scheduler: str = "plateau"
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
@@ -149,8 +150,7 @@ class Config:
                 "model_depth": self.model.model_depth,
                 "growth_rate": self.model.growth_rate,
                 "block_config": self.model.block_config,
-                "pretrained": self.model.pretrained,
-                "weights_path": self.model.weights_path,
+                "pretrained_checkpoint": self.model.pretrained_checkpoint,
             },
             "training": {
                 "batch_size": self.training.batch_size,
@@ -161,6 +161,8 @@ class Config:
                 "output_dir": self.training.output_dir,
                 "gradient_accumulation_steps": self.training.gradient_accumulation_steps,
                 "mixed_precision": self.training.mixed_precision,
+                "visualize": self.training.visualize,
+                "lr_scheduler": self.training.lr_scheduler,
                 "checkpoint": {
                     "save_best": self.training.checkpoint.save_best,
                     "save_latest": self.training.checkpoint.save_latest,

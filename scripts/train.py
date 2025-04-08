@@ -10,6 +10,13 @@ import wandb
 from wandb.sdk.wandb_run import Run as WandbRun
 from torch.amp import autocast, GradScaler
 import torch.multiprocessing as mp
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    ReduceLROnPlateau,
+    StepLR,
+    MultiStepLR,
+    ExponentialLR,
+)
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
@@ -161,6 +168,7 @@ def validate(
 def save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: Optional[Any],
     scaler: Optional[GradScaler],
     epoch: int,
     train_loss: float,
@@ -180,6 +188,7 @@ def save_checkpoint(
     Args:
         model: The model to save
         optimizer: The optimizer state to save
+        scheduler: The learning rate scheduler state to save
         scaler: The GradScaler to save (if using mixed precision)
         epoch: Current epoch number
         train_loss: Training loss
@@ -206,6 +215,10 @@ def save_checkpoint(
         'train_accs': train_accs,
         'val_accs': val_accs,
     }
+
+    # Add scheduler state if available
+    if scheduler is not None:
+        checkpoint['scheduler_state_dict'] = scheduler.state_dict()
 
     # Add scaler state if using mixed precision
     if scaler is not None:
@@ -243,18 +256,20 @@ def load_checkpoint(
     checkpoint_path: str,
     model: nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[Any] = None,
     scaler: Optional[GradScaler] = None,
-) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float]:
+) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[Any], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float]:
     """Load training checkpoint.
 
     Args:
         checkpoint_path: Path to the checkpoint file
         model: The model to load state into
         optimizer: The optimizer to load state into (optional)
+        scheduler: The learning rate scheduler to load state into (optional)
         scaler: The GradScaler to load state into (optional)
 
     Returns:
-        Tuple of (model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc)
+        Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc)
     """
     checkpoint = torch.load(checkpoint_path)
 
@@ -262,6 +277,9 @@ def load_checkpoint(
 
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    if scheduler is not None and 'scheduler_state_dict' in checkpoint:
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
     if scaler is not None and 'scaler_state_dict' in checkpoint:
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
@@ -279,16 +297,44 @@ def load_checkpoint(
     if val_accs:
         best_val_acc = max(best_val_acc, max(val_accs))
 
-    return model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc
+    return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc
+
+
+def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epochs: int) -> Optional[Any]:
+    """Get the appropriate learning rate scheduler.
+
+    Args:
+        scheduler_type: Type of scheduler to use
+        optimizer: Optimizer to use with the scheduler
+        num_epochs: Total number of epochs
+
+    Returns:
+        Learning rate scheduler
+    """
+    if scheduler_type == "cosine":
+        # Cosine annealing scheduler
+        return CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+    elif scheduler_type == "step":
+        # Step scheduler (reduce LR by factor of gamma every step_size epochs)
+        return StepLR(optimizer, step_size=30, gamma=0.1)
+    elif scheduler_type == "multistep":
+        # Multi-step scheduler (reduce LR at specific milestones)
+        return MultiStepLR(optimizer, milestones=[30, 60, 90], gamma=0.1)
+    elif scheduler_type == "plateau":
+        # Reduce on plateau scheduler (reduce LR when validation metric plateaus)
+        return ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True, min_lr=1e-6)
+    elif scheduler_type == "exponential":
+        # Exponential scheduler (reduce LR by gamma each epoch)
+        return ExponentialLR(optimizer, gamma=0.95)
+    else:
+        # No scheduler
+        return None
 
 
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Train ADNI classification model")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
-    parser.add_argument("--visualize", action="store_true", help="Visualize samples and predictions")
-    parser.add_argument("--resume", type=str, help="Path to checkpoint to resume from")
-    parser.add_argument("--best", action="store_true", help="Resume from best checkpoint instead of latest")
     args = parser.parse_args()
 
     # Load configuration
@@ -374,8 +420,7 @@ def main():
     # Create model
     model_kwargs = {
         "num_classes": config.model.num_classes,
-        "pretrained": config.model.pretrained,
-        "weights_path": config.model.weights_path,
+        "pretrained_checkpoint": config.model.pretrained_checkpoint,
     }
 
     # Add model-specific parameters
@@ -398,6 +443,10 @@ def main():
         weight_decay=config.training.weight_decay,
     )
 
+    # Create learning rate scheduler
+    scheduler = get_scheduler(config.training.lr_scheduler, optimizer, config.training.num_epochs)
+    print(f"Using learning rate scheduler: {config.training.lr_scheduler}")
+
     # Initialize mixed precision training if enabled
     scaler = None
     use_mixed_precision = getattr(config.training, "mixed_precision", False)
@@ -418,37 +467,38 @@ def main():
     val_accs = []
     best_val_acc = 0.0
 
-    # Resume from checkpoint if specified
-    if args.resume:
-        # Determine which checkpoint to load
-        if args.best:
-            model_name = config.model.name
-            checkpoint_path = os.path.join(config.training.output_dir, f"{model_name}_checkpoint_best.pth")
-            if os.path.isfile(checkpoint_path):
-                args.resume = checkpoint_path
-                print(f"Resuming from best checkpoint: {checkpoint_path}")
-            else:
-                print(f"No best checkpoint found at: {checkpoint_path}")
-
-        if os.path.isfile(args.resume):
-            print(f"Resuming training from checkpoint: {args.resume}")
-            model, optimizer, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc = load_checkpoint(
-                args.resume, model, optimizer, scaler
+    # Check if we need to resume training from a checkpoint
+    if config.model.pretrained_checkpoint:
+        # Check if the weights path is a checkpoint file
+        if os.path.isfile(config.model.pretrained_checkpoint):
+            print(f"Loading checkpoint from: {config.model.pretrained_checkpoint}")
+            model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc = load_checkpoint(
+                config.model.pretrained_checkpoint, model, optimizer, scheduler, scaler
             )
             # We need to increment the epoch as start_epoch is the last completed epoch
             start_epoch += 1
             print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
         else:
-            print(f"No checkpoint found at: {args.resume}")
+            print(f"No checkpoint found at: {config.model.pretrained_checkpoint}")
+            # If it's not a checkpoint file, it might be just a state dict
+            if os.path.isfile(config.model.pretrained_checkpoint):
+                print(f"Loading model state dict from: {config.model.pretrained_checkpoint}")
+                state_dict = torch.load(config.model.pretrained_checkpoint, map_location=device)
+                model.load_state_dict(state_dict)
+                print(f"Loaded model state dict from: {config.model.pretrained_checkpoint}")
 
     # Visualize training samples if requested
-    if args.visualize:
+    if config.training.visualize:
         print("Visualizing training samples...")
         visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
 
     # Training loop
     for epoch in range(start_epoch, config.training.num_epochs):
         print(f"Epoch {epoch + 1}/{config.training.num_epochs}")
+
+        # Get current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Current learning rate: {current_lr:.6f}")
 
         # Train for one epoch
         train_loss, train_acc = train_epoch(
@@ -470,15 +520,23 @@ def main():
         print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
         print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
 
+        # Update learning rate scheduler
+        if scheduler is not None:
+            if isinstance(scheduler, ReduceLROnPlateau):
+                scheduler.step(val_loss)  # For ReduceLROnPlateau
+            else:
+                scheduler.step()  # For other schedulers
+
+        # Log metrics to wandb
         if wandb_run is not None:
-            wandb_run.log({
-                    "train/loss": train_loss,
-                    "train/accuracy": train_acc,
-                    "val/loss": val_loss,
-                    "val/accuracy": val_acc,
-                },
-                step=epoch + 1,
-            )
+            wandb_log = {
+                "train/loss": train_loss,
+                "train/accuracy": train_acc,
+                "val/loss": val_loss,
+                "val/accuracy": val_acc,
+                "lr": current_lr,
+            }
+            wandb_run.log(wandb_log, step=epoch + 1)
 
         # Check if this is the best model
         is_best = val_acc > best_val_acc
@@ -489,6 +547,7 @@ def main():
         save_checkpoint(
             model=model,
             optimizer=optimizer,
+            scheduler=scheduler,
             scaler=scaler,
             epoch=epoch + 1,
             train_loss=train_loss,
@@ -505,7 +564,7 @@ def main():
         )
 
         # Visualize predictions every 10 epochs if requested
-        if args.visualize and (epoch + 1) % 10 == 0:
+        if config.training.visualize and (epoch + 1) % 10 == 0:
             print("Visualizing predictions...")
             visualize_predictions(
                 model, val_loader, device, num_samples=4,

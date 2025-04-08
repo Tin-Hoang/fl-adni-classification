@@ -9,8 +9,7 @@ model:
   name: "resnet3d"
   num_classes: 3  # AD, MCI, CN
   model_depth: 18  # Using ResNet-18 instead of ResNet-50
-  pretrained: false
-  weights_path: null
+  pretrained_checkpoint: null
 
 training:
   batch_size: 1
@@ -21,6 +20,8 @@ training:
   output_dir: "outputs/resnet18_low_memory"
   gradient_accumulation_steps: 4
   mixed_precision: true
+  visualize: false
+  lr_scheduler: "plateau"
   checkpoint:
     save_best: true
     save_latest: true

@@ -11,8 +11,7 @@ model:
   name: "resnet3d"  # Using ResNet3D model
   num_classes: 3  # AD, MCI, CN
   model_depth: 50  # ResNet depth (18, 34, 50, 101, 152)
-  pretrained: false
-  weights_path: null
+  pretrained_checkpoint: null
 
 # Training configuration
 training:
@@ -24,6 +23,8 @@ training:
   output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
   gradient_accumulation_steps: 1
   mixed_precision: false
+  visualize: false
+  lr_scheduler: "cosine"
   checkpoint:
     save_best: true
     save_latest: true

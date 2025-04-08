@@ -8,8 +8,7 @@ data:
 model:
   name: "simple3dcnn"  # Using our simple 3D CNN
   num_classes: 3  # AD, MCI, CN
-  pretrained: false
-  weights_path: null
+  pretrained_checkpoint: null
 
 training:
   batch_size: 2  # Small batch size for small dataset
@@ -18,6 +17,8 @@ training:
   weight_decay: 0.01  # Higher weight decay for regularization
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/simple_cnn"
+  visualize: false
+  lr_scheduler: "plateau"
 
 wandb:
   use_wandb: true
