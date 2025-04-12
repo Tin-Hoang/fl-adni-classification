@@ -7,7 +7,7 @@ data:
 
 model:
   name: "resnet3d"
-  num_classes: 3
+  num_classes: 3  # CN, MCI, AD
   model_depth: 18
   pretrained_checkpoint: null
 

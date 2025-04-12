@@ -12,7 +12,7 @@ class BaseModel(nn.Module, ABC):
         """Initialize base model.
 
         Args:
-            num_classes: Number of output classes (default: 3 for AD, MCI, NC)
+            num_classes: Number of output classes (default: 3 for CN, MCI, AD)
         """
         super().__init__()
         self.num_classes = num_classes

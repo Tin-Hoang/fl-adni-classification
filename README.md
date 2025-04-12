@@ -77,7 +77,7 @@ The input data should be:
 - A CSV file containing metadata with the following columns:
   - Image Data ID
   - Subject
-  - Group (AD, MCI, NC)
+  - Group (AD, MCI, CN)
   - Sex
   - Age
   - Visit
@@ -88,6 +88,15 @@ The input data should be:
   - Format
   - Downloaded
 
+## Alternative Data Format
+
+The system also supports an alternative data format:
+- 3D MRI images in .nii format
+- A CSV file containing metadata with the following columns:
+  - image_id (without 'I' prefix)
+  - DX (with values: "Dementia" for AD, "MCI", and "CN")
+  - Other metadata columns
+
 ## Model Architecture
 
-The project uses a ResNet50-based 3D CNN architecture, implemented using the Model Factory pattern for easy extension. 
+The project uses a ResNet50-based 3D CNN architecture, implemented using the Model Factory pattern for easy extension.

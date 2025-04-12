@@ -10,6 +10,7 @@ import wandb
 from wandb.sdk.wandb_run import Run as WandbRun
 from torch.amp import autocast, GradScaler
 import torch.multiprocessing as mp
+from tqdm import tqdm
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     ReduceLROnPlateau,
@@ -59,7 +60,10 @@ def train_epoch(
     total = 0
     optimizer.zero_grad()
 
-    for batch_idx, batch in enumerate(train_loader):
+    # Create progress bar
+    pbar = tqdm(train_loader, desc="Training", leave=False)
+
+    for batch_idx, batch in enumerate(pbar):
         images = batch["image"].to(device)
         labels = batch["label"].to(device)
 
@@ -96,6 +100,14 @@ def train_epoch(
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
+
+        # Update progress bar
+        current_loss = total_loss / (batch_idx + 1)
+        current_acc = 100.0 * correct / total
+        pbar.set_postfix({
+            'loss': f'{current_loss:.4f}',
+            'acc': f'{current_acc:.2f}%'
+        })
 
         if log_batch_metrics and wandb_run is not None:
             wandb_run.log({
@@ -141,8 +153,11 @@ def validate(
     correct = 0
     total = 0
 
+    # Create progress bar
+    pbar = tqdm(val_loader, desc="Validation", leave=False)
+
     with torch.no_grad():
-        for batch in val_loader:
+        for batch_idx, batch in enumerate(pbar):
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
 
@@ -158,6 +173,14 @@ def validate(
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
+
+            # Update progress bar
+            current_loss = total_loss / (batch_idx + 1)
+            current_acc = 100.0 * correct / total
+            pbar.set_postfix({
+                'loss': f'{current_loss:.4f}',
+                'acc': f'{current_acc:.2f}%'
+            })
 
     avg_loss = total_loss / len(val_loader)
     avg_accuracy = 100.0 * correct / total
@@ -328,6 +351,7 @@ def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epo
         return ExponentialLR(optimizer, gamma=0.95)
     else:
         # No scheduler
+        print(f"[Warning] No learning rate scheduler specified, using no scheduler")
         return None
 
 
@@ -532,9 +556,9 @@ def main():
             wandb_log = {
                 "train/loss": train_loss,
                 "train/accuracy": train_acc,
+                "train/lr": current_lr,
                 "val/loss": val_loss,
                 "val/accuracy": val_acc,
-                "lr": current_lr,
             }
             wandb_run.log(wandb_log, step=epoch + 1)
 
