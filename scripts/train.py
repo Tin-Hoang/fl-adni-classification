@@ -62,6 +62,7 @@ def train_epoch(
 
     # Create progress bar
     pbar = tqdm(train_loader, desc="Training", leave=False)
+    num_batches = len(train_loader)
 
     for batch_idx, batch in enumerate(pbar):
         images = batch["image"].to(device)
@@ -78,8 +79,8 @@ def train_epoch(
             # Scale gradients and backpropagate
             scaler.scale(loss).backward()
 
-            # Step optimizer if we've accumulated enough gradients
-            if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            # Step optimizer if we've accumulated enough gradients or it's the last batch
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
@@ -91,8 +92,8 @@ def train_epoch(
             loss = loss / gradient_accumulation_steps
             loss.backward()
 
-            # Step optimizer if we've accumulated enough gradients
-            if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            # Step optimizer if we've accumulated enough gradients or it's the last batch
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -115,15 +116,8 @@ def train_epoch(
                 "train/batch_accuracy": 100.0 * correct / total,
             })
 
-    # Handle any remaining gradients
-    if use_mixed_precision and scaler is not None:
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        optimizer.step()
-    optimizer.zero_grad()
-
-    avg_loss = total_loss / len(train_loader)
+    # All gradient steps are handled in the loop now, no need for cleanup here
+    avg_loss = total_loss / num_batches
     avg_accuracy = 100.0 * correct / total
 
     return avg_loss, avg_accuracy
