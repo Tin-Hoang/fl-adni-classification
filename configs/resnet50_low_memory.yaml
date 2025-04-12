@@ -1,0 +1,37 @@
+data:
+  train_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  val_csv_path: "data/ADNI/codetest/ADNI1_Complete_1Yr_3T_codetest.csv"
+  img_dir: "data/ADNI/codetest"
+  resize_size: [128, 128, 128]  # Reduced from [224, 224, 224]
+  resize_mode: "trilinear"
+
+model:
+  name: "resnet3d"
+  num_classes: 3  # AD, MCI, CN
+  model_depth: 50
+  pretrained_checkpoint: null
+
+training:
+  batch_size: 2
+  num_epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  num_workers: 4
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
+  gradient_accumulation_steps: 4
+  mixed_precision: true
+  visualize: false
+  lr_scheduler: "cosine"
+  checkpoint:
+    save_best: true
+    save_latest: true
+    save_regular: false
+    save_frequency: 10
+
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["resnet50", "codetest"]
+  notes: "ResNet3D-50 with reduced memory usage for small dataset"
+  run_name: "resnet50_low_memory"
