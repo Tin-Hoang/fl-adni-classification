@@ -141,8 +141,9 @@ class ADNIDataset(Dataset):
             self.data["image_id"] = self.data["image_id"].astype(str)
 
             # Add 'I' prefix to image_id to create Image Data ID if not already prefixed
+            # Also strip any decimal points (e.g., "42832.0" -> "42832")
             self.data["Image Data ID"] = self.data["image_id"].apply(
-                lambda x: f"I{x}" if not x.startswith('I') else x
+                lambda x: f"I{x.split('.')[0]}" if not x.startswith('I') else x.split('.')[0]
             )
 
         # Verify that we have data after filtering
