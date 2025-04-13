@@ -175,3 +175,4 @@ cython_debug/
 
 # Ignore data at root dir, but keep it if it not from root
 data/
+data_old/
