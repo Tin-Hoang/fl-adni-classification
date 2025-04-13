@@ -157,7 +157,9 @@ def register_to_template(input_path: str, template_path: str, output_prefix: str
         "-d", "3",
         "-f", template_path,
         "-m", input_path,
-        "-o", output_prefix
+        "-o", output_prefix,
+        "-n", "20",            # Use 20 threads for parallel processing
+        "--random-seed", "42"  # Set random seed for reproducibility
     ]
 
     run_command(command)
