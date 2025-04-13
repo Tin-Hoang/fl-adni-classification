@@ -23,6 +23,12 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
+from tqdm import tqdm
+
+
+class PreprocessingError(Exception):
+    """Custom exception for preprocessing errors."""
+    pass
 
 
 def setup_logging() -> None:
@@ -41,8 +47,10 @@ def parse_arguments() -> argparse.Namespace:
                         help="Input directory containing MRI image files (.nii or .nii.gz)")
     parser.add_argument("--output", type=str, default=None,
                         help="Base output directory (default: parent dir of input directory)")
-    parser.add_argument("--template", type=str, default="data/ICBM152/mni_icbm152_t1_tal_nlin_sym_09a.nii",
+    parser.add_argument("--template", type=str, default="data/ICBM152/mni_icbm152_nlin_sym_09a/mni_icbm152_t1_tal_nlin_sym_09a.nii",
                         help="Template for registration")
+    parser.add_argument("--no-progress", action="store_true",
+                        help="Disable progress bars")
 
     args = parser.parse_args()
 
@@ -71,7 +79,7 @@ def find_nifti_files(input_dir: str) -> List[str]:
     return nii_files + nii_gz_files
 
 
-def check_dependencies() -> bool:
+def check_dependencies() -> None:
     """Check if required external dependencies are installed."""
     tools = {
         "ResampleImageBySpacing": "ANTs",
@@ -88,13 +96,10 @@ def check_dependencies() -> bool:
             missing_tools.append(f"{tool} (part of {package})")
 
     if missing_tools:
-        logging.error(f"Missing required tools: {', '.join(missing_tools)}")
-        return False
-
-    return True
+        raise PreprocessingError(f"Missing required tools: {', '.join(missing_tools)}")
 
 
-def run_command(command: list) -> Tuple[bool, str]:
+def run_command(command: list) -> str:
     """
     Execute a shell command and return result.
 
@@ -102,17 +107,22 @@ def run_command(command: list) -> Tuple[bool, str]:
         command: List containing the command and its arguments
 
     Returns:
-        Tuple of (success_status, output_or_error_message)
+        Command output
+
+    Raises:
+        PreprocessingError: If command execution fails
     """
     try:
         logging.info(f"Executing: {' '.join(command)}")
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        return True, result.stdout
+        return result.stdout
     except subprocess.CalledProcessError as e:
-        return False, f"Error executing {command[0]}: {e.stderr}"
+        error_msg = f"Error executing {command[0]}: {e.stderr}"
+        logging.error(error_msg)
+        raise PreprocessingError(error_msg) from e
 
 
-def resample_image(input_path: str, output_path: str) -> bool:
+def resample_image(input_path: str, output_path: str) -> None:
     """
     Resample MRI image to 1mm isotropic spacing.
 
@@ -120,20 +130,15 @@ def resample_image(input_path: str, output_path: str) -> bool:
         input_path: Path to input MRI image
         output_path: Path to save resampled image
 
-    Returns:
-        Success status
+    Raises:
+        PreprocessingError: If resampling fails
     """
     logging.info(f"Step 1: Resampling image {os.path.basename(input_path)} to 1mm isotropic spacing")
     command = ["ResampleImageBySpacing", "3", input_path, output_path, "1", "1", "1"]
-    success, message = run_command(command)
-
-    if not success:
-        logging.error(message)
-
-    return success
+    run_command(command)
 
 
-def register_to_template(input_path: str, template_path: str, output_prefix: str, final_output_path: str) -> bool:
+def register_to_template(input_path: str, template_path: str, output_prefix: str, final_output_path: str) -> None:
     """
     Register MRI image to standard template.
 
@@ -143,8 +148,8 @@ def register_to_template(input_path: str, template_path: str, output_prefix: str
         output_prefix: Prefix for intermediate output files
         final_output_path: Path to save the final registered image
 
-    Returns:
-        Success status
+    Raises:
+        PreprocessingError: If registration or file copying fails
     """
     logging.info(f"Step 2: Registering {os.path.basename(input_path)} to standard template")
     command = [
@@ -155,11 +160,7 @@ def register_to_template(input_path: str, template_path: str, output_prefix: str
         "-o", output_prefix
     ]
 
-    success, message = run_command(command)
-
-    if not success:
-        logging.error(message)
-        return False
+    run_command(command)
 
     # The registration script produces a warped image with this naming convention
     warped_image = f"{output_prefix}Warped.nii.gz"
@@ -171,19 +172,14 @@ def register_to_template(input_path: str, template_path: str, output_prefix: str
 
         # Use copy command to maintain the original format
         copy_command = ["cp", warped_image, final_output_path]
-        copy_success, copy_message = run_command(copy_command)
-
-        if not copy_success:
-            logging.error(copy_message)
-            return False
-
-        return True
+        run_command(copy_command)
     else:
-        logging.error(f"Expected warped image not found: {warped_image}")
-        return False
+        error_msg = f"Expected warped image not found: {warped_image}"
+        logging.error(error_msg)
+        raise PreprocessingError(error_msg)
 
 
-def skull_strip(input_path: str, output_path: str) -> bool:
+def skull_strip(input_path: str, output_path: str) -> None:
     """
     Remove non-brain tissue using BET.
 
@@ -191,8 +187,8 @@ def skull_strip(input_path: str, output_path: str) -> bool:
         input_path: Path to registered MRI image
         output_path: Path to save skull-stripped image
 
-    Returns:
-        Success status
+    Raises:
+        PreprocessingError: If skull stripping fails
     """
     logging.info(f"Step 3: Skull stripping {os.path.basename(input_path)}")
 
@@ -200,12 +196,7 @@ def skull_strip(input_path: str, output_path: str) -> bool:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     command = ["bet", input_path, output_path]
-    success, message = run_command(command)
-
-    if not success:
-        logging.error(message)
-
-    return success
+    run_command(command)
 
 
 def create_step_directory(base_dir: str, step_name: str) -> str:
@@ -252,7 +243,7 @@ def get_relative_path(file_path: str, base_dir: str) -> str:
         return os.path.basename(file_path)
 
 
-def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, template_file: str) -> bool:
+def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, template_file: str, show_progress: bool = True) -> None:
     """
     Execute the full preprocessing pipeline for a single file.
 
@@ -261,9 +252,10 @@ def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, templa
         input_dir: Base input directory to calculate relative path
         output_dir: Base directory to save output files
         template_file: Path to template image for registration
+        show_progress: Whether to show progress bars
 
-    Returns:
-        Overall success status
+    Raises:
+        PreprocessingError: If any preprocessing step fails
     """
     # Get the relative path from the input directory
     rel_path = get_relative_path(input_file, input_dir)
@@ -295,24 +287,31 @@ def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, templa
     # Define temporary file paths for intermediate processing
     temp_registration_prefix = os.path.join(temp_dir, f"{input_basename}_reg_")
 
-    # Step 1: Resample
-    if not resample_image(input_file, resampled_path):
-        return False
+    try:
+        # Define preprocessing steps
+        steps = [
+            ("Resampling", lambda: resample_image(input_file, resampled_path)),
+            ("Registration", lambda: register_to_template(resampled_path, template_file, temp_registration_prefix, registered_path)),
+            ("Skull Stripping", lambda: skull_strip(registered_path, skull_stripped_path))
+        ]
 
-    # Step 2: Register to template
-    if not register_to_template(resampled_path, template_file, temp_registration_prefix, registered_path):
-        return False
+        # Execute steps with progress bar if enabled
+        if show_progress:
+            for step_name, step_func in tqdm(steps, desc=f"Processing {os.path.basename(input_file)}", leave=False):
+                step_func()
+        else:
+            for step_name, step_func in steps:
+                logging.info(f"  - Step: {step_name}")
+                step_func()
 
-    # Step 3: Skull stripping
-    if not skull_strip(registered_path, skull_stripped_path):
-        return False
-
-    logging.info(f"Preprocessing complete for {rel_path}.")
-    logging.info(f"Final output: {skull_stripped_path}")
-    return True
+        logging.info(f"Preprocessing complete for {rel_path}.")
+        logging.info(f"Final output: {skull_stripped_path}")
+    except Exception as e:
+        logging.error(f"Failed preprocessing {rel_path}: {str(e)}")
+        raise
 
 
-def process_directory(input_dir: str, output_dir: str, template_file: str) -> bool:
+def process_directory(input_dir: str, output_dir: str, template_file: str, show_progress: bool = True) -> None:
     """
     Process all NIFTI files in the input directory.
 
@@ -320,26 +319,30 @@ def process_directory(input_dir: str, output_dir: str, template_file: str) -> bo
         input_dir: Directory containing input MRI images
         output_dir: Base directory to save output files
         template_file: Path to template image for registration
+        show_progress: Whether to show progress bars
 
-    Returns:
-        Overall success status
+    Raises:
+        PreprocessingError: If processing fails
     """
     # Find all NIFTI files in the input directory and subdirectories
     nifti_files = find_nifti_files(input_dir)
 
     if not nifti_files:
-        logging.error(f"No NIFTI files (.nii or .nii.gz) found in {input_dir}")
-        return False
+        raise PreprocessingError(f"No NIFTI files (.nii or .nii.gz) found in {input_dir}")
 
     logging.info(f"Found {len(nifti_files)} NIFTI files to process.")
 
-    # Process each file
-    success_count = 0
-    for nifti_file in nifti_files:
+    # Track progress
+    processed_files = 0
+
+    # Process each file with progress bar if enabled
+    file_iterator = tqdm(nifti_files, desc="Processing MRI files", unit="file") if show_progress else nifti_files
+
+    for nifti_file in file_iterator:
         rel_path = get_relative_path(nifti_file, input_dir)
-        logging.info(f"Processing file: {rel_path}")
-        if preprocess_mri_file(nifti_file, input_dir, output_dir, template_file):
-            success_count += 1
+        logging.info(f"Processing file {processed_files+1}/{len(nifti_files)}: {rel_path}")
+        preprocess_mri_file(nifti_file, input_dir, output_dir, template_file, show_progress)
+        processed_files += 1
 
     # Clean up temporary files
     temp_dir = os.path.join(os.path.dirname(output_dir), "temp")
@@ -348,30 +351,36 @@ def process_directory(input_dir: str, output_dir: str, template_file: str) -> bo
         import shutil
         shutil.rmtree(temp_dir)
 
-    logging.info(f"Preprocessing completed. Successfully processed {success_count}/{len(nifti_files)} files.")
-    return success_count == len(nifti_files)
+    logging.info(f"Preprocessing completed. Successfully processed {processed_files}/{len(nifti_files)} files.")
 
 
 def main() -> None:
     """Main entry point of the script."""
-    # Set up logging
-    setup_logging()
+    try:
+        # Set up logging
+        setup_logging()
 
-    # Parse command-line arguments
-    args = parse_arguments()
+        # Parse command-line arguments
+        args = parse_arguments()
 
-    # Check if dependencies are installed
-    if not check_dependencies():
+        # Check if dependencies are installed
+        check_dependencies()
+
+        # Process all files in the input directory
+        process_directory(
+            input_dir=args.input,
+            output_dir=args.output,
+            template_file=args.template,
+            show_progress=not args.no_progress
+        )
+
+        sys.exit(0)
+    except PreprocessingError as e:
+        logging.error(f"Preprocessing error: {str(e)}")
         sys.exit(1)
-
-    # Process all files in the input directory
-    success = process_directory(
-        input_dir=args.input,
-        output_dir=args.output,
-        template_file=args.template
-    )
-
-    sys.exit(0 if success else 1)
+    except Exception as e:
+        logging.error(f"Unexpected error: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
