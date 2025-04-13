@@ -158,7 +158,7 @@ def register_to_template(input_path: str, template_path: str, output_prefix: str
         "-f", template_path,
         "-m", input_path,
         "-o", output_prefix,
-        "-n", "20",            # Use 20 threads for parallel processing
+        "-n", "28",            # Use 28 threads for parallel processing
         "-e", "42"             # Set random seed for reproducibility
     ]
 
