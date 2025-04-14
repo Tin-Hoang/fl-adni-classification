@@ -330,12 +330,31 @@ def is_file_fully_processed(input_file: str, output_dir: str, input_dir: str) ->
     step2_dir = create_step_directory(output_dir, "2_registration")
     step3_dir = create_step_directory(output_dir, "3_skull_stripping")
 
-    resampled_path = os.path.join(step1_dir, rel_path)
-    registered_path = os.path.join(step2_dir, rel_path)
-    skull_stripped_path = os.path.join(step3_dir, rel_path)
+    # Get the base path without extension
+    base_path = os.path.splitext(rel_path)[0]
+    if base_path.endswith('.nii'):
+        base_path = os.path.splitext(base_path)[0]
 
-    # Check if all output files exist
-    return all(os.path.exists(path) for path in [resampled_path, registered_path, skull_stripped_path])
+    # Check both .nii and .nii.gz extensions
+    resampled_paths = [
+        os.path.join(step1_dir, base_path + ext)
+        for ext in ['.nii', '.nii.gz']
+    ]
+    registered_paths = [
+        os.path.join(step2_dir, base_path + ext)
+        for ext in ['.nii', '.nii.gz']
+    ]
+    skull_stripped_paths = [
+        os.path.join(step3_dir, base_path + ext)
+        for ext in ['.nii', '.nii.gz']
+    ]
+
+    # Check if at least one version of each output file exists
+    return (
+        any(os.path.exists(path) for path in resampled_paths) and
+        any(os.path.exists(path) for path in registered_paths) and
+        any(os.path.exists(path) for path in skull_stripped_paths)
+    )
 
 
 def get_last_processed_file(output_dir: str) -> Optional[str]:
@@ -412,6 +431,7 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
         return
 
     logging.info(f"Processing {len(files_to_process)} new files.")
+    input("Press Enter to continue...")
 
     # Process each file with progress bar if enabled
     file_iterator = tqdm(files_to_process, desc="Processing MRI files", unit="file") if show_progress else files_to_process
