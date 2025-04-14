@@ -225,17 +225,14 @@ def create_step_directory(base_dir: str, step_name: str) -> str:
 def get_relative_path(file_path: str, base_dir: str) -> str:
     """
     Get the relative path of a file from a base directory.
-
     Args:
         file_path: Absolute path to file
         base_dir: Base directory
-
     Returns:
         Relative path from base_dir to file_path
     """
     abs_base_dir = os.path.abspath(base_dir)
     abs_file_path = os.path.abspath(file_path)
-
     # Remove base_dir from the beginning of file_path to get the relative path
     if abs_file_path.startswith(abs_base_dir):
         rel_path = abs_file_path[len(abs_base_dir):].lstrip(os.sep)
@@ -313,19 +310,20 @@ def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, templa
         raise
 
 
-def is_file_fully_processed(input_file: str, output_dir: str) -> bool:
+def is_file_fully_processed(input_file: str, output_dir: str, input_dir: str) -> bool:
     """
     Check if a file has been fully processed by verifying all output files exist.
 
     Args:
         input_file: Path to input MRI image
         output_dir: Base output directory
+        input_dir: Base input directory
 
     Returns:
         True if all output files exist, False otherwise
     """
     # Get the relative path from the input directory
-    rel_path = get_relative_path(input_file, os.path.dirname(input_file))
+    rel_path = get_relative_path(input_file, input_dir)
 
     # Check all expected output files
     step1_dir = create_step_directory(output_dir, "1_resampling")
@@ -404,7 +402,7 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
     # Filter out already processed files
     files_to_process = []
     for nifti_file in nifti_files:
-        if not is_file_fully_processed(nifti_file, output_dir):
+        if not is_file_fully_processed(nifti_file, output_dir, input_dir):
             files_to_process.append(nifti_file)
         else:
             logging.info(f"Skipping already processed file: {nifti_file}")
