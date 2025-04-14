@@ -313,6 +313,63 @@ def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, templa
         raise
 
 
+def is_file_fully_processed(input_file: str, output_dir: str) -> bool:
+    """
+    Check if a file has been fully processed by verifying all output files exist.
+
+    Args:
+        input_file: Path to input MRI image
+        output_dir: Base output directory
+
+    Returns:
+        True if all output files exist, False otherwise
+    """
+    # Get the relative path from the input directory
+    rel_path = get_relative_path(input_file, os.path.dirname(input_file))
+
+    # Check all expected output files
+    step1_dir = create_step_directory(output_dir, "1_resampling")
+    step2_dir = create_step_directory(output_dir, "2_registration")
+    step3_dir = create_step_directory(output_dir, "3_skull_stripping")
+
+    resampled_path = os.path.join(step1_dir, rel_path)
+    registered_path = os.path.join(step2_dir, rel_path)
+    skull_stripped_path = os.path.join(step3_dir, rel_path)
+
+    # Check if all output files exist
+    return all(os.path.exists(path) for path in [resampled_path, registered_path, skull_stripped_path])
+
+
+def get_last_processed_file(output_dir: str) -> Optional[str]:
+    """
+    Get the path of the last processed file by checking modification times.
+
+    Args:
+        output_dir: Base output directory
+
+    Returns:
+        Path to the last processed file or None if no files were processed
+    """
+    step3_dir = create_step_directory(output_dir, "3_skull_stripping")
+    if not os.path.exists(step3_dir):
+        return None
+
+    # Get all skull-stripped files and sort by modification time
+    skull_stripped_files = []
+    for root, _, files in os.walk(step3_dir):
+        for file in files:
+            if file.endswith(('.nii', '.nii.gz')):
+                file_path = os.path.join(root, file)
+                skull_stripped_files.append((file_path, os.path.getmtime(file_path)))
+
+    if not skull_stripped_files:
+        return None
+
+    # Sort by modification time and get the most recent
+    skull_stripped_files.sort(key=lambda x: x[1])
+    return skull_stripped_files[-1][0]
+
+
 def process_directory(input_dir: str, output_dir: str, template_file: str, show_progress: bool = True) -> None:
     """
     Process all NIFTI files in the input directory.
@@ -334,17 +391,44 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
 
     logging.info(f"Found {len(nifti_files)} NIFTI files to process.")
 
-    # Track progress
-    processed_files = 0
+    # Get the last processed file (if any)
+    last_processed = get_last_processed_file(output_dir)
+    if last_processed:
+        logging.info(f"Found last processed file: {last_processed}")
+        # Remove the last processed file from the list to reprocess it
+        last_processed_input = os.path.join(input_dir, os.path.relpath(last_processed, create_step_directory(output_dir, "3_skull_stripping")))
+        if last_processed_input in nifti_files:
+            nifti_files.remove(last_processed_input)
+            logging.info("Will reprocess the last file to ensure it's not corrupted")
+
+    # Filter out already processed files
+    files_to_process = []
+    for nifti_file in nifti_files:
+        if not is_file_fully_processed(nifti_file, output_dir):
+            files_to_process.append(nifti_file)
+        else:
+            logging.info(f"Skipping already processed file: {nifti_file}")
+
+    if not files_to_process:
+        logging.info("No new files to process. All files have been processed.")
+        return
+
+    logging.info(f"Processing {len(files_to_process)} new files.")
 
     # Process each file with progress bar if enabled
-    file_iterator = tqdm(nifti_files, desc="Processing MRI files", unit="file") if show_progress else nifti_files
+    file_iterator = tqdm(files_to_process, desc="Processing MRI files", unit="file") if show_progress else files_to_process
 
     for nifti_file in file_iterator:
         rel_path = get_relative_path(nifti_file, input_dir)
-        logging.info(f"Processing file {processed_files+1}/{len(nifti_files)}: {rel_path}")
+        logging.info(f"Processing file: {rel_path}")
         preprocess_mri_file(nifti_file, input_dir, output_dir, template_file, show_progress)
-        processed_files += 1
+
+    # If there was a last processed file, reprocess it
+    if last_processed:
+        last_processed_input = os.path.join(input_dir, os.path.relpath(last_processed, create_step_directory(output_dir, "3_skull_stripping")))
+        if os.path.exists(last_processed_input):
+            logging.info("Reprocessing last file to ensure it's not corrupted...")
+            preprocess_mri_file(last_processed_input, input_dir, output_dir, template_file, show_progress)
 
     # Clean up temporary files
     temp_dir = os.path.join(os.path.dirname(output_dir), "temp")
@@ -353,7 +437,7 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
         import shutil
         shutil.rmtree(temp_dir)
 
-    logging.info(f"Preprocessing completed. Successfully processed {processed_files}/{len(nifti_files)} files.")
+    logging.info("Preprocessing completed.")
 
 
 def main() -> None:
