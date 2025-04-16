@@ -78,19 +78,30 @@ def shape_debug_func(x, expected_size):
     return x
 
 
-# Create a wrapper function for shape_debug_func with fixed expected_size
-def create_shape_checker(expected_size):
-    """Create a function that checks and corrects image shape.
+# Create a wrapper class for shape_debug_func with fixed expected_size
+class ShapeCheckerFunction:
+    """Class that checks and corrects image shape, designed to be picklable.
 
     Args:
         expected_size: Expected size tuple
-
-    Returns:
-        Function that takes an image and returns it with the correct shape
     """
-    def check_shape(x):
-        return shape_debug_func(x, expected_size)
-    return check_shape
+    def __init__(self, expected_size):
+        self.expected_size = expected_size
+
+    def __call__(self, x):
+        """Check and correct the image shape.
+
+        Args:
+            x: Input image tensor
+
+        Returns:
+            Image tensor with corrected shape
+        """
+        return shape_debug_func(x, self.expected_size)
+
+    def __reduce__(self):
+        """Support pickling by returning a tuple of class, args for reconstruction."""
+        return (self.__class__, (self.expected_size,))
 
 
 # Create a custom shape checker that can be pickled
@@ -412,7 +423,7 @@ def get_transforms(mode: str = "train",
     shape_checker = ShapeChecker(resize_size)
 
     # Create a function for shape checking that can be pickled
-    shape_check_func = create_shape_checker(resize_size)
+    shape_check_func = ShapeCheckerFunction(resize_size)
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
