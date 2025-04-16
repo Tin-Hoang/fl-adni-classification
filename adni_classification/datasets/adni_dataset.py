@@ -17,7 +17,121 @@ from monai.transforms import (
     RandRotate90d,
     ToTensord,
     Resized,
+    Lambdad,
 )
+
+
+# Define these functions at the module level so they can be pickled
+def debug_print_stage(x, stage="DEBUG"):
+    """Print debug information about an image tensor at a specific stage.
+
+    Args:
+        x: Image tensor
+        stage: Processing stage description
+
+    Returns:
+        x: The original image tensor (unchanged)
+    """
+    print(f"{stage} Image shape: {x.shape}")
+    return x
+
+
+def debug_original(x):
+    """Debug function for original image."""
+    return debug_print_stage(x, "ORIGINAL")
+
+
+def debug_orientation(x):
+    """Debug function after orientation transformation."""
+    return debug_print_stage(x, "AFTER ORIENTATION")
+
+
+def debug_spacing(x):
+    """Debug function after spacing transformation."""
+    return debug_print_stage(x, "AFTER SPACING")
+
+
+def debug_resize(x):
+    """Debug function after resize transformation."""
+    return debug_print_stage(x, "AFTER RESIZE")
+
+
+# Function for shape debug that can be pickled (module-level)
+def shape_debug_func(x, expected_size):
+    """Debug function to check tensor shape.
+
+    Args:
+        x: Image tensor
+        expected_size: Expected size of the tensor
+
+    Returns:
+        x: The original or resized image tensor
+    """
+    current_shape = x.shape[1:]  # Get spatial dimensions
+
+    if current_shape != expected_size:
+        print(f"Warning: Shape mismatch before correction. Current: {current_shape}, Expected: {expected_size}")
+        # Ensure shape matches by force resize
+        resize = monai.transforms.Resize(spatial_size=expected_size)
+        x = resize(x)
+        print(f"After resize: {x.shape[1:]}")
+    return x
+
+
+# Create a wrapper class for shape_debug_func with fixed expected_size
+class ShapeCheckerFunction:
+    """Class that checks and corrects image shape, designed to be picklable.
+
+    Args:
+        expected_size: Expected size tuple
+    """
+    def __init__(self, expected_size):
+        self.expected_size = expected_size
+
+    def __call__(self, x):
+        """Check and correct the image shape.
+
+        Args:
+            x: Input image tensor
+
+        Returns:
+            Image tensor with corrected shape
+        """
+        return shape_debug_func(x, self.expected_size)
+
+    def __reduce__(self):
+        """Support pickling by returning a tuple of class, args for reconstruction."""
+        return (self.__class__, (self.expected_size,))
+
+
+# Create a custom shape checker that can be pickled
+class ShapeChecker:
+    """Shape checking transform that can be pickled."""
+
+    def __init__(self, expected_size):
+        self.expected_size = expected_size
+
+    def __call__(self, image):
+        """Check that the image has the expected shape.
+
+        Args:
+            image: The image tensor to check
+
+        Returns:
+            The original image or resized image if needed
+        """
+        # Get the spatial dimensions (excluding channel dimension)
+        spatial_shape = image.shape[1:]
+        expected_shape = tuple(self.expected_size)
+
+        # Only resize if shapes don't match (without debug prints)
+        if spatial_shape != expected_shape:
+            if len(spatial_shape) == len(expected_shape):
+                # Use monai's Resize transform to fix the shape
+                resize = monai.transforms.Resize(spatial_size=expected_shape)
+                return resize(image)
+
+        return image
 
 
 class ADNIDataset(Dataset):
@@ -280,57 +394,106 @@ class ADNIDataset(Dataset):
         return data_dict
 
 
-def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160, 160, 160), resize_mode: str = "trilinear") -> monai.transforms.Compose:
+def get_transforms(mode: str = "train",
+                resize_size: Tuple[int, int, int] = (160, 160, 160),
+                resize_mode: str = "trilinear",
+                use_spacing: bool = True,
+                spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5)) -> monai.transforms.Compose:
     """Get transforms for training or validation.
 
     Args:
         mode: Either "train" or "val"
         resize_size: Tuple of (height, width, depth) for resizing
         resize_mode: Interpolation mode for resizing
+        use_spacing: Whether to include the Spacing transform (default: True)
+        spacing_size: Tuple of (x, y, z) spacing in mm (default: (1.5, 1.5, 1.5))
 
     Returns:
         A Compose transform
     """
+    # Ensure resize_size is a tuple for consistency
+    if not isinstance(resize_size, tuple):
+        resize_size = tuple(resize_size)
+
+    # Ensure spacing_size is a tuple
+    if not isinstance(spacing_size, tuple):
+        spacing_size = tuple(spacing_size)
+
+    # Create a shape checker instance that can be pickled
+    shape_checker = ShapeChecker(resize_size)
+
+    # Create a function for shape checking that can be pickled
+    shape_check_func = ShapeCheckerFunction(resize_size)
+
     common_transforms = [
-        LoadImaged(keys=["image"], image_only=False),  # Set image_only=False to handle both .nii and .nii.gz formats
+        LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
+        # Use specific orientation to ensure consistency
         Orientationd(keys=["image"], axcodes="RAS"),
-        Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
+    ]
+
+    # Add spacing transform if requested
+    if use_spacing:
+        common_transforms.append(
+            # Ensure consistent spacing
+            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear")
+        )
+
+    # Add the rest of the transforms
+    common_transforms.extend([
         # More robust intensity scaling using percentiles
         ScaleIntensityRanged(
             keys=["image"],
-            a_min=0.0,  # Use percentiles instead of fixed values
+            a_min=0.0,
             a_max=100.0,
             b_min=0.0,
             b_max=1.0,
             clip=True,
         ),
+        # Ensure all images have the same size
         Resized(
             keys=["image"],
             spatial_size=resize_size,
             mode=resize_mode,
         ),
-    ]
+        # Add an explicit transform to ensure consistent dimensions
+        # This will guarantee that all tensors have the exact same shape
+        Lambdad(
+            keys=["image"],
+            func=shape_check_func,
+        ),
+    ])
 
     if mode == "train":
         train_transforms = [
             # Stronger augmentation for small dataset
             RandAffined(
                 keys=["image"],
-                prob=0.8,  # Increased probability
-                rotate_range=(0.1, 0.1, 0.1),  # Increased rotation
-                scale_range=(0.2, 0.2, 0.2),  # Increased scaling
-                mode=("bilinear"),
+                prob=0.8,
+                rotate_range=(0.1, 0.1, 0.1),
+                scale_range=(0.2, 0.2, 0.2),
+                mode="bilinear",
+                padding_mode="zeros",  # Use 'zeros' for consistent behavior
             ),
             RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),  # Added flip in another axis
+            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),
             RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
-            # Add noise augmentation
             monai.transforms.RandGaussianNoised(
                 keys=["image"],
                 prob=0.5,
                 mean=0.0,
                 std=0.1,
+            ),
+            # Ensure consistent dimensions after augmentation
+            Resized(
+                keys=["image"],
+                spatial_size=resize_size,
+                mode=resize_mode,
+            ),
+            # Additional shape check after augmentation
+            Lambdad(
+                keys=["image"],
+                func=shape_check_func,
             ),
             ToTensord(keys=["image", "label"]),
         ]
@@ -351,9 +514,9 @@ def test_image_path_mapping():
     import argparse
 
     parser = argparse.ArgumentParser(description="Test the ADNI dataset image path mapping")
-    parser.add_argument("--csv_path", type=str, default="data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv",
+    parser.add_argument("--csv_path", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
                         help="Path to the CSV file containing image metadata and labels")
-    parser.add_argument("--img_dir", type=str, default="data/ADNI/ADNI1_Complete_1Yr_3T/ADNI",
+    parser.add_argument("--img_dir", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
                         help="Path to the directory containing the image files")
     parser.add_argument("--csv_format", type=str, choices=["original", "alternative"],
                         help="CSV format to test explicitly (will be auto-detected if not specified)")
@@ -443,5 +606,146 @@ def test_image_path_mapping():
     print("\nTest completed.")
 
 
+def test_transforms():
+    """Test the transformation pipeline on sample images from the ADNI dataset.
+
+    This function loads a few sample images from the dataset and applies the transforms,
+    displaying information about the final transformed images.
+    """
+    import argparse
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Test the ADNI dataset transforms")
+    parser.add_argument("--csv_path", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
+                        help="Path to the CSV file containing image metadata and labels")
+    parser.add_argument("--img_dir", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
+                        help="Path to the directory containing the image files")
+    parser.add_argument("--num_samples", type=int, default=3,
+                        help="Number of samples to test")
+    parser.add_argument("--resize_size", type=str, default="182,218,182",
+                        help="Resize dimensions (height,width,depth)")
+    parser.add_argument("--use_spacing", type=str, choices=["true", "false"], default="true",
+                        help="Whether to include spacing transform (true/false)")
+    parser.add_argument("--spacing_size", type=str, default="1.5,1.5,1.5",
+                        help="Spacing dimensions (x,y,z) in mm")
+    parser.add_argument("--visualize", action="store_true",
+                        help="Visualize the transformed images")
+    args = parser.parse_args()
+
+    # Parse resize dimensions
+    resize_size = tuple(map(int, args.resize_size.split(',')))
+
+    # Parse spacing parameters
+    use_spacing = args.use_spacing.lower() == "true"
+    spacing_size = tuple(map(float, args.spacing_size.split(',')))
+
+    print(f"Testing transforms with resize size: {resize_size}")
+    print(f"Using spacing transform: {use_spacing}")
+    if use_spacing:
+        print(f"Spacing size: {spacing_size}")
+    print(f"CSV path: {args.csv_path}")
+    print(f"Image directory: {args.img_dir}")
+
+    # Create transforms for testing
+    test_transforms = get_transforms(
+        mode="val",
+        resize_size=resize_size,
+        resize_mode="trilinear",
+        use_spacing=use_spacing,
+        spacing_size=spacing_size
+    )
+
+    # Create a dataset without transforms first
+    try:
+        dataset = ADNIDataset(args.csv_path, args.img_dir)
+        print(f"Successfully created dataset with {len(dataset)} samples")
+
+        # Test transforms on a few samples
+        print(f"\nTesting transforms on {args.num_samples} samples...")
+
+        for i in range(min(args.num_samples, len(dataset))):
+            # Get the sample without transforms
+            sample = dataset[i]
+            image_path = sample["image"]
+            label = sample["label"]
+            label_name = [k for k, v in dataset.label_map.items() if v == label][0]
+
+            print(f"\nSample {i+1}: {Path(image_path).name}, Label: {label_name} ({label})")
+
+            # Apply transforms
+            print("Applying transforms...")
+            transformed = test_transforms({"image": image_path, "label": label})
+
+            # Get transformed image shape
+            transformed_image = transformed["image"]
+            if isinstance(transformed_image, np.ndarray):
+                print(f"Transformed image: NumPy array with shape {transformed_image.shape}")
+            else:
+                print(f"Transformed image: Tensor with shape {transformed_image.shape}")
+
+            # Visualize if requested
+            if args.visualize:
+                try:
+                    # If it's a tensor, convert to numpy
+                    if hasattr(transformed_image, 'detach'):
+                        img_data = transformed_image.detach().cpu().numpy()
+                    else:
+                        img_data = transformed_image
+
+                    # Take middle slices
+                    if len(img_data.shape) == 4:  # [C, H, W, D]
+                        img_data = img_data[0]  # Take first channel
+
+                    mid_z = img_data.shape[2] // 2
+                    mid_y = img_data.shape[1] // 2
+                    mid_x = img_data.shape[0] // 2
+
+                    # Create a figure with three subplots (one for each view)
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+                    # Axial view (top-down)
+                    axes[0].imshow(img_data[:, :, mid_z], cmap='gray')
+                    axes[0].set_title(f'Axial (z={mid_z})')
+
+                    # Coronal view (front-back)
+                    axes[1].imshow(img_data[:, mid_y, :], cmap='gray')
+                    axes[1].set_title(f'Coronal (y={mid_y})')
+
+                    # Sagittal view (side)
+                    axes[2].imshow(img_data[mid_x, :, :], cmap='gray')
+                    axes[2].set_title(f'Sagittal (x={mid_x})')
+
+                    # Add overall title
+                    plt.suptitle(f'Sample {i+1}: {Path(image_path).name} - {label_name} ({label})')
+
+                    # Save the figure
+                    output_dir = Path('transform_test_output')
+                    output_dir.mkdir(exist_ok=True)
+                    plt.savefig(output_dir / f'sample_{i+1}_{Path(image_path).stem}.png')
+                    plt.close()
+                    print(f"Visualization saved to transform_test_output/sample_{i+1}_{Path(image_path).stem}.png")
+                except Exception as e:
+                    print(f"Error visualizing image: {e}")
+
+        print("\nTransform test completed successfully.")
+
+    except ValueError as e:
+        print(f"\nError creating dataset: {e}")
+
+
 if __name__ == "__main__":
-    test_image_path_mapping()
+    import sys
+
+    # Remove "test_transforms" from sys.argv if it's the first argument
+    if len(sys.argv) > 1 and sys.argv[1] == "test_transforms":
+        # Save original command for error messages
+        original_command = " ".join(sys.argv)
+        # Remove the test_transforms argument before parsing other arguments
+        sys.argv.pop(1)
+        test_transforms()
+    else:
+        test_image_path_mapping()

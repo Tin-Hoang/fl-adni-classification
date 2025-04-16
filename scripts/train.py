@@ -395,13 +395,17 @@ def main():
     train_transform = get_transforms(
         mode="train",
         resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode
+        resize_mode=config.data.resize_mode,
+        use_spacing=config.data.use_spacing,
+        spacing_size=tuple(config.data.spacing_size)
     )
 
     val_transform = get_transforms(
         mode="val",
         resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode
+        resize_mode=config.data.resize_mode,
+        use_spacing=config.data.use_spacing,
+        spacing_size=tuple(config.data.spacing_size)
     )
 
     train_dataset = ADNIDataset(
@@ -449,6 +453,12 @@ def main():
             model_kwargs["growth_rate"] = config.model.growth_rate
         if config.model.block_config is not None:
             model_kwargs["block_config"] = config.model.block_config
+
+    # Pass data configuration for models that need it (like SecureFedCNN)
+    if config.model.name == "securefed_cnn":
+        model_kwargs["data"] = {
+            "resize_size": config.data.resize_size
+        }
 
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     model = model.to(device)
