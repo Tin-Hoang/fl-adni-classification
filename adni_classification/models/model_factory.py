@@ -36,6 +36,20 @@ class ModelFactory:
         if model_name not in cls._models:
             raise ValueError(f"Model {model_name} not supported. Available models: {list(cls._models.keys())}")
 
+        # Extract input_size from kwargs if specified in config for SecureFedCNN
+        if model_name == "securefed_cnn" and "input_size" not in kwargs and "data" in kwargs:
+            if "resize_size" in kwargs["data"]:
+                # Pass the resize_size from config as input_size
+                input_size = kwargs["data"]["resize_size"]
+                print(f"Passing input_size {input_size} from config to SecureFedCNN")
+
+                # Remove data since it's not a model parameter
+                data = kwargs.pop("data")
+
+                # Create the model with the input_size
+                return cls._models[model_name](input_size=input_size, **kwargs)
+
+        # For other models, create as usual
         return cls._models[model_name](**kwargs)
 
     @classmethod

@@ -454,6 +454,12 @@ def main():
         if config.model.block_config is not None:
             model_kwargs["block_config"] = config.model.block_config
 
+    # Pass data configuration for models that need it (like SecureFedCNN)
+    if config.model.name == "securefed_cnn":
+        model_kwargs["data"] = {
+            "resize_size": config.data.resize_size
+        }
+
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     model = model.to(device)
 
