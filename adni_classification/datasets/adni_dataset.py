@@ -538,5 +538,125 @@ def test_image_path_mapping():
     print("\nTest completed.")
 
 
+def test_transforms():
+    """Test the transformation pipeline on sample images from the ADNI dataset.
+
+    This function loads a few sample images from the dataset and applies the transforms,
+    showing debug information about the images at each stage of transformation.
+    It can be used to verify that the transforms are working correctly.
+    """
+    import argparse
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Test the ADNI dataset transforms")
+    parser.add_argument("--csv_path", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
+                        help="Path to the CSV file containing image metadata and labels")
+    parser.add_argument("--img_dir", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
+                        help="Path to the directory containing the image files")
+    parser.add_argument("--num_samples", type=int, default=3,
+                        help="Number of samples to test")
+    parser.add_argument("--resize_size", type=str, default="182,218,182",
+                        help="Resize dimensions (height,width,depth)")
+    parser.add_argument("--visualize", action="store_true",
+                        help="Visualize the transformed images")
+    args = parser.parse_args()
+
+    # Parse resize dimensions
+    resize_size = tuple(map(int, args.resize_size.split(',')))
+
+    print(f"Testing transforms with resize size: {resize_size}")
+    print(f"CSV path: {args.csv_path}")
+    print(f"Image directory: {args.img_dir}")
+
+    # Create transforms for testing
+    test_transforms = get_transforms(mode="val", resize_size=resize_size, resize_mode="trilinear")
+
+    # Create a dataset without transforms first
+    try:
+        dataset = ADNIDataset(args.csv_path, args.img_dir)
+        print(f"Successfully created dataset with {len(dataset)} samples")
+
+        # Test transforms on a few samples
+        print(f"\nTesting transforms on {args.num_samples} samples...")
+
+        for i in range(min(args.num_samples, len(dataset))):
+            # Get the sample without transforms
+            sample = dataset[i]
+            image_path = sample["image"]
+            label = sample["label"]
+            label_name = [k for k, v in dataset.label_map.items() if v == label][0]
+
+            print(f"\nSample {i+1}: {Path(image_path).name}, Label: {label_name} ({label})")
+
+            # Apply transforms
+            print("Applying transforms...")
+            transformed = test_transforms({"image": image_path, "label": label})
+
+            # Get transformed image shape
+            transformed_image = transformed["image"]
+            if isinstance(transformed_image, np.ndarray):
+                print(f"Final transformed image: NumPy array with shape {transformed_image.shape}")
+            else:
+                print(f"Final transformed image: Tensor with shape {transformed_image.shape}")
+
+            # Visualize if requested
+            if args.visualize:
+                try:
+                    # If it's a tensor, convert to numpy
+                    if hasattr(transformed_image, 'detach'):
+                        img_data = transformed_image.detach().cpu().numpy()
+                    else:
+                        img_data = transformed_image
+
+                    # Take middle slices
+                    if len(img_data.shape) == 4:  # [C, H, W, D]
+                        img_data = img_data[0]  # Take first channel
+
+                    mid_z = img_data.shape[2] // 2
+                    mid_y = img_data.shape[1] // 2
+                    mid_x = img_data.shape[0] // 2
+
+                    # Create a figure with three subplots (one for each view)
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+                    # Axial view (top-down)
+                    axes[0].imshow(img_data[:, :, mid_z], cmap='gray')
+                    axes[0].set_title(f'Axial (z={mid_z})')
+
+                    # Coronal view (front-back)
+                    axes[1].imshow(img_data[:, mid_y, :], cmap='gray')
+                    axes[1].set_title(f'Coronal (y={mid_y})')
+
+                    # Sagittal view (side)
+                    axes[2].imshow(img_data[mid_x, :, :], cmap='gray')
+                    axes[2].set_title(f'Sagittal (x={mid_x})')
+
+                    # Add overall title
+                    plt.suptitle(f'Sample {i+1}: {Path(image_path).name} - {label_name} ({label})')
+
+                    # Save the figure
+                    output_dir = Path('transform_test_output')
+                    output_dir.mkdir(exist_ok=True)
+                    plt.savefig(output_dir / f'sample_{i+1}_{Path(image_path).stem}.png')
+                    plt.close()
+                    print(f"Visualization saved to transform_test_output/sample_{i+1}_{Path(image_path).stem}.png")
+                except Exception as e:
+                    print(f"Error visualizing image: {e}")
+
+        print("\nTransform test completed successfully.")
+
+    except ValueError as e:
+        print(f"\nError creating dataset: {e}")
+
+
 if __name__ == "__main__":
-    test_image_path_mapping()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "test_transforms":
+        test_transforms()
+    else:
+        test_image_path_mapping()
