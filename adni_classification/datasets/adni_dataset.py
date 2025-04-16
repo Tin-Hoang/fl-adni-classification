@@ -36,8 +36,8 @@ class ADNIDataset(Dataset):
     - image_id: The ID of the image in the ADNI database (without 'I' prefix)
     - DX: The diagnosis group (Dementia, MCI, CN)
 
-    The image files are expected to be in NiFTI format (.nii) and organized in a directory structure
-    where the Image ID appears both in the filename (as a suffix before .nii) and in the parent directory.
+    The image files are expected to be in NiFTI format (.nii or .nii.gz) and organized in a directory structure
+    where the Image ID appears both in the filename (as a suffix before .nii/.nii.gz) and in the parent directory.
     """
 
     def __init__(
@@ -159,10 +159,10 @@ class ADNIDataset(Dataset):
             print(f"  {group}: {count}")
 
     def _find_image_files(self, root_dir: str) -> Dict[str, str]:
-        """Find all .nii files in the root directory and map them to Image IDs.
+        """Find all .nii and .nii.gz files in the root directory and map them to Image IDs.
 
         Args:
-            root_dir: Root directory to search for .nii files
+            root_dir: Root directory to search for .nii and .nii.gz files
 
         Returns:
             Dictionary mapping Image IDs to file paths
@@ -173,7 +173,7 @@ class ADNIDataset(Dataset):
         # Walk through the directory tree
         for root, _, files in os.walk(root_dir):
             for file in files:
-                if file.endswith('.nii'):
+                if file.endswith('.nii') or file.endswith('.nii.gz'):
                     file_path = os.path.join(root, file)
                     parent_dir = os.path.basename(root)
 
@@ -204,8 +204,10 @@ class ADNIDataset(Dataset):
                     if len(found_ids) < 10:
                         found_ids.append((image_id, file_path, parent_dir))
 
-                    # Add to the mapping
-                    image_paths[image_id] = file_path
+                    # Add to the mapping - if both .nii and .nii.gz exist for same ID,
+                    # prioritize .nii.gz as it's likely the more recent/compressed version
+                    if image_id not in image_paths or file.endswith('.nii.gz'):
+                        image_paths[image_id] = file_path
 
         # Print the first 10 IDs found for debugging
         print("\nFirst 10 image IDs found in files:")
@@ -223,6 +225,12 @@ class ADNIDataset(Dataset):
         Returns:
             The extracted Image ID or None if not found
         """
+        # Remove .nii.gz or .nii extension before splitting
+        if filename.endswith('.nii.gz'):
+            filename = filename[:-7]  # Remove .nii.gz
+        elif filename.endswith('.nii'):
+            filename = filename[:-4]  # Remove .nii
+
         parts = filename.split('_')
 
         # First try to find an ID that starts with 'I' followed by digits
@@ -284,7 +292,7 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
         A Compose transform
     """
     common_transforms = [
-        LoadImaged(keys=["image"]),
+        LoadImaged(keys=["image"], image_only=False),  # Set image_only=False to handle both .nii and .nii.gz formats
         EnsureChannelFirstd(keys=["image"]),
         Orientationd(keys=["image"], axcodes="RAS"),
         Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
@@ -382,18 +390,41 @@ def test_image_path_mapping():
 
         # Print information about the mapped image paths
         print("\nImage path mapping:")
+        file_formats = {'.nii': 0, '.nii.gz': 0}
+
         for image_id, file_path in list(dataset.image_paths.items())[:5]:  # Show first 5 mappings
+            # Determine file format
+            if file_path.endswith('.nii.gz'):
+                file_formats['.nii.gz'] += 1
+                format_str = "(.nii.gz)"
+            elif file_path.endswith('.nii'):
+                file_formats['.nii'] += 1
+                format_str = "(.nii)"
+            else:
+                format_str = "(unknown format)"
+
             # Get the label for this image ID
             row = dataset.data[dataset.data["Image Data ID"] == image_id]
             if not row.empty:
                 label_group = row["Group"].iloc[0]
                 label_idx = dataset.label_map[label_group]
-                print(f"  {image_id} -> {os.path.basename(file_path)} (Label: {label_group}, ID: {label_idx})")
+                print(f"  {image_id} -> {os.path.basename(file_path)} {format_str} (Label: {label_group}, ID: {label_idx})")
             else:
-                print(f"  {image_id} -> {os.path.basename(file_path)} (Label: unknown)")
+                print(f"  {image_id} -> {os.path.basename(file_path)} {format_str} (Label: unknown)")
 
         if len(dataset.image_paths) > 5:
             print(f"  ... and {len(dataset.image_paths) - 5} more")
+
+        # Count all file formats
+        for img_path in dataset.image_paths.values():
+            if img_path.endswith('.nii.gz'):
+                file_formats['.nii.gz'] += 1
+            elif img_path.endswith('.nii'):
+                file_formats['.nii'] += 1
+
+        print("\nFile format distribution:")
+        print(f"  .nii files: {file_formats['.nii']}")
+        print(f"  .nii.gz files: {file_formats['.nii.gz']}")
 
         # If using the alternative format, show the mapping from DX to Group
         if dataset.csv_format == "alternative":
