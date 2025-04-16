@@ -4,6 +4,8 @@ data:
   img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
   resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
   resize_mode: "trilinear"  # Default resize mode
+  use_spacing: false  # Disable spacing transform since images are already preprocessed
+  spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model

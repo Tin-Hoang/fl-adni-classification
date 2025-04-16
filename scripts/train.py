@@ -395,13 +395,17 @@ def main():
     train_transform = get_transforms(
         mode="train",
         resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode
+        resize_mode=config.data.resize_mode,
+        use_spacing=config.data.use_spacing,
+        spacing_size=tuple(config.data.spacing_size)
     )
 
     val_transform = get_transforms(
         mode="val",
         resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode
+        resize_mode=config.data.resize_mode,
+        use_spacing=config.data.use_spacing,
+        spacing_size=tuple(config.data.spacing_size)
     )
 
     train_dataset = ADNIDataset(

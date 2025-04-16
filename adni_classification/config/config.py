@@ -16,6 +16,8 @@ class DataConfig:
     img_dir: str
     resize_size: List[int] = field(default_factory=lambda: [160, 160, 160])
     resize_mode: str = "trilinear"
+    use_spacing: bool = True
+    spacing_size: List[float] = field(default_factory=lambda: [1.5, 1.5, 1.5])
 
 
 @dataclass
@@ -143,6 +145,8 @@ class Config:
                 "img_dir": self.data.img_dir,
                 "resize_size": self.data.resize_size,
                 "resize_mode": self.data.resize_mode,
+                "use_spacing": self.data.use_spacing,
+                "spacing_size": self.data.spacing_size,
             },
             "model": {
                 "name": self.model.name,

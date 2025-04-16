@@ -76,18 +76,9 @@ class ShapeChecker:
         spatial_shape = image.shape[1:]
         expected_shape = tuple(self.expected_size)
 
-        # Print dimensions for debugging
-        print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
-
+        # Only resize if shapes don't match (without debug prints)
         if spatial_shape != expected_shape:
-            print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
-
-            # Reshape if needed - this is a fallback but shouldn't be necessary
-            # if Resized transform is working correctly
             if len(spatial_shape) == len(expected_shape):
-                # Only for debugging - this message helps identify if this fallback is used
-                print(f"Reshaping image from {spatial_shape} to {expected_shape}")
-
                 # Use monai's Resize transform to fix the shape
                 resize = monai.transforms.Resize(spatial_size=expected_shape)
                 return resize(image)
@@ -355,13 +346,19 @@ class ADNIDataset(Dataset):
         return data_dict
 
 
-def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160, 160, 160), resize_mode: str = "trilinear") -> monai.transforms.Compose:
+def get_transforms(mode: str = "train",
+                resize_size: Tuple[int, int, int] = (160, 160, 160),
+                resize_mode: str = "trilinear",
+                use_spacing: bool = True,
+                spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5)) -> monai.transforms.Compose:
     """Get transforms for training or validation.
 
     Args:
         mode: Either "train" or "val"
         resize_size: Tuple of (height, width, depth) for resizing
         resize_mode: Interpolation mode for resizing
+        use_spacing: Whether to include the Spacing transform (default: True)
+        spacing_size: Tuple of (x, y, z) spacing in mm (default: (1.5, 1.5, 1.5))
 
     Returns:
         A Compose transform
@@ -370,22 +367,29 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
     if not isinstance(resize_size, tuple):
         resize_size = tuple(resize_size)
 
+    # Ensure spacing_size is a tuple
+    if not isinstance(spacing_size, tuple):
+        spacing_size = tuple(spacing_size)
+
     # Create a shape checker instance that can be pickled
     shape_checker = ShapeChecker(resize_size)
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
-        # Debug transform to print original shape after loading
-        Lambdad(keys=["image"], func=debug_original),
         # Use specific orientation to ensure consistency
         Orientationd(keys=["image"], axcodes="RAS"),
-        # Debug after orientation
-        Lambdad(keys=["image"], func=debug_orientation),
-        # Ensure consistent spacing
-        Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode="bilinear"),
-        # Debug after spacing
-        Lambdad(keys=["image"], func=debug_spacing),
+    ]
+
+    # Add spacing transform if requested
+    if use_spacing:
+        common_transforms.append(
+            # Ensure consistent spacing
+            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear")
+        )
+
+    # Add the rest of the transforms
+    common_transforms.extend([
         # More robust intensity scaling using percentiles
         ScaleIntensityRanged(
             keys=["image"],
@@ -401,11 +405,7 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
             spatial_size=resize_size,
             mode=resize_mode,
         ),
-        # Debug after resize
-        Lambdad(keys=["image"], func=debug_resize),
-        # Add a shape checking transform for debugging
-        Lambdad(keys=["image"], func=shape_checker),
-    ]
+    ])
 
     if mode == "train":
         train_transforms = [
@@ -542,8 +542,7 @@ def test_transforms():
     """Test the transformation pipeline on sample images from the ADNI dataset.
 
     This function loads a few sample images from the dataset and applies the transforms,
-    showing debug information about the images at each stage of transformation.
-    It can be used to verify that the transforms are working correctly.
+    displaying information about the final transformed images.
     """
     import argparse
     import matplotlib.pyplot as plt
@@ -561,6 +560,10 @@ def test_transforms():
                         help="Number of samples to test")
     parser.add_argument("--resize_size", type=str, default="182,218,182",
                         help="Resize dimensions (height,width,depth)")
+    parser.add_argument("--use_spacing", type=str, choices=["true", "false"], default="true",
+                        help="Whether to include spacing transform (true/false)")
+    parser.add_argument("--spacing_size", type=str, default="1.5,1.5,1.5",
+                        help="Spacing dimensions (x,y,z) in mm")
     parser.add_argument("--visualize", action="store_true",
                         help="Visualize the transformed images")
     args = parser.parse_args()
@@ -568,12 +571,25 @@ def test_transforms():
     # Parse resize dimensions
     resize_size = tuple(map(int, args.resize_size.split(',')))
 
+    # Parse spacing parameters
+    use_spacing = args.use_spacing.lower() == "true"
+    spacing_size = tuple(map(float, args.spacing_size.split(',')))
+
     print(f"Testing transforms with resize size: {resize_size}")
+    print(f"Using spacing transform: {use_spacing}")
+    if use_spacing:
+        print(f"Spacing size: {spacing_size}")
     print(f"CSV path: {args.csv_path}")
     print(f"Image directory: {args.img_dir}")
 
     # Create transforms for testing
-    test_transforms = get_transforms(mode="val", resize_size=resize_size, resize_mode="trilinear")
+    test_transforms = get_transforms(
+        mode="val",
+        resize_size=resize_size,
+        resize_mode="trilinear",
+        use_spacing=use_spacing,
+        spacing_size=spacing_size
+    )
 
     # Create a dataset without transforms first
     try:
@@ -599,9 +615,9 @@ def test_transforms():
             # Get transformed image shape
             transformed_image = transformed["image"]
             if isinstance(transformed_image, np.ndarray):
-                print(f"Final transformed image: NumPy array with shape {transformed_image.shape}")
+                print(f"Transformed image: NumPy array with shape {transformed_image.shape}")
             else:
-                print(f"Final transformed image: Tensor with shape {transformed_image.shape}")
+                print(f"Transformed image: Tensor with shape {transformed_image.shape}")
 
             # Visualize if requested
             if args.visualize:
