@@ -17,7 +17,92 @@ from monai.transforms import (
     RandRotate90d,
     ToTensord,
     Resized,
+    Lambdad,
 )
+
+
+# Define these functions at the module level so they can be pickled
+def debug_print_stage(x, d, stage="DEBUG"):
+    """Print debug information about an image tensor at a specific stage.
+
+    Args:
+        x: Image tensor
+        d: Transform dictionary
+        stage: Processing stage description
+
+    Returns:
+        x: The original image tensor (unchanged)
+    """
+    if "image_meta_dict" in d and "filename_or_obj" in d["image_meta_dict"]:
+        filename = os.path.basename(d["image_meta_dict"]["filename_or_obj"])
+        print(f"{stage} Image ID: {filename}, Shape: {x.shape}")
+    else:
+        print(f"{stage} Image shape: {x.shape}")
+    return x
+
+
+def debug_original(x, d):
+    """Debug function for original image."""
+    return debug_print_stage(x, d, "ORIGINAL")
+
+
+def debug_orientation(x, d):
+    """Debug function after orientation transformation."""
+    return debug_print_stage(x, d, "AFTER ORIENTATION")
+
+
+def debug_spacing(x, d):
+    """Debug function after spacing transformation."""
+    return debug_print_stage(x, d, "AFTER SPACING")
+
+
+def debug_resize(x, d):
+    """Debug function after resize transformation."""
+    return debug_print_stage(x, d, "AFTER RESIZE")
+
+
+def check_shape(image, expected_size):
+    """Check that the image has the expected shape, raise error if not.
+
+    Args:
+        image: The image tensor to check
+        expected_size: The expected spatial size (height, width, depth)
+
+    Returns:
+        The original image, unchanged
+    """
+    # Get the spatial dimensions (excluding channel dimension)
+    spatial_shape = image.shape[1:]
+    expected_shape = tuple(expected_size)
+
+    # Print dimensions for debugging
+    print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
+
+    if spatial_shape != expected_shape:
+        print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
+
+        # Reshape if needed - this is a fallback but shouldn't be necessary
+        # if Resized transform is working correctly
+        if len(spatial_shape) == len(expected_shape):
+            # Only for debugging - this message helps identify if this fallback is used
+            print(f"Reshaping image from {spatial_shape} to {expected_shape}")
+
+            # Use monai's Resize transform to fix the shape
+            resize = monai.transforms.Resize(spatial_size=expected_shape)
+            return resize(image)
+
+    return image
+
+
+# Create a custom shape checker that can be pickled
+class ShapeChecker:
+    """Shape checking transform that can be pickled."""
+
+    def __init__(self, expected_size):
+        self.expected_size = expected_size
+
+    def __call__(self, image):
+        return check_shape(image, self.expected_size)
 
 
 class ADNIDataset(Dataset):
@@ -295,28 +380,22 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
     if not isinstance(resize_size, tuple):
         resize_size = tuple(resize_size)
 
-    # Lambda function for printing debug info while returning the original tensor
-    def debug_print(x, d, stage):
-        if "image_meta_dict" in d and "filename_or_obj" in d["image_meta_dict"]:
-            filename = os.path.basename(d["image_meta_dict"]["filename_or_obj"])
-            print(f"{stage} Image ID: {filename}, Shape: {x.shape}")
-        else:
-            print(f"{stage} Image shape: {x.shape}")
-        return x
+    # Create a shape checker instance that can be pickled
+    shape_checker = ShapeChecker(resize_size)
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),  # Set image_only=False to handle both .nii and .nii.gz formats
         EnsureChannelFirstd(keys=["image"]),
         # Debug transform to print original shape after loading
-        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "ORIGINAL")),
+        Lambdad(keys=["image"], func=debug_original),
         # Use specific orientation to ensure consistency
         Orientationd(keys=["image"], axcodes="RAS"),
         # Debug after orientation
-        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER ORIENTATION")),
+        Lambdad(keys=["image"], func=debug_orientation),
         # Ensure consistent spacing
         Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode="bilinear"),
         # Debug after spacing
-        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER SPACING")),
+        Lambdad(keys=["image"], func=debug_spacing),
         # More robust intensity scaling using percentiles
         ScaleIntensityRanged(
             keys=["image"],
@@ -333,12 +412,9 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
             mode=resize_mode,
         ),
         # Debug after resize
-        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER RESIZE")),
+        Lambdad(keys=["image"], func=debug_resize),
         # Add a shape checking transform for debugging
-        monai.transforms.Lambdad(
-            keys=["image"],
-            func=lambda x: check_shape(x, resize_size),
-        ),
+        Lambdad(keys=["image"], func=shape_checker),
     ]
 
     if mode == "train":
@@ -369,39 +445,6 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
             ToTensord(keys=["image", "label"]),
         ]
         return Compose(common_transforms + val_transforms)
-
-
-def check_shape(image, expected_size):
-    """Check that the image has the expected shape, raise error if not.
-
-    Args:
-        image: The image tensor to check
-        expected_size: The expected spatial size (height, width, depth)
-
-    Returns:
-        The original image, unchanged
-    """
-    # Get the spatial dimensions (excluding channel dimension)
-    spatial_shape = image.shape[1:]
-    expected_shape = tuple(expected_size)
-
-    # Print dimensions for debugging
-    print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
-
-    if spatial_shape != expected_shape:
-        print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
-
-        # Reshape if needed - this is a fallback but shouldn't be necessary
-        # if Resized transform is working correctly
-        if len(spatial_shape) == len(expected_shape):
-            # Only for debugging - this message helps identify if this fallback is used
-            print(f"Reshaping image from {spatial_shape} to {expected_shape}")
-
-            # Use monai's Resize transform to fix the shape
-            resize = monai.transforms.Resize(spatial_size=expected_shape)
-            return resize(image)
-
-    return image
 
 
 def test_image_path_mapping():
