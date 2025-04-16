@@ -1,0 +1,29 @@
+data:
+  train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv"
+  val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_val_119images.csv"
+  img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
+  resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
+
+model:
+  name: "securefed_cnn"  # Using our secure federated CNN model
+  num_classes: 3  # CN, MCI, AD
+  pretrained_checkpoint: null
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  num_workers: 4
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
+  visualize: false
+  lr_scheduler: "cosine"
+
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["securefed-cnn", "1.5T_bl_scaled_594images_skullstripped"]
+  notes: "Using the SecureFedCNN model for ADNI classification"
+  run_name: "securefed-cnn-training-1.5T_bl_scaled_594images_skullstripped"

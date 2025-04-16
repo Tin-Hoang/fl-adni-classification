@@ -6,6 +6,7 @@ from adni_classification.models.base_model import BaseModel
 from adni_classification.models.resnet3d import ResNet3D
 from adni_classification.models.densenet3d import DenseNet3D
 from adni_classification.models.simple_cnn import Simple3DCNN
+from adni_classification.models.securefed_cnn import SecureFedCNN
 
 
 class ModelFactory:
@@ -15,6 +16,7 @@ class ModelFactory:
         "resnet3d": ResNet3D,
         "densenet3d": DenseNet3D,
         "simple3dcnn": Simple3DCNN,
+        "securefed_cnn": SecureFedCNN,
     }
 
     @classmethod
