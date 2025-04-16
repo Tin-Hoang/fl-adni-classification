@@ -56,6 +56,43 @@ def debug_resize(x):
     return debug_print_stage(x, "AFTER RESIZE")
 
 
+# Function for shape debug that can be pickled (module-level)
+def shape_debug_func(x, expected_size):
+    """Debug function to check tensor shape.
+
+    Args:
+        x: Image tensor
+        expected_size: Expected size of the tensor
+
+    Returns:
+        x: The original or resized image tensor
+    """
+    current_shape = x.shape[1:]  # Get spatial dimensions
+
+    if current_shape != expected_size:
+        print(f"Warning: Shape mismatch before correction. Current: {current_shape}, Expected: {expected_size}")
+        # Ensure shape matches by force resize
+        resize = monai.transforms.Resize(spatial_size=expected_size)
+        x = resize(x)
+        print(f"After resize: {x.shape[1:]}")
+    return x
+
+
+# Create a wrapper function for shape_debug_func with fixed expected_size
+def create_shape_checker(expected_size):
+    """Create a function that checks and corrects image shape.
+
+    Args:
+        expected_size: Expected size tuple
+
+    Returns:
+        Function that takes an image and returns it with the correct shape
+    """
+    def check_shape(x):
+        return shape_debug_func(x, expected_size)
+    return check_shape
+
+
 # Create a custom shape checker that can be pickled
 class ShapeChecker:
     """Shape checking transform that can be pickled."""
@@ -346,27 +383,6 @@ class ADNIDataset(Dataset):
         return data_dict
 
 
-def shape_debug_func(x, expected_size):
-    """Debug function to check tensor shape.
-
-    Args:
-        x: Image tensor
-        expected_size: Expected size of the tensor
-
-    Returns:
-        x: The original or resized image tensor
-    """
-    current_shape = x.shape[1:]  # Get spatial dimensions
-
-    if current_shape != expected_size:
-        print(f"Warning: Shape mismatch before correction. Current: {current_shape}, Expected: {expected_size}")
-        # Ensure shape matches by force resize
-        resize = monai.transforms.Resize(spatial_size=expected_size)
-        x = resize(x)
-        print(f"After resize: {x.shape[1:]}")
-    return x
-
-
 def get_transforms(mode: str = "train",
                 resize_size: Tuple[int, int, int] = (160, 160, 160),
                 resize_mode: str = "trilinear",
@@ -394,6 +410,9 @@ def get_transforms(mode: str = "train",
 
     # Create a shape checker instance that can be pickled
     shape_checker = ShapeChecker(resize_size)
+
+    # Create a function for shape checking that can be pickled
+    shape_check_func = create_shape_checker(resize_size)
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
@@ -430,7 +449,7 @@ def get_transforms(mode: str = "train",
         # This will guarantee that all tensors have the exact same shape
         Lambdad(
             keys=["image"],
-            func=lambda x: shape_debug_func(x, resize_size),
+            func=shape_check_func,
         ),
     ])
 
@@ -463,7 +482,7 @@ def get_transforms(mode: str = "train",
             # Additional shape check after augmentation
             Lambdad(
                 keys=["image"],
-                func=lambda x: shape_debug_func(x, resize_size),
+                func=shape_check_func,
             ),
             ToTensord(keys=["image", "label"]),
         ]
