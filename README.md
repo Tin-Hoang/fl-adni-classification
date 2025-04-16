@@ -77,7 +77,7 @@ The input data should be:
 - A CSV file containing metadata with the following columns:
   - Image Data ID
   - Subject
-  - Group (AD, MCI, NC)
+  - Group (AD, MCI, CN)
   - Sex
   - Age
   - Visit
@@ -88,6 +88,86 @@ The input data should be:
   - Format
   - Downloaded
 
+## Alternative Data Format
+
+The system also supports an alternative data format:
+- 3D MRI images in .nii format
+- A CSV file containing metadata with the following columns:
+  - image_id (without 'I' prefix)
+  - DX (with values: "Dementia" for AD, "MCI", and "CN")
+  - Other metadata columns
+
 ## Model Architecture
 
-The project uses a ResNet50-based 3D CNN architecture, implemented using the Model Factory pattern for easy extension. 
+The project uses a ResNet50-based 3D CNN architecture, implemented using the Model Factory pattern for easy extension.
+
+# ADNI MRI Preprocessing Tool
+
+Automates preprocessing for ADNI MRI images:
+1. Resampling to 1mm isotropic spacing
+2. Registration to a standard template
+3. Skull stripping
+
+## Requirements
+
+- Python 3.6+
+- ANTs (Advanced Normalization Tools)
+- FSL (FMRIB Software Library)
+
+## Usage
+
+```bash
+python scripts/preprocess_mri.py --input input_folder [--output output_dir] [--template template.nii.gz]
+```
+
+### Arguments
+
+- `--input`: Path to input directory containing MRI images (required)
+- `--output`: Base output directory (default: same folder name in parent directory)
+- `--template`: Template for registration (default: data/ICBM152/mni_icbm152_t1_tal_nlin_sym_09a.nii)
+
+### Output Structure
+
+For each .nii or .nii.gz file in the input directory, the script creates:
+
+- `<dirname>/<basename>_step1_resampling/`: Contains resampled images
+- `<dirname>/<basename>_step2_registration/`: Contains registration outputs
+- `<dirname>/<basename>_step3_skull_stripping/`: Contains final skull-stripped images
+
+Where `<dirname>` is the parent directory of the input folder and `<basename>` is the name of the input folder.
+
+The script preserves the original subfolder structure in each step's output directory.
+Each output file maintains the same filename and directory structure as in the input directory.
+
+### Example
+
+Using this input structure:
+```
+/path/to/input_dir/
+└── subject001/
+    └── session01/
+        └── scan.nii
+```
+
+You can run:
+```bash
+python scripts/preprocess_mri.py --input /path/to/input_dir
+```
+
+The script will create:
+```
+/path/to/input_dir_step1_resampling/
+└── subject001/
+    └── session01/
+        └── scan.nii
+
+/path/to/input_dir_step2_registration/
+└── subject001/
+    └── session01/
+        └── scan.nii
+
+/path/to/input_dir_step3_skull_stripping/
+└── subject001/
+    └── session01/
+        └── scan.nii.gz
+```

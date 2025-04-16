@@ -9,7 +9,7 @@ data:
 # Model configuration
 model:
   name: "densenet3d"
-  num_classes: 3  # AD, MCI, CN
+  num_classes: 3  # CN, MCI, AD
   growth_rate: 32
   block_config: [6, 12, 24, 16]
   pretrained_checkpoint: null

@@ -1,7 +1,7 @@
 data:
-  train_csv_path: "data/ADNI/ADNI1234GO_random_train.csv"
-  val_csv_path: "data/ADNI/ADNI1234GO_random_val.csv"
-  img_dir: "data/ADNI/ADNI1234GO_bl_229subjects_MRI_3T_Processed"
+  train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv"
+  val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_val_119images.csv"
+  img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping/"
   resize_size: [128, 128, 128]  # Reduced from [224, 224, 224]
   resize_mode: "trilinear"
 
@@ -12,16 +12,16 @@ model:
   pretrained_checkpoint: null
 
 training:
-  batch_size: 1
-  num_epochs: 100
+  batch_size: 4
+  num_epochs: 300
   learning_rate: 0.0001
   weight_decay: 0.01
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/resnet"
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
   mixed_precision: true
   visualize: false
-  lr_scheduler: "plateau"
+  lr_scheduler: "cosine"
   checkpoint:
     save_best: true
     save_latest: true
@@ -32,6 +32,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["low-memory", "random-split"]
+  tags: ["low-memory", "1.5T_bl_scaled_594images_skullstripped"]
   notes: "ResNet3D-18 with reduced memory usage for small dataset"
-  run_name: "resnet18_low_memory"
+  run_name: "resnet18_1.5T_bl_scaled_594images_skullstripped"

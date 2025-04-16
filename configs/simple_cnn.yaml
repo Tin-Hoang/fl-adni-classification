@@ -7,7 +7,7 @@ data:
 
 model:
   name: "simple3dcnn"  # Using our simple 3D CNN
-  num_classes: 3  # AD, MCI, CN
+  num_classes: 3  # CN, MCI, AD
   pretrained_checkpoint: null
 
 training:

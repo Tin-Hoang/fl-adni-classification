@@ -26,11 +26,15 @@ def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Opt
     # Create figure
     fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5*num_samples))
 
+    # Map label indices to class names
+    label_names = {0: "CN", 1: "MCI", 2: "AD"}
+
     # Plot each sample
     for i in range(min(num_samples, len(images))):
         # Get the image and label
         img = images[i, 0].numpy()  # Remove channel dimension
-        label = labels[i].item()
+        label_idx = labels[i].item()
+        label_name = label_names.get(label_idx, f"Unknown ({label_idx})")
 
         # Get middle slices in each dimension
         mid_z = img.shape[0] // 2
@@ -39,7 +43,7 @@ def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Opt
 
         # Plot the slices
         axes[i, 0].imshow(img[mid_z, :, :], cmap='gray')
-        axes[i, 0].set_title(f'Sample {i+1}, Label: {label}, Z-slice {mid_z}')
+        axes[i, 0].set_title(f'Sample {i+1}, Label: {label_name} ({label_idx}), Z-slice {mid_z}')
         axes[i, 0].axis('off')
 
         axes[i, 1].imshow(img[:, mid_y, :], cmap='gray')
@@ -91,6 +95,9 @@ def visualize_predictions(
         outputs = model(images)
         _, predicted = torch.max(outputs, 1)
 
+    # Map label indices to class names
+    label_names = {0: "CN", 1: "MCI", 2: "AD"}
+
     # Create figure
     fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5*num_samples))
 
@@ -98,8 +105,11 @@ def visualize_predictions(
     for i in range(min(num_samples, len(images))):
         # Get the image, true label, and predicted label
         img = images[i, 0].cpu().numpy()  # Remove channel dimension
-        true_label = labels[i].item()
-        pred_label = predicted[i].item()
+        true_label_idx = labels[i].item()
+        pred_label_idx = predicted[i].item()
+
+        true_label_name = label_names.get(true_label_idx, f"Unknown ({true_label_idx})")
+        pred_label_name = label_names.get(pred_label_idx, f"Unknown ({pred_label_idx})")
 
         # Get middle slices in each dimension
         mid_z = img.shape[0] // 2
@@ -108,7 +118,7 @@ def visualize_predictions(
 
         # Plot the slices
         axes[i, 0].imshow(img[mid_z, :, :], cmap='gray')
-        axes[i, 0].set_title(f'Sample {i+1}, True: {true_label}, Pred: {pred_label}, Z-slice {mid_z}')
+        axes[i, 0].set_title(f'Sample {i+1}, True: {true_label_name}, Pred: {pred_label_name}, Z-slice {mid_z}')
         axes[i, 0].axis('off')
 
         axes[i, 1].imshow(img[:, mid_y, :], cmap='gray')

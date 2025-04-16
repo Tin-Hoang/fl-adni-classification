@@ -9,7 +9,7 @@ data:
 # Model configuration
 model:
   name: "resnet3d"  # Using ResNet3D model
-  num_classes: 3  # AD, MCI, CN
+  num_classes: 3  # CN, MCI, AD
   model_depth: 50  # ResNet depth (18, 34, 50, 101, 152)
   pretrained_checkpoint: null
 
