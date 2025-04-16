@@ -346,6 +346,27 @@ class ADNIDataset(Dataset):
         return data_dict
 
 
+def shape_debug_func(x, expected_size):
+    """Debug function to check tensor shape.
+
+    Args:
+        x: Image tensor
+        expected_size: Expected size of the tensor
+
+    Returns:
+        x: The original or resized image tensor
+    """
+    current_shape = x.shape[1:]  # Get spatial dimensions
+
+    if current_shape != expected_size:
+        print(f"Warning: Shape mismatch before correction. Current: {current_shape}, Expected: {expected_size}")
+        # Ensure shape matches by force resize
+        resize = monai.transforms.Resize(spatial_size=expected_size)
+        x = resize(x)
+        print(f"After resize: {x.shape[1:]}")
+    return x
+
+
 def get_transforms(mode: str = "train",
                 resize_size: Tuple[int, int, int] = (160, 160, 160),
                 resize_mode: str = "trilinear",
@@ -405,6 +426,12 @@ def get_transforms(mode: str = "train",
             spatial_size=resize_size,
             mode=resize_mode,
         ),
+        # Add an explicit transform to ensure consistent dimensions
+        # This will guarantee that all tensors have the exact same shape
+        Lambdad(
+            keys=["image"],
+            func=lambda x: shape_debug_func(x, resize_size),
+        ),
     ])
 
     if mode == "train":
@@ -426,6 +453,17 @@ def get_transforms(mode: str = "train",
                 prob=0.5,
                 mean=0.0,
                 std=0.1,
+            ),
+            # Ensure consistent dimensions after augmentation
+            Resized(
+                keys=["image"],
+                spatial_size=resize_size,
+                mode=resize_mode,
+            ),
+            # Additional shape check after augmentation
+            Lambdad(
+                keys=["image"],
+                func=lambda x: shape_debug_func(x, resize_size),
             ),
             ToTensord(keys=["image", "label"]),
         ]

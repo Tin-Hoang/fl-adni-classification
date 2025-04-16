@@ -101,6 +101,9 @@ class SecureFedCNN(BaseModel):
         # Check input shape for debugging
         if x.shape[2:] != torch.Size(self.input_size):
             print(f"Warning: Input shape {x.shape[2:]} doesn't match expected shape {self.input_size}")
+            # If running on CUDA device, ensure warnings are printed before potential crash
+            if x.is_cuda:
+                torch.cuda.synchronize()
 
         # Pass through convolutional blocks
         x = self.conv1(x)
@@ -108,22 +111,31 @@ class SecureFedCNN(BaseModel):
         x = self.conv3(x)
         x = self.conv4(x)
 
+        # Store original flattened size for debugging
+        orig_shape = x.shape
+
         # Flatten the features
         x = x.view(x.size(0), -1)
 
         # Check the flattened size for debugging
         if x.size(1) != self.flat_features:
-            print(f"Warning: Flattened size {x.size(1)} doesn't match expected size {self.flat_features}")
+            actual_size = x.size(1)
+            print(f"Warning: Flattened size {actual_size} doesn't match expected size {self.flat_features}")
+            print(f"Original tensor shape after conv layers: {orig_shape}")
+
             # Dynamically adapt to the actual size if needed
-            if not hasattr(self, 'adapted_fc1') or self.adapted_fc1.in_features != x.size(1):
-                print(f"Adapting fully connected layer to actual size: {x.size(1)}")
-                self.adapted_fc1 = nn.Linear(x.size(1), 512).to(x.device)
+            if not hasattr(self, 'adapted_fc1') or self.adapted_fc1.in_features != actual_size:
+                print(f"Adapting fully connected layer to actual size: {actual_size}")
+                self.adapted_fc1 = nn.Linear(actual_size, 512).to(x.device)
                 # Initialize weights with existing weights if possible
-                if x.size(1) < self.flat_features:
-                    self.adapted_fc1.weight.data[:, :x.size(1)] = self.fc1.weight.data[:, :x.size(1)]
-                else:
-                    self.adapted_fc1.weight.data = self.fc1.weight.data
-                self.adapted_fc1.bias.data = self.fc1.bias.data
+                if hasattr(self, 'fc1'):
+                    if actual_size < self.flat_features:
+                        self.adapted_fc1.weight.data[:, :actual_size] = self.fc1.weight.data[:, :actual_size]
+                    else:
+                        self.adapted_fc1.weight.data[:, :self.flat_features] = self.fc1.weight.data
+                    self.adapted_fc1.bias.data = self.fc1.bias.data
+
+            # Use the adapted layer
             x = F.relu(self.adapted_fc1(x))
         else:
             # Regular forward pass

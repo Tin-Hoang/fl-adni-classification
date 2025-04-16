@@ -37,17 +37,26 @@ class ModelFactory:
             raise ValueError(f"Model {model_name} not supported. Available models: {list(cls._models.keys())}")
 
         # Extract input_size from kwargs if specified in config for SecureFedCNN
-        if model_name == "securefed_cnn" and "input_size" not in kwargs and "data" in kwargs:
-            if "resize_size" in kwargs["data"]:
-                # Pass the resize_size from config as input_size
-                input_size = kwargs["data"]["resize_size"]
-                print(f"Passing input_size {input_size} from config to SecureFedCNN")
+        if model_name == "securefed_cnn":
+            if "input_size" not in kwargs:
+                # Try to get resize_size from data config
+                if "data" in kwargs and "resize_size" in kwargs["data"]:
+                    resize_size = kwargs["data"]["resize_size"]
+                    print(f"Using resize_size {resize_size} from config as input_size for SecureFedCNN")
 
-                # Remove data since it's not a model parameter
-                data = kwargs.pop("data")
+                    # Convert list to proper format if needed
+                    if isinstance(resize_size, (list, tuple)):
+                        input_size = [int(x) for x in resize_size]
+                    else:
+                        input_size = resize_size
 
-                # Create the model with the input_size
-                return cls._models[model_name](input_size=input_size, **kwargs)
+                    # Remove data from kwargs since it's not a model parameter
+                    data_config = kwargs.pop("data")
+
+                    # Create the model with explicit input_size
+                    return cls._models[model_name](input_size=input_size, **kwargs)
+            else:
+                print(f"Using provided input_size {kwargs['input_size']} for SecureFedCNN")
 
         # For other models, create as usual
         return cls._models[model_name](**kwargs)
