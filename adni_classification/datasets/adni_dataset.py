@@ -22,76 +22,38 @@ from monai.transforms import (
 
 
 # Define these functions at the module level so they can be pickled
-def debug_print_stage(x, d, stage="DEBUG"):
+def debug_print_stage(x, stage="DEBUG"):
     """Print debug information about an image tensor at a specific stage.
 
     Args:
         x: Image tensor
-        d: Transform dictionary
         stage: Processing stage description
 
     Returns:
         x: The original image tensor (unchanged)
     """
-    if "image_meta_dict" in d and "filename_or_obj" in d["image_meta_dict"]:
-        filename = os.path.basename(d["image_meta_dict"]["filename_or_obj"])
-        print(f"{stage} Image ID: {filename}, Shape: {x.shape}")
-    else:
-        print(f"{stage} Image shape: {x.shape}")
+    print(f"{stage} Image shape: {x.shape}")
     return x
 
 
-def debug_original(x, d):
+def debug_original(x):
     """Debug function for original image."""
-    return debug_print_stage(x, d, "ORIGINAL")
+    return debug_print_stage(x, "ORIGINAL")
 
 
-def debug_orientation(x, d):
+def debug_orientation(x):
     """Debug function after orientation transformation."""
-    return debug_print_stage(x, d, "AFTER ORIENTATION")
+    return debug_print_stage(x, "AFTER ORIENTATION")
 
 
-def debug_spacing(x, d):
+def debug_spacing(x):
     """Debug function after spacing transformation."""
-    return debug_print_stage(x, d, "AFTER SPACING")
+    return debug_print_stage(x, "AFTER SPACING")
 
 
-def debug_resize(x, d):
+def debug_resize(x):
     """Debug function after resize transformation."""
-    return debug_print_stage(x, d, "AFTER RESIZE")
-
-
-def check_shape(image, expected_size):
-    """Check that the image has the expected shape, raise error if not.
-
-    Args:
-        image: The image tensor to check
-        expected_size: The expected spatial size (height, width, depth)
-
-    Returns:
-        The original image, unchanged
-    """
-    # Get the spatial dimensions (excluding channel dimension)
-    spatial_shape = image.shape[1:]
-    expected_shape = tuple(expected_size)
-
-    # Print dimensions for debugging
-    print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
-
-    if spatial_shape != expected_shape:
-        print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
-
-        # Reshape if needed - this is a fallback but shouldn't be necessary
-        # if Resized transform is working correctly
-        if len(spatial_shape) == len(expected_shape):
-            # Only for debugging - this message helps identify if this fallback is used
-            print(f"Reshaping image from {spatial_shape} to {expected_shape}")
-
-            # Use monai's Resize transform to fix the shape
-            resize = monai.transforms.Resize(spatial_size=expected_shape)
-            return resize(image)
-
-    return image
+    return debug_print_stage(x, "AFTER RESIZE")
 
 
 # Create a custom shape checker that can be pickled
@@ -102,7 +64,35 @@ class ShapeChecker:
         self.expected_size = expected_size
 
     def __call__(self, image):
-        return check_shape(image, self.expected_size)
+        """Check that the image has the expected shape.
+
+        Args:
+            image: The image tensor to check
+
+        Returns:
+            The original image or resized image if needed
+        """
+        # Get the spatial dimensions (excluding channel dimension)
+        spatial_shape = image.shape[1:]
+        expected_shape = tuple(self.expected_size)
+
+        # Print dimensions for debugging
+        print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
+
+        if spatial_shape != expected_shape:
+            print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
+
+            # Reshape if needed - this is a fallback but shouldn't be necessary
+            # if Resized transform is working correctly
+            if len(spatial_shape) == len(expected_shape):
+                # Only for debugging - this message helps identify if this fallback is used
+                print(f"Reshaping image from {spatial_shape} to {expected_shape}")
+
+                # Use monai's Resize transform to fix the shape
+                resize = monai.transforms.Resize(spatial_size=expected_shape)
+                return resize(image)
+
+        return image
 
 
 class ADNIDataset(Dataset):
@@ -384,7 +374,7 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
     shape_checker = ShapeChecker(resize_size)
 
     common_transforms = [
-        LoadImaged(keys=["image"], image_only=False),  # Set image_only=False to handle both .nii and .nii.gz formats
+        LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
         # Debug transform to print original shape after loading
         Lambdad(keys=["image"], func=debug_original),
@@ -408,7 +398,7 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
         # Ensure all images have the same size
         Resized(
             keys=["image"],
-            spatial_size=resize_size,  # This should ensure consistent dimensions
+            spatial_size=resize_size,
             mode=resize_mode,
         ),
         # Debug after resize
@@ -456,9 +446,9 @@ def test_image_path_mapping():
     import argparse
 
     parser = argparse.ArgumentParser(description="Test the ADNI dataset image path mapping")
-    parser.add_argument("--csv_path", type=str, default="data/ADNI/ADNI1_Complete_1Yr_3T/ADNI1_Complete_1Yr_3T_codetest.csv",
+    parser.add_argument("--csv_path", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
                         help="Path to the CSV file containing image metadata and labels")
-    parser.add_argument("--img_dir", type=str, default="data/ADNI/ADNI1_Complete_1Yr_3T/ADNI",
+    parser.add_argument("--img_dir", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
                         help="Path to the directory containing the image files")
     parser.add_argument("--csv_format", type=str, choices=["original", "alternative"],
                         help="CSV format to test explicitly (will be auto-detected if not specified)")

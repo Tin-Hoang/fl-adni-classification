@@ -21,7 +21,7 @@ training:
   lr_scheduler: "cosine"
 
 wandb:
-  use_wandb: true
+  use_wandb: false
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["securefed-cnn", "1.5T_bl_scaled_594images_skullstripped"]
