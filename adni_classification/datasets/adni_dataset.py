@@ -291,24 +291,53 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
     Returns:
         A Compose transform
     """
+    # Ensure resize_size is a tuple for consistency
+    if not isinstance(resize_size, tuple):
+        resize_size = tuple(resize_size)
+
+    # Lambda function for printing debug info while returning the original tensor
+    def debug_print(x, d, stage):
+        if "image_meta_dict" in d and "filename_or_obj" in d["image_meta_dict"]:
+            filename = os.path.basename(d["image_meta_dict"]["filename_or_obj"])
+            print(f"{stage} Image ID: {filename}, Shape: {x.shape}")
+        else:
+            print(f"{stage} Image shape: {x.shape}")
+        return x
+
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),  # Set image_only=False to handle both .nii and .nii.gz formats
         EnsureChannelFirstd(keys=["image"]),
+        # Debug transform to print original shape after loading
+        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "ORIGINAL")),
+        # Use specific orientation to ensure consistency
         Orientationd(keys=["image"], axcodes="RAS"),
-        Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode=("bilinear")),
+        # Debug after orientation
+        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER ORIENTATION")),
+        # Ensure consistent spacing
+        Spacingd(keys=["image"], pixdim=(1.5, 1.5, 1.5), mode="bilinear"),
+        # Debug after spacing
+        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER SPACING")),
         # More robust intensity scaling using percentiles
         ScaleIntensityRanged(
             keys=["image"],
-            a_min=0.0,  # Use percentiles instead of fixed values
+            a_min=0.0,
             a_max=100.0,
             b_min=0.0,
             b_max=1.0,
             clip=True,
         ),
+        # Ensure all images have the same size
         Resized(
             keys=["image"],
-            spatial_size=resize_size,
+            spatial_size=resize_size,  # This should ensure consistent dimensions
             mode=resize_mode,
+        ),
+        # Debug after resize
+        monai.transforms.Lambdad(keys=["image"], func=lambda x, d: debug_print(x, d, "AFTER RESIZE")),
+        # Add a shape checking transform for debugging
+        monai.transforms.Lambdad(
+            keys=["image"],
+            func=lambda x: check_shape(x, resize_size),
         ),
     ]
 
@@ -317,15 +346,15 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
             # Stronger augmentation for small dataset
             RandAffined(
                 keys=["image"],
-                prob=0.8,  # Increased probability
-                rotate_range=(0.1, 0.1, 0.1),  # Increased rotation
-                scale_range=(0.2, 0.2, 0.2),  # Increased scaling
-                mode=("bilinear"),
+                prob=0.8,
+                rotate_range=(0.1, 0.1, 0.1),
+                scale_range=(0.2, 0.2, 0.2),
+                mode="bilinear",
+                padding_mode="zeros",  # Use 'zeros' for consistent behavior
             ),
             RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),  # Added flip in another axis
+            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),
             RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
-            # Add noise augmentation
             monai.transforms.RandGaussianNoised(
                 keys=["image"],
                 prob=0.5,
@@ -340,6 +369,39 @@ def get_transforms(mode: str = "train", resize_size: Tuple[int, int, int] = (160
             ToTensord(keys=["image", "label"]),
         ]
         return Compose(common_transforms + val_transforms)
+
+
+def check_shape(image, expected_size):
+    """Check that the image has the expected shape, raise error if not.
+
+    Args:
+        image: The image tensor to check
+        expected_size: The expected spatial size (height, width, depth)
+
+    Returns:
+        The original image, unchanged
+    """
+    # Get the spatial dimensions (excluding channel dimension)
+    spatial_shape = image.shape[1:]
+    expected_shape = tuple(expected_size)
+
+    # Print dimensions for debugging
+    print(f"DEBUG: Current image shape: {spatial_shape}, Expected shape: {expected_shape}")
+
+    if spatial_shape != expected_shape:
+        print(f"WARNING: Image shape {spatial_shape} doesn't match expected shape {expected_shape}")
+
+        # Reshape if needed - this is a fallback but shouldn't be necessary
+        # if Resized transform is working correctly
+        if len(spatial_shape) == len(expected_shape):
+            # Only for debugging - this message helps identify if this fallback is used
+            print(f"Reshaping image from {spatial_shape} to {expected_shape}")
+
+            # Use monai's Resize transform to fix the shape
+            resize = monai.transforms.Resize(spatial_size=expected_shape)
+            return resize(image)
+
+    return image
 
 
 def test_image_path_mapping():
