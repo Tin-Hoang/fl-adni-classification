@@ -656,7 +656,12 @@ def test_transforms():
 if __name__ == "__main__":
     import sys
 
+    # Remove "test_transforms" from sys.argv if it's the first argument
     if len(sys.argv) > 1 and sys.argv[1] == "test_transforms":
+        # Save original command for error messages
+        original_command = " ".join(sys.argv)
+        # Remove the test_transforms argument before parsing other arguments
+        sys.argv.pop(1)
         test_transforms()
     else:
         test_image_path_mapping()
