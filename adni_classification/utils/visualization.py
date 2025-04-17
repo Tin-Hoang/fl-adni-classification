@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from typing import Dict, Any, List, Tuple, Optional
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
 
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
 
@@ -189,3 +191,60 @@ def plot_training_history(
         plt.show()
 
     plt.close()
+
+
+def plot_confusion_matrix(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    class_names: List[str] = ["CN", "MCI", "AD"],
+    normalize: bool = True,
+    save_path: Optional[str] = None,
+    title: str = "Confusion Matrix"
+) -> plt.Figure:
+    """Plot confusion matrix.
+
+    Args:
+        y_true: Ground truth labels
+        y_pred: Predicted labels
+        class_names: List of class names
+        normalize: Whether to normalize the confusion matrix
+        save_path: Path to save the plot (if None, display instead)
+        title: Title of the plot
+
+    Returns:
+        Matplotlib figure
+    """
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Use seaborn for better visualization
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt='.2f' if normalize else 'd',
+        cmap="Blues",
+        xticklabels=class_names,
+        yticklabels=class_names,
+        ax=ax
+    )
+
+    # Set labels and title
+    ax.set_xlabel('Predicted Label')
+    ax.set_ylabel('True Label')
+    ax.set_title(title)
+
+    plt.tight_layout()
+
+    # Save or display
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Saved confusion matrix to {save_path}")
+
+    return fig

@@ -20,7 +20,7 @@ training:
   num_workers: 4
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
   visualize: false
-  lr_scheduler: "cosine"
+  lr_scheduler: "plateau"
 
 wandb:
   use_wandb: false

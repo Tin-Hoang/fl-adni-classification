@@ -427,9 +427,9 @@ def get_transforms(mode: str = "train",
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
-        EnsureChannelFirstd(keys=["image"]),
+        # EnsureChannelFirstd(keys=["image"]),
         # Use specific orientation to ensure consistency
-        Orientationd(keys=["image"], axcodes="RAS"),
+        # Orientationd(keys=["image"], axcodes="RAS"),
     ]
 
     # Add spacing transform if requested
@@ -442,14 +442,14 @@ def get_transforms(mode: str = "train",
     # Add the rest of the transforms
     common_transforms.extend([
         # More robust intensity scaling using percentiles
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=0.0,
-            a_max=100.0,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
+        # ScaleIntensityRanged(
+        #     keys=["image"],
+        #     a_min=0.0,
+        #     a_max=100.0,
+        #     b_min=0.0,
+        #     b_max=1.0,
+        #     clip=True,
+        # ),
         # Ensure all images have the same size
         Resized(
             keys=["image"],
@@ -467,34 +467,34 @@ def get_transforms(mode: str = "train",
     if mode == "train":
         train_transforms = [
             # Stronger augmentation for small dataset
-            RandAffined(
-                keys=["image"],
-                prob=0.8,
-                rotate_range=(0.1, 0.1, 0.1),
-                scale_range=(0.2, 0.2, 0.2),
-                mode="bilinear",
-                padding_mode="zeros",  # Use 'zeros' for consistent behavior
-            ),
-            RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-            RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),
-            RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
-            monai.transforms.RandGaussianNoised(
-                keys=["image"],
-                prob=0.5,
-                mean=0.0,
-                std=0.1,
-            ),
+            # RandAffined(
+            #     keys=["image"],
+            #     prob=0.8,
+            #     rotate_range=(0.1, 0.1, 0.1),
+            #     scale_range=(0.2, 0.2, 0.2),
+            #     mode="bilinear",
+            #     padding_mode="zeros",  # Use 'zeros' for consistent behavior
+            # ),
+            # RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
+            # RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),
+            # RandRotate90d(keys=["image"], prob=0.5, spatial_axes=[0, 1]),
+            # monai.transforms.RandGaussianNoised(
+            #     keys=["image"],
+            #     prob=0.5,
+            #     mean=0.0,
+            #     std=0.1,
+            # ),
             # Ensure consistent dimensions after augmentation
-            Resized(
-                keys=["image"],
-                spatial_size=resize_size,
-                mode=resize_mode,
-            ),
+            # Resized(
+            #     keys=["image"],
+            #     spatial_size=resize_size,
+            #     mode=resize_mode,
+            # ),
             # Additional shape check after augmentation
-            Lambdad(
-                keys=["image"],
-                func=shape_check_func,
-            ),
+            # Lambdad(
+            #     keys=["image"],
+            #     func=shape_check_func,
+            # ),
             ToTensord(keys=["image", "label"]),
         ]
         return Compose(common_transforms + train_transforms)
