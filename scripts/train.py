@@ -127,61 +127,76 @@ def train_epoch(
     pbar = tqdm(train_loader, desc="Training", leave=False)
     num_batches = len(train_loader)
 
-    for batch_idx, batch in enumerate(pbar):
-        images = batch["image"].to(device)
-        labels = batch["label"].to(device)
+    # Add error handling for DataLoader issues
+    try:
+        for batch_idx, batch in enumerate(pbar):
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
 
-        # Mixed precision training
-        if use_mixed_precision and scaler is not None:
-            with autocast(device_type='cuda'):
+            # Mixed precision training
+            if use_mixed_precision and scaler is not None:
+                with autocast(device_type='cuda'):
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                    # Scale loss for gradient accumulation
+                    loss = loss / gradient_accumulation_steps
+
+                # Scale gradients and backpropagate
+                scaler.scale(loss).backward()
+
+                # Step optimizer if we've accumulated enough gradients or it's the last batch
+                if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+            else:
+                # Regular training
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 # Scale loss for gradient accumulation
                 loss = loss / gradient_accumulation_steps
+                loss.backward()
 
-            # Scale gradients and backpropagate
-            scaler.scale(loss).backward()
+                # Step optimizer if we've accumulated enough gradients or it's the last batch
+                if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-            # Step optimizer if we've accumulated enough gradients or it's the last batch
-            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-        else:
-            # Regular training
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            # Scale loss for gradient accumulation
-            loss = loss / gradient_accumulation_steps
-            loss.backward()
+            total_loss += loss.item() * gradient_accumulation_steps
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
 
-            # Step optimizer if we've accumulated enough gradients or it's the last batch
-            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
-                optimizer.step()
-                optimizer.zero_grad()
-
-        total_loss += loss.item() * gradient_accumulation_steps
-        _, predicted = outputs.max(1)
-        total += labels.size(0)
-        correct += predicted.eq(labels).sum().item()
-
-        # Update progress bar
-        current_loss = total_loss / (batch_idx + 1)
-        current_acc = 100.0 * correct / total
-        pbar.set_postfix({
-            'loss': f'{current_loss:.4f}',
-            'acc': f'{current_acc:.2f}%'
-        })
-
-        if log_batch_metrics and wandb_run is not None:
-            wandb_run.log({
-                "train/batch_loss": loss.item() * gradient_accumulation_steps,
-                "train/batch_accuracy": 100.0 * correct / total,
+            # Update progress bar
+            current_loss = total_loss / (batch_idx + 1)
+            current_acc = 100.0 * correct / total
+            pbar.set_postfix({
+                'loss': f'{current_loss:.4f}',
+                'acc': f'{current_acc:.2f}%'
             })
 
-    # All gradient steps are handled in the loop now, no need for cleanup here
-    avg_loss = total_loss / num_batches
-    avg_accuracy = 100.0 * correct / total
+            if log_batch_metrics and wandb_run is not None:
+                wandb_run.log({
+                    "train/batch_loss": loss.item() * gradient_accumulation_steps,
+                    "train/batch_accuracy": 100.0 * correct / total,
+                })
+    except RuntimeError as e:
+        print(f"RuntimeError in DataLoader: {e}")
+        if "CUDA" in str(e):
+            print("CUDA error detected. Trying to recover...")
+            torch.cuda.empty_cache()
+        if batch_idx == 0:
+            # If we failed at the very first batch, re-raise to avoid silent failures
+            raise
+        # If we've processed at least some batches, we'll continue with what we have
+        print(f"Processed {batch_idx} batches before error. Continuing with partial epoch.")
+        if total == 0:
+            # If no samples were processed successfully, we can't calculate metrics
+            return 0.0, 0.0
+
+    # Calculate final metrics based on what was successfully processed
+    avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
+    avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
 
     return avg_loss, avg_accuracy
 
@@ -214,39 +229,55 @@ def validate(
 
     # Create progress bar
     pbar = tqdm(val_loader, desc="Validation", leave=False)
+    batch_idx = -1
 
     with torch.no_grad():
-        for batch_idx, batch in enumerate(pbar):
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+        try:
+            for batch_idx, batch in enumerate(pbar):
+                images = batch["image"].to(device)
+                labels = batch["label"].to(device)
 
-            if use_mixed_precision:
-                with autocast(device_type='cuda'):
+                if use_mixed_precision:
+                    with autocast(device_type='cuda'):
+                        outputs = model(images)
+                        loss = criterion(outputs, labels)
+                else:
                     outputs = model(images)
                     loss = criterion(outputs, labels)
-            else:
-                outputs = model(images)
-                loss = criterion(outputs, labels)
 
-            total_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+                total_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
 
-            # Collect true and predicted labels for confusion matrix
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(predicted.cpu().numpy())
+                # Collect true and predicted labels for confusion matrix
+                all_labels.extend(labels.cpu().numpy())
+                all_predictions.extend(predicted.cpu().numpy())
 
-            # Update progress bar
-            current_loss = total_loss / (batch_idx + 1)
-            current_acc = 100.0 * correct / total
-            pbar.set_postfix({
-                'loss': f'{current_loss:.4f}',
-                'acc': f'{current_acc:.2f}%'
-            })
+                # Update progress bar
+                current_loss = total_loss / (batch_idx + 1)
+                current_acc = 100.0 * correct / total
+                pbar.set_postfix({
+                    'loss': f'{current_loss:.4f}',
+                    'acc': f'{current_acc:.2f}%'
+                })
+        except RuntimeError as e:
+            print(f"RuntimeError in validation DataLoader: {e}")
+            if "CUDA" in str(e):
+                print("CUDA error detected. Trying to recover...")
+                torch.cuda.empty_cache()
+            if batch_idx == 0:
+                # If we failed at the very first batch, re-raise to avoid silent failures
+                raise
+            # If we've processed at least some batches, we'll continue with what we have
+            print(f"Processed {batch_idx} batches before error. Continuing with partial validation.")
+            if total == 0:
+                # If no samples were processed successfully, we can't calculate metrics
+                return 0.0, 0.0, np.array([]), np.array([])
 
-    avg_loss = total_loss / len(val_loader)
-    avg_accuracy = 100.0 * correct / total
+    # Calculate metrics based on what was successfully processed
+    avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
+    avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
 
     return avg_loss, avg_accuracy, np.array(all_labels), np.array(all_predictions)
 
@@ -502,23 +533,30 @@ def main():
     # Add this code to examine class distribution
     labels = [sample["label"].item() for sample in train_dataset]
 
-    # Create data loaders with proper multiprocessing settings
+    # Ensure num_workers is at least 1 to enable multiprocessing
+    num_workers = max(1, config.training.num_workers)
+
+    # Create data loaders with optimized multiprocessing settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
         shuffle=True,
-        num_workers=config.training.num_workers,
-        pin_memory=True if torch.cuda.is_available() else False,
-        persistent_workers=True if config.training.num_workers > 0 else False,
+        num_workers=num_workers,
+        pin_memory=True,  # Re-enable pin memory for performance
+        persistent_workers=True,  # Keep workers alive between batches
+        prefetch_factor=2,  # Prefetch 2 batches per worker
+        multiprocessing_context='spawn',  # Use spawn for better compatibility
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.training.batch_size,
         shuffle=False,
-        num_workers=config.training.num_workers,
-        pin_memory=True if torch.cuda.is_available() else False,
-        persistent_workers=True if config.training.num_workers > 0 else False,
+        num_workers=num_workers,
+        pin_memory=True,  # Re-enable pin memory for performance
+        persistent_workers=True,  # Keep workers alive between batches
+        prefetch_factor=2,  # Prefetch 2 batches per worker
+        multiprocessing_context='spawn',  # Use spawn for better compatibility
     )
 
     # Create model
