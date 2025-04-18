@@ -21,7 +21,6 @@ from monai.transforms import (
     Rand3DElasticd,
     RandGaussianNoised,
     RandAdjustContrastd,
-    RandGammad,
 )
 
 
@@ -498,11 +497,6 @@ def get_transforms(mode: str = "train",
                 std=0.1,
             ),
             RandAdjustContrastd(
-                keys=["image"],
-                prob=0.3,
-                gamma=(0.8, 1.2),
-            ),
-            RandGammad(
                 keys=["image"],
                 prob=0.3,
                 gamma=(0.8, 1.2),
