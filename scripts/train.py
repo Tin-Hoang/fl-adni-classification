@@ -588,14 +588,6 @@ def main():
     # Initialize wandb if enabled
     wandb_run = None
     if config.wandb.use_wandb:
-        # Configure wandb to use fewer files
-        # os.environ["WANDB_SILENT"] = "true"  # Reduce console output
-        os.environ["WANDB_DISABLE_CODE"] = "true"  # Don't save code
-        # os.environ["WANDB_CACHE_DIR"] = os.path.join(config.training.output_dir, "wandb_cache")  # Use custom cache dir
-
-        # Create wandb cache dir with appropriate permissions
-        os.makedirs(os.environ["WANDB_CACHE_DIR"], exist_ok=True)
-
         # Reduce wandb logging frequency for lower file operations
         os.environ["WANDB_LOG_INTERVAL"] = "60"  # Log every 60 seconds instead of default
 
