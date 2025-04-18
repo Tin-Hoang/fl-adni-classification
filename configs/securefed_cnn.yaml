@@ -14,14 +14,14 @@ model:
 
 training:
   batch_size: 10
-  num_epochs: 100
+  num_epochs: 300
   learning_rate: 0.0001
   weight_decay: 0.0001
-  num_workers: 4
+  num_workers: 10
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
   visualize: false
   lr_scheduler: "plateau"
-  val_epoch_freq: 5  # Run validation and save checkpoints every 5 epochs
+  val_epoch_freq: 10
   use_class_weights: true
   class_weight_type: "inverse"
   # Optional: manual_class_weights: [1.0, 2.0, 3.0]  # For manual weighting

@@ -245,6 +245,10 @@ def plot_confusion_matrix(
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path)
-        print(f"Saved confusion matrix to {save_path}")
+        print(f"\tSaved confusion matrix to {save_path}")
+    else:
+        plt.show()
+
+    plt.close()
 
     return fig

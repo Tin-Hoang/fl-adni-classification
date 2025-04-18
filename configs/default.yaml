@@ -13,6 +13,13 @@ model:
   num_classes: 3  # CN, MCI, AD
   model_depth: 18  # Using ResNet-18 instead of ResNet-50
   pretrained_checkpoint: null
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
+  visualize: false
+  lr_scheduler: "plateau"
+  val_epoch_freq: 10
+  use_class_weights: true
+  class_weight_type: "inverse"
+  # Optional: manual_class_weights: [1.0, 2.0, 3.0]  # For manual weighting
 
 training:
   batch_size: 4
