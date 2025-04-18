@@ -456,49 +456,43 @@ def get_transforms(mode: str = "train",
             spatial_size=resize_size,
             mode=resize_mode,
         ),
-        # Add an explicit transform to ensure consistent dimensions
-        # This will guarantee that all tensors have the exact same shape
-        # Lambdad(
-        #     keys=["image"],
-        #     func=shape_check_func,
-        # ),
     ])
 
     if mode == "train":
         train_transforms = [
             # Existing augmentations
-            # RandAffined(
-            #     keys=["image"],
-            #     prob=0.8,
-            #     rotate_range=(0.1, 0.1, 0.1),
-            #     scale_range=(0.2, 0.2, 0.2),
-            #     mode="bilinear",
-            #     padding_mode="zeros",
-            # ),
+            RandAffined(
+                keys=["image"],
+                prob=0.8,
+                rotate_range=(0.1, 0.1, 0.1),
+                scale_range=(0.2, 0.2, 0.2),
+                mode="bilinear",
+                padding_mode="zeros",
+            ),
 
             # Add elastic deformations
-            # Rand3DElasticd(
-            #     keys=["image"],
-            #     prob=0.3,
-            #     sigma_range=(5, 8),
-            #     magnitude_range=(0.1, 0.3),
-            #     spatial_size=resize_size,  # Use the same resize_size from parameters
-            #     mode="bilinear",
-            #     padding_mode="zeros",
-            # ),
+            Rand3DElasticd(
+                keys=["image"],
+                prob=0.3,
+                sigma_range=(5, 8),
+                magnitude_range=(0.1, 0.3),
+                spatial_size=resize_size,  # Use the same resize_size from parameters
+                mode="bilinear",
+                padding_mode="zeros",
+            ),
 
             # Add intensity augmentations
-            # RandGaussianNoised(
-            #     keys=["image"],
-            #     prob=0.5,
-            #     mean=0.0,
-            #     std=0.1,
-            # ),
-            # RandAdjustContrastd(
-            #     keys=["image"],
-            #     prob=0.3,
-            #     gamma=(0.8, 1.2),
-            # ),
+            RandGaussianNoised(
+                keys=["image"],
+                prob=0.5,
+                mean=0.0,
+                std=0.1,
+            ),
+            RandAdjustContrastd(
+                keys=["image"],
+                prob=0.3,
+                gamma=(0.8, 1.2),
+            ),
 
             # Convert to tensor
             ToTensord(keys=["image", "label"]),
