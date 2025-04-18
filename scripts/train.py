@@ -21,6 +21,10 @@ from torch.optim.lr_scheduler import (
 from collections import Counter
 import numpy as np
 import matplotlib.pyplot as plt
+import atexit
+import gc
+import signal
+import tempfile
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
@@ -126,6 +130,7 @@ def train_epoch(
     # Create progress bar
     pbar = tqdm(train_loader, desc="Training", leave=False)
     num_batches = len(train_loader)
+    batch_idx = -1
 
     # Add error handling for DataLoader issues
     try:
@@ -180,6 +185,26 @@ def train_epoch(
                     "train/batch_loss": loss.item() * gradient_accumulation_steps,
                     "train/batch_accuracy": 100.0 * correct / total,
                 })
+
+    except OSError as e:
+        if "Too many open files" in str(e):
+            print(f"OSError (Too many open files): {e}")
+            print("Trying to recover by cleaning up resources...")
+            # Force cleanup only when necessary
+            gc.collect()
+            torch.cuda.empty_cache()
+            # Sleep to let files close
+            import time
+            time.sleep(2)
+
+        if batch_idx == 0:
+            # If we failed at the very first batch, re-raise to avoid silent failures
+            raise
+        # If we've processed at least some batches, we'll continue with what we have
+        print(f"Processed {batch_idx} batches before error. Continuing with partial epoch.")
+        if total == 0:
+            # If no samples were processed successfully, we can't calculate metrics
+            return 0.0, 0.0
     except RuntimeError as e:
         print(f"RuntimeError in DataLoader: {e}")
         if "CUDA" in str(e):
@@ -197,6 +222,9 @@ def train_epoch(
     # Calculate final metrics based on what was successfully processed
     avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
     avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
+
+    # Only clean up at the end of the epoch
+    torch.cuda.empty_cache()
 
     return avg_loss, avg_accuracy
 
@@ -261,6 +289,26 @@ def validate(
                     'loss': f'{current_loss:.4f}',
                     'acc': f'{current_acc:.2f}%'
                 })
+
+        except OSError as e:
+            if "Too many open files" in str(e):
+                print(f"OSError (Too many open files): {e}")
+                print("Trying to recover by cleaning up resources...")
+                # Force cleanup only when necessary
+                gc.collect()
+                torch.cuda.empty_cache()
+                # Sleep to let files close
+                import time
+                time.sleep(2)
+
+            if batch_idx == 0:
+                # If we failed at the very first batch, re-raise to avoid silent failures
+                raise
+            # If we've processed at least some batches, we'll continue with what we have
+            print(f"Processed {batch_idx} batches before error. Continuing with partial validation.")
+            if total == 0:
+                # If no samples were processed successfully, we can't calculate metrics
+                return 0.0, 0.0, np.array([]), np.array([])
         except RuntimeError as e:
             print(f"RuntimeError in validation DataLoader: {e}")
             if "CUDA" in str(e):
@@ -278,6 +326,9 @@ def validate(
     # Calculate metrics based on what was successfully processed
     avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
     avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
+
+    # Only clean up at the end of validation
+    torch.cuda.empty_cache()
 
     return avg_loss, avg_accuracy, np.array(all_labels), np.array(all_predictions)
 
@@ -458,11 +509,65 @@ def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epo
         return None
 
 
+def cleanup_resources():
+    """Clean up resources to prevent file descriptor leaks."""
+    print("Cleaning up resources...")
+
+    # Only perform critical cleanup operations
+    # 1. Empty CUDA cache
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except:
+        pass
+
+    # 2. Run garbage collection once
+    gc.collect()
+
+    # 3. Only clean temp directories if we're experiencing file-related issues
+    # This approach is much less resource-intensive
+    try:
+        # Check for too many open files error indicator
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == hard:  # We're at the limit
+            print("Detected potential file descriptor pressure, cleaning temp directories...")
+            temp_dir = tempfile.gettempdir()
+            for name in os.listdir(temp_dir):
+                if name.startswith(('tmp', 'wandb-')):
+                    try:
+                        path = os.path.join(temp_dir, name)
+                        if os.path.isdir(path) and not os.listdir(path):  # Only clean empty dirs
+                            print(f"Removing empty temp directory: {path}")
+                            os.rmdir(path)
+                    except (PermissionError, OSError):
+                        pass
+    except:
+        pass
+
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Train ADNI classification model")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
+
+    # Increase file descriptor limit if possible
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        # Try to increase the limit to the hard limit
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+        print(f"Increased file descriptor limit from {soft} to {hard}")
+    except (ImportError, ValueError, resource.error):
+        print("Could not increase file descriptor limit")
+
+    # Set torch multiprocessing start method to 'spawn'
+    import torch.multiprocessing as mp
+    try:
+        mp.set_start_method('spawn')
+    except RuntimeError:
+        pass  # Method already set
 
     # Load configuration
     config = Config.from_yaml(args.config)
@@ -483,14 +588,30 @@ def main():
     # Initialize wandb if enabled
     wandb_run = None
     if config.wandb.use_wandb:
-        wandb_run = wandb.init(
-            project=config.wandb.project,
-            entity=config.wandb.entity,
-            tags=config.wandb.tags,
-            notes=config.wandb.notes,
-            name=config.wandb.run_name,
-            config=config.to_dict(),
-        )
+        # Configure wandb to use fewer files
+        # os.environ["WANDB_SILENT"] = "true"  # Reduce console output
+        os.environ["WANDB_DISABLE_CODE"] = "true"  # Don't save code
+        # os.environ["WANDB_CACHE_DIR"] = os.path.join(config.training.output_dir, "wandb_cache")  # Use custom cache dir
+
+        # Create wandb cache dir with appropriate permissions
+        os.makedirs(os.environ["WANDB_CACHE_DIR"], exist_ok=True)
+
+        # Reduce wandb logging frequency for lower file operations
+        os.environ["WANDB_LOG_INTERVAL"] = "60"  # Log every 60 seconds instead of default
+
+        try:
+            wandb_run = wandb.init(
+                project=config.wandb.project,
+                entity=config.wandb.entity,
+                tags=config.wandb.tags,
+                notes=config.wandb.notes,
+                name=config.wandb.run_name,
+                config=config.to_dict()
+            )
+        except Exception as e:
+            print(f"Error initializing wandb: {e}")
+            print("Continuing without wandb logging...")
+            wandb_run = None
 
     print("\n" + "="*80)
     print(f"Training config: {config.to_dict()}")
@@ -544,7 +665,7 @@ def main():
         num_workers=num_workers,
         pin_memory=True,  # Re-enable pin memory for performance
         persistent_workers=True,  # Keep workers alive between batches
-        prefetch_factor=2,  # Prefetch 2 batches per worker
+        prefetch_factor=2,  # Prefetch 2 batches per worker (lower value to reduce memory)
         multiprocessing_context='spawn',  # Use spawn for better compatibility
     )
 
@@ -553,10 +674,10 @@ def main():
         batch_size=config.training.batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,  # Re-enable pin memory for performance
-        persistent_workers=True,  # Keep workers alive between batches
-        prefetch_factor=2,  # Prefetch 2 batches per worker
-        multiprocessing_context='spawn',  # Use spawn for better compatibility
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
+        multiprocessing_context='spawn',
     )
 
     # Create model
@@ -673,131 +794,163 @@ def main():
         print("Visualizing training samples...")
         visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
 
-    # Training loop
-    for epoch in range(start_epoch, config.training.num_epochs):
-        print(f"Epoch {epoch + 1}/{config.training.num_epochs} " + "="*40)
+    # Add cleanup handlers to ensure resources are released
+    atexit.register(cleanup_resources)
+    signal.signal(signal.SIGTERM, lambda sig, frame: (cleanup_resources(), exit(0)))
 
-        # Get current learning rate
-        current_lr = optimizer.param_groups[0]['lr']
-        print(f"Current learning rate: {current_lr:.6f}")
+    try:
+        # Training loop
+        for epoch in range(start_epoch, config.training.num_epochs):
+            print(f"Epoch {epoch + 1}/{config.training.num_epochs} " + "="*40)
 
-        # Train for one epoch
-        train_loss, train_acc = train_epoch(
-            model, train_loader, criterion, optimizer, device, wandb_run,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            scaler=scaler,
-            use_mixed_precision=use_mixed_precision
-        )
-        train_losses.append(train_loss)
-        train_accs.append(train_acc)
+            # Get current learning rate
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"Current learning rate: {current_lr:.6f}")
 
-        print(f"\tTrain Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-        # Log training metrics to wandb every epoch
-        if wandb_run is not None:
-            wandb_log = {
-                "train/loss": train_loss,
-                "train/accuracy": train_acc,
-                "train/lr": current_lr,
-            }
-            wandb_run.log(wandb_log, step=epoch + 1)
-
-        # Check if validation should be run this epoch
-        should_validate = (epoch + 1) % config.training.val_epoch_freq == 0 or (epoch + 1) == config.training.num_epochs
-
-        if should_validate:
-            # Validate
-            val_loss, val_acc, true_labels, predicted_labels = validate(
-                model, val_loader, criterion, device, use_mixed_precision=use_mixed_precision
-            )
-            val_losses.append(val_loss)
-            val_accs.append(val_acc)
-
-            print(f"\tVal Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-
-            # Generate and log confusion matrix every 10 epochs
-            print(f"\tGenerating confusion matrix for epoch {epoch + 1}...")
-            cm_path = os.path.join(config.training.output_dir, f"confusion_matrix_epoch_{epoch + 1}.png")
-            cm_fig = plot_confusion_matrix(
-                y_true=true_labels,
-                y_pred=predicted_labels,
-                class_names=["CN", "MCI", "AD"],
-                normalize=False,
-                save_path=cm_path,
-                title=f"Confusion Matrix - Epoch {epoch + 1}"
-            )
-
-            # Log confusion matrix to wandb
-            if wandb_run is not None:
-                wandb_run.log({
-                    "val/confusion_matrix": wandb.Image(cm_fig),
-                }, step=epoch + 1)
-
-            # Close the figure
-            plt.close(cm_fig)
-
-            # Update learning rate scheduler
-            if scheduler is not None:
-                if isinstance(scheduler, ReduceLROnPlateau):
-                    scheduler.step(val_loss)  # For ReduceLROnPlateau
-                else:
-                    scheduler.step()  # For other schedulers
-
-            # Log validation metrics to wandb
-            if wandb_run is not None:
-                wandb_run.log({
-                    "val/loss": val_loss,
-                    "val/accuracy": val_acc,
-                }, step=epoch + 1)
-
-            # Check if this is the best model
-            is_best = val_acc > best_val_acc
-            if is_best:
-                best_val_acc = val_acc
-
-            # Save checkpoint
-            save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                scheduler=scheduler,
+            # Train for one epoch
+            train_loss, train_acc = train_epoch(
+                model, train_loader, criterion, optimizer, device, wandb_run,
+                gradient_accumulation_steps=gradient_accumulation_steps,
                 scaler=scaler,
-                epoch=epoch + 1,
-                train_loss=train_loss,
-                val_loss=val_loss,
-                val_acc=val_acc,
-                is_best=is_best,
-                output_dir=config.training.output_dir,
-                model_name=config.model.name,
-                train_losses=train_losses,
-                val_losses=val_losses,
-                train_accs=train_accs,
-                val_accs=val_accs,
-                checkpoint_config=config.training.checkpoint,
-                class_weights=class_weights
+                use_mixed_precision=use_mixed_precision
             )
+            train_losses.append(train_loss)
+            train_accs.append(train_acc)
 
-            # Visualize predictions every 10 epochs if requested
-            if config.training.visualize and (epoch + 1) % 10 == 0:
-                print("\tVisualizing predictions...")
-                visualize_predictions(
-                    model, val_loader, device, num_samples=4,
-                    save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch + 1}.png")
+            print(f"\tTrain Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+            # Log training metrics to wandb every epoch
+            if wandb_run is not None:
+                wandb_log = {
+                    "train/loss": train_loss,
+                    "train/accuracy": train_acc,
+                    "train/lr": current_lr,
+                }
+                wandb_run.log(wandb_log, step=epoch + 1)
+
+            # Check if validation should be run this epoch
+            should_validate = (epoch + 1) % config.training.val_epoch_freq == 0 or (epoch + 1) == config.training.num_epochs
+
+            if should_validate:
+                # Validate
+                val_loss, val_acc, true_labels, predicted_labels = validate(
+                    model, val_loader, criterion, device, use_mixed_precision=use_mixed_precision
                 )
-        else:
-            print(f"\tSkipping validation for epoch {epoch + 1} (validation frequency: every {config.training.val_epoch_freq} epochs)")
+                val_losses.append(val_loss)
+                val_accs.append(val_acc)
 
-            # For non-plateau schedulers, we need to step even without validation
-            if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
-                scheduler.step()  # Step schedulers that don't depend on validation metrics
+                print(f"\tVal Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
 
-    # Plot training history
-    plot_training_history(
-        train_losses, val_losses, train_accs, val_accs,
-        save_path=os.path.join(config.training.output_dir, "training_history.png")
-    )
+                # Generate and log confusion matrix less frequently to reduce file operations
+                should_generate_cm = (epoch + 1) % 5 == 0 or (epoch + 1) == config.training.num_epochs
 
-    # Close wandb run
-    if wandb_run is not None:
-        wandb_run.finish()
+                if should_generate_cm:
+                    print(f"\tGenerating confusion matrix for epoch {epoch + 1}...")
+                    cm_path = os.path.join(config.training.output_dir, f"confusion_matrix_epoch_{epoch + 1}.png")
+                    cm_fig = plot_confusion_matrix(
+                        y_true=true_labels,
+                        y_pred=predicted_labels,
+                        class_names=["CN", "MCI", "AD"],
+                        normalize=False,
+                        save_path=cm_path,
+                        title=f"Confusion Matrix - Epoch {epoch + 1}"
+                    )
+
+                    # Log confusion matrix to wandb
+                    if wandb_run is not None:
+                        wandb_run.log({
+                            "val/confusion_matrix": wandb.Image(cm_fig),
+                        }, step=epoch + 1)
+
+                    # Close the figure
+                    plt.close(cm_fig)
+                else:
+                    print(f"\tSkipping confusion matrix generation for epoch {epoch + 1} (generated every 5 epochs)")
+
+                # Update learning rate scheduler
+                if scheduler is not None:
+                    if isinstance(scheduler, ReduceLROnPlateau):
+                        scheduler.step(val_loss)  # For ReduceLROnPlateau
+                    else:
+                        scheduler.step()  # For other schedulers
+
+                # Log validation metrics to wandb
+                if wandb_run is not None:
+                    wandb_run.log({
+                        "val/loss": val_loss,
+                        "val/accuracy": val_acc,
+                    }, step=epoch + 1)
+
+                # Check if this is the best model
+                is_best = val_acc > best_val_acc
+                if is_best:
+                    best_val_acc = val_acc
+
+                # Save checkpoint
+                save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler,
+                    epoch=epoch + 1,
+                    train_loss=train_loss,
+                    val_loss=val_loss,
+                    val_acc=val_acc,
+                    is_best=is_best,
+                    output_dir=config.training.output_dir,
+                    model_name=config.model.name,
+                    train_losses=train_losses,
+                    val_losses=val_losses,
+                    train_accs=train_accs,
+                    val_accs=val_accs,
+                    checkpoint_config=config.training.checkpoint,
+                    class_weights=class_weights
+                )
+
+                # Visualize predictions less frequently to reduce file operations
+                if config.training.visualize and ((epoch + 1) % 10 == 0 or (epoch + 1) == config.training.num_epochs):
+                    print("\tVisualizing predictions...")
+                    try:
+                        visualize_predictions(
+                            model, val_loader, device, num_samples=4,
+                            save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch + 1}.png")
+                        )
+                    except Exception as e:
+                        print(f"Error visualizing predictions: {e}")
+
+                    # Only clean up after potentially memory-intensive operations
+                    torch.cuda.empty_cache()
+            else:
+                print(f"\tSkipping validation for epoch {epoch + 1} (validation frequency: every {config.training.val_epoch_freq} epochs)")
+
+                # For non-plateau schedulers, we need to step even without validation
+                if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
+                    scheduler.step()  # Step schedulers that don't depend on validation metrics
+
+        # Plot training history
+        plot_training_history(
+            train_losses, val_losses, train_accs, val_accs,
+            save_path=os.path.join(config.training.output_dir, "training_history.png")
+        )
+
+        # Close wandb run
+        if wandb_run is not None:
+            try:
+                wandb_run.finish()
+            except Exception as e:
+                print(f"Error closing wandb run: {e}")
+
+    except Exception as e:
+        print(f"Error during training: {e}")
+        # Make sure to clean up wandb resources even on error
+        if wandb_run is not None:
+            try:
+                wandb_run.finish()
+            except:
+                pass
+        raise
+    finally:
+        # Final cleanup
+        cleanup_resources()
 
 
 if __name__ == "__main__":
