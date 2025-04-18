@@ -692,7 +692,7 @@ def main():
                 # Log confusion matrix to wandb
                 if wandb_run is not None:
                     wandb_run.log({
-                        "confusion_matrix": wandb.Image(cm_fig),
+                        "val/confusion_matrix": wandb.Image(cm_fig),
                     }, step=epoch + 1)
 
                 # Close the figure
