@@ -683,6 +683,8 @@ def main():
                 cm_fig = plot_confusion_matrix(
                     y_true=true_labels,
                     y_pred=predicted_labels,
+                    class_names=["CN", "MCI", "AD"],
+                    normalize=False,
                     save_path=cm_path,
                     title=f"Confusion Matrix - Epoch {epoch + 1}"
                 )
