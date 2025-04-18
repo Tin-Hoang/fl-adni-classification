@@ -18,10 +18,18 @@ from torch.optim.lr_scheduler import (
     MultiStepLR,
     ExponentialLR,
 )
+from collections import Counter
+import numpy as np
+import matplotlib.pyplot as plt
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
-from adni_classification.utils.visualization import visualize_batch, visualize_predictions, plot_training_history
+from adni_classification.utils.visualization import (
+    visualize_batch,
+    visualize_predictions,
+    plot_training_history,
+    plot_confusion_matrix
+)
 from adni_classification.config.config import Config
 
 
@@ -129,7 +137,7 @@ def validate(
     criterion: nn.Module,
     device: torch.device,
     use_mixed_precision: bool = False
-) -> Tuple[float, float]:
+) -> Tuple[float, float, np.ndarray, np.ndarray]:
     """Validate the model.
 
     Args:
@@ -140,12 +148,14 @@ def validate(
         use_mixed_precision: Whether to use mixed precision training
 
     Returns:
-        Tuple of (average validation loss, average validation accuracy)
+        Tuple of (average validation loss, average validation accuracy, true labels, predicted labels)
     """
     model.eval()
     total_loss = 0.0
     correct = 0
     total = 0
+    all_labels = []
+    all_predictions = []
 
     # Create progress bar
     pbar = tqdm(val_loader, desc="Validation", leave=False)
@@ -168,6 +178,10 @@ def validate(
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
+            # Collect true and predicted labels for confusion matrix
+            all_labels.extend(labels.cpu().numpy())
+            all_predictions.extend(predicted.cpu().numpy())
+
             # Update progress bar
             current_loss = total_loss / (batch_idx + 1)
             current_acc = 100.0 * correct / total
@@ -179,7 +193,7 @@ def validate(
     avg_loss = total_loss / len(val_loader)
     avg_accuracy = 100.0 * correct / total
 
-    return avg_loss, avg_accuracy
+    return avg_loss, avg_accuracy, np.array(all_labels), np.array(all_predictions)
 
 
 def save_checkpoint(
@@ -420,6 +434,10 @@ def main():
         transform=val_transform
     )
 
+    # Add this code to examine class distribution
+    labels = [sample["label"].item() for sample in train_dataset]
+    print(f"Training class distribution: {Counter(labels)}")
+
     # Create data loaders with proper multiprocessing settings
     train_loader = DataLoader(
         train_dataset,
@@ -538,66 +556,102 @@ def main():
         train_losses.append(train_loss)
         train_accs.append(train_acc)
 
-        # Validate
-        val_loss, val_acc = validate(
-            model, val_loader, criterion, device, use_mixed_precision=use_mixed_precision
-        )
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-
-        print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-
-        # Update learning rate scheduler
-        if scheduler is not None:
-            if isinstance(scheduler, ReduceLROnPlateau):
-                scheduler.step(val_loss)  # For ReduceLROnPlateau
-            else:
-                scheduler.step()  # For other schedulers
-
-        # Log metrics to wandb
+        # Log training metrics to wandb every epoch
         if wandb_run is not None:
             wandb_log = {
                 "train/loss": train_loss,
                 "train/accuracy": train_acc,
                 "train/lr": current_lr,
-                "val/loss": val_loss,
-                "val/accuracy": val_acc,
             }
             wandb_run.log(wandb_log, step=epoch + 1)
 
-        # Check if this is the best model
-        is_best = val_acc > best_val_acc
-        if is_best:
-            best_val_acc = val_acc
+        # Check if validation should be run this epoch
+        should_validate = (epoch + 1) % config.training.val_epoch_freq == 0 or (epoch + 1) == config.training.num_epochs
 
-        # Save checkpoint
-        save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            scaler=scaler,
-            epoch=epoch + 1,
-            train_loss=train_loss,
-            val_loss=val_loss,
-            val_acc=val_acc,
-            is_best=is_best,
-            output_dir=config.training.output_dir,
-            model_name=config.model.name,
-            train_losses=train_losses,
-            val_losses=val_losses,
-            train_accs=train_accs,
-            val_accs=val_accs,
-            checkpoint_config=config.training.checkpoint
-        )
-
-        # Visualize predictions every 10 epochs if requested
-        if config.training.visualize and (epoch + 1) % 10 == 0:
-            print("Visualizing predictions...")
-            visualize_predictions(
-                model, val_loader, device, num_samples=4,
-                save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch + 1}.png")
+        if should_validate:
+            # Validate
+            val_loss, val_acc, true_labels, predicted_labels = validate(
+                model, val_loader, criterion, device, use_mixed_precision=use_mixed_precision
             )
+            val_losses.append(val_loss)
+            val_accs.append(val_acc)
+
+            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+
+            # Generate and log confusion matrix every 10 epochs
+            if (epoch + 1) % 10 == 0 or epoch == 0:
+                print(f"Generating confusion matrix for epoch {epoch + 1}...")
+                cm_path = os.path.join(config.training.output_dir, f"confusion_matrix_epoch_{epoch + 1}.png")
+                cm_fig = plot_confusion_matrix(
+                    y_true=true_labels,
+                    y_pred=predicted_labels,
+                    save_path=cm_path,
+                    title=f"Confusion Matrix - Epoch {epoch + 1}"
+                )
+
+                # Log confusion matrix to wandb
+                if wandb_run is not None:
+                    wandb_run.log({
+                        "confusion_matrix": wandb.Image(cm_fig),
+                    }, step=epoch + 1)
+
+                # Close the figure
+                plt.close(cm_fig)
+
+            # Update learning rate scheduler
+            if scheduler is not None:
+                if isinstance(scheduler, ReduceLROnPlateau):
+                    scheduler.step(val_loss)  # For ReduceLROnPlateau
+                else:
+                    scheduler.step()  # For other schedulers
+
+            # Log validation metrics to wandb
+            if wandb_run is not None:
+                wandb_run.log({
+                    "val/loss": val_loss,
+                    "val/accuracy": val_acc,
+                }, step=epoch + 1)
+
+            # Check if this is the best model
+            is_best = val_acc > best_val_acc
+            if is_best:
+                best_val_acc = val_acc
+
+            # Save checkpoint
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=scaler,
+                epoch=epoch + 1,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                val_acc=val_acc,
+                is_best=is_best,
+                output_dir=config.training.output_dir,
+                model_name=config.model.name,
+                train_losses=train_losses,
+                val_losses=val_losses,
+                train_accs=train_accs,
+                val_accs=val_accs,
+                checkpoint_config=config.training.checkpoint
+            )
+
+            # Visualize predictions every 10 epochs if requested
+            if config.training.visualize and (epoch + 1) % 10 == 0:
+                print("Visualizing predictions...")
+                visualize_predictions(
+                    model, val_loader, device, num_samples=4,
+                    save_path=os.path.join(config.training.output_dir, f"predictions_epoch_{epoch + 1}.png")
+                )
+        else:
+            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+            print(f"Skipping validation for epoch {epoch + 1} (validation frequency: every {config.training.val_epoch_freq} epochs)")
+
+            # For non-plateau schedulers, we need to step even without validation
+            if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
+                scheduler.step()  # Step schedulers that don't depend on validation metrics
 
     # Plot training history
     plot_training_history(
