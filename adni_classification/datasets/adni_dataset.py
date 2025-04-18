@@ -458,10 +458,10 @@ def get_transforms(mode: str = "train",
         ),
         # Add an explicit transform to ensure consistent dimensions
         # This will guarantee that all tensors have the exact same shape
-        Lambdad(
-            keys=["image"],
-            func=shape_check_func,
-        ),
+        # Lambdad(
+        #     keys=["image"],
+        #     func=shape_check_func,
+        # ),
     ])
 
     if mode == "train":

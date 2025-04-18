@@ -3,7 +3,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 from adni_classification.models.base_model import BaseModel
 
@@ -15,19 +14,19 @@ class SecureFedCNN(BaseModel):
         self,
         num_classes: int = 3,
         pretrained_checkpoint: str = None,
-        input_size: list = [128, 128, 128]
+        input_size: list = [182, 218, 182]
     ):
         """Initialize Secure Federated CNN model.
 
         Args:
-            num_classes: Number of output classes
+            num_classes: Number of output classes (default: 3 for CN, MCI, AD)
             pretrained_checkpoint: Path to pretrained weights file
-            input_size: Size of the input image (default: [128, 128, 128])
+            input_size: Size of the input image (default: [182, 218, 182])
         """
         super().__init__(num_classes)
 
         # Store input size
-        self.input_size = input_size if input_size else [128, 128, 128]
+        self.input_size = input_size if input_size else [182, 218, 182]
 
         # Ensure input_size is a list of integers
         if isinstance(self.input_size, (list, tuple)) and len(self.input_size) == 3:
@@ -38,42 +37,50 @@ class SecureFedCNN(BaseModel):
 
         # Define the first convolutional block
         self.conv1 = nn.Sequential(
-            nn.Conv3d(1, 32, kernel_size=3, padding=1),
+            nn.Conv3d(1, 8, kernel_size=3, padding=0),  # 8 x 180 x 216 x 180
+            nn.BatchNorm3d(8),
             nn.ReLU(),
-            nn.MaxPool3d(kernel_size=2, stride=2)
+            nn.MaxPool3d(kernel_size=2, stride=2)  # 8 x 90 x 108 x 90
         )
 
         # Define the second convolutional block
         self.conv2 = nn.Sequential(
-            nn.Conv3d(32, 64, kernel_size=3, padding=1),
+            nn.Conv3d(8, 16, kernel_size=3, padding=0),  # 16 x 88 x 106 x 88
+            nn.BatchNorm3d(16),
             nn.ReLU(),
-            nn.MaxPool3d(kernel_size=2, stride=2)
+            nn.MaxPool3d(kernel_size=3, stride=3)  # 16 x 29 x 35 x 29
         )
 
         # Define the third convolutional block
         self.conv3 = nn.Sequential(
-            nn.Conv3d(64, 128, kernel_size=3, padding=1),
+            nn.Conv3d(16, 32, kernel_size=3, padding=0),  # 32 x 27 x 33 x 27
+            nn.BatchNorm3d(32),
             nn.ReLU(),
-            nn.MaxPool3d(kernel_size=2, stride=2)
+            nn.MaxPool3d(kernel_size=2, stride=2)  # 32 x 13 x 16 x 13
         )
 
-        # Define the fourth convolutional block (secure)
+        # Define the fourth convolutional block
         self.conv4 = nn.Sequential(
-            nn.Conv3d(128, 256, kernel_size=3, padding=1),
+            nn.Conv3d(32, 64, kernel_size=3, padding=0),  # 64 x 11 x 14 x 11
+            nn.BatchNorm3d(64),
             nn.ReLU(),
-            nn.MaxPool3d(kernel_size=2, stride=2)
+            nn.MaxPool3d(kernel_size=3, stride=3)  # 64 x 3 x 4 x 3
         )
 
         # Calculate the size of the flattened features
-        # After 4 MaxPool layers with stride 2, the spatial dimensions are reduced by a factor of 2^4 = 16
-        flat_size = [dim // 16 for dim in self.input_size]
-        self.flat_features = 256 * flat_size[0] * flat_size[1] * flat_size[2]
+        # After conv blocks, for input [182, 218, 182]:
+        # conv1: [91, 109, 91], conv2: [30, 36, 30], conv3: [15, 18, 15], conv4: [5, 6, 5]
+        flat_size = [3, 4, 3]
+        self.flat_features = 64 * flat_size[0] * flat_size[1] * flat_size[2]  # 64 * 3 * 4 * 3 = 2304
 
         print(f"Calculated flat features size: {self.flat_features} from input size {self.input_size}")
 
         # Define the fully connected layers
-        self.fc1 = nn.Linear(self.flat_features, 512)
-        self.fc2 = nn.Linear(512, num_classes)
+        self.fc1 = nn.Linear(self.flat_features, 128)
+        self.fc2 = nn.Linear(128, num_classes)
+
+        # Dropout layer
+        self.dropout = nn.Dropout(0.4)
 
         # Load pretrained weights if provided
         if pretrained_checkpoint:
@@ -101,7 +108,6 @@ class SecureFedCNN(BaseModel):
         # Check input shape for debugging
         if x.shape[2:] != torch.Size(self.input_size):
             print(f"Warning: Input shape {x.shape[2:]} doesn't match expected shape {self.input_size}")
-            # If running on CUDA device, ensure warnings are printed before potential crash
             if x.is_cuda:
                 torch.cuda.synchronize()
 
@@ -126,8 +132,7 @@ class SecureFedCNN(BaseModel):
             # Dynamically adapt to the actual size if needed
             if not hasattr(self, 'adapted_fc1') or self.adapted_fc1.in_features != actual_size:
                 print(f"Adapting fully connected layer to actual size: {actual_size}")
-                self.adapted_fc1 = nn.Linear(actual_size, 512).to(x.device)
-                # Initialize weights with existing weights if possible
+                self.adapted_fc1 = nn.Linear(actual_size, 128).to(x.device)
                 if hasattr(self, 'fc1'):
                     if actual_size < self.flat_features:
                         self.adapted_fc1.weight.data[:, :actual_size] = self.fc1.weight.data[:, :actual_size]
@@ -136,10 +141,15 @@ class SecureFedCNN(BaseModel):
                     self.adapted_fc1.bias.data = self.fc1.bias.data
 
             # Use the adapted layer
+            x = self.dropout(x)
             x = F.relu(self.adapted_fc1(x))
         else:
             # Regular forward pass
+            x = self.dropout(x)
             x = F.relu(self.fc1(x))
+
+        # Apply dropout before second fully connected layer
+        x = self.dropout(x)
 
         # Pass through second fully connected layer
         x = self.fc2(x)
