@@ -22,6 +22,9 @@ training:
   visualize: false
   lr_scheduler: "plateau"
   val_epoch_freq: 5  # Run validation and save checkpoints every 5 epochs
+  use_class_weights: true
+  class_weight_type: "inverse"
+  # Optional: manual_class_weights: [1.0, 2.0, 3.0]  # For manual weighting
 
 wandb:
   use_wandb: false

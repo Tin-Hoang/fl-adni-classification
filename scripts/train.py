@@ -33,6 +33,61 @@ from adni_classification.utils.visualization import (
 from adni_classification.config.config import Config
 
 
+def compute_class_weights(
+    labels: List[int],
+    num_classes: int,
+    weight_type: str = "inverse",
+    manual_weights: Optional[List[float]] = None
+) -> torch.Tensor:
+    """Compute class weights for imbalanced datasets.
+
+    Args:
+        labels: List of class labels from the training set
+        num_classes: Number of classes
+        weight_type: Type of weighting to use ('inverse', 'sqrt_inverse', 'effective', 'manual')
+        manual_weights: Manual weights to use if weight_type is 'manual'
+
+    Returns:
+        Tensor of class weights
+    """
+    # Get class frequencies
+    class_counts = Counter(labels)
+
+    # Ensure all classes are represented in the counts
+    for c in range(num_classes):
+        if c not in class_counts:
+            class_counts[c] = 0
+
+    # Sort the counts by class index
+    sorted_counts = [class_counts[i] for i in range(num_classes)]
+    total_samples = sum(sorted_counts)
+
+    if weight_type == "inverse":
+        # Inverse frequency weighting
+        class_weights = [total_samples / (num_classes * count) if count > 0 else 1.0 for count in sorted_counts]
+    elif weight_type == "sqrt_inverse":
+        # Square root of inverse frequency (less aggressive than inverse)
+        class_weights = [np.sqrt(total_samples / (num_classes * count)) if count > 0 else 1.0 for count in sorted_counts]
+    elif weight_type == "effective":
+        # Effective number of samples weighting with beta=0.9999
+        beta = 0.9999
+        effective_nums = [1.0 - np.power(beta, count) for count in sorted_counts]
+        class_weights = [(1.0 - beta) / num if num > 0 else 1.0 for num in effective_nums]
+    elif weight_type == "manual" and manual_weights is not None:
+        # Manually specified weights
+        if len(manual_weights) != num_classes:
+            raise ValueError(f"manual_weights must have length {num_classes}")
+        class_weights = manual_weights
+    else:
+        # Default: all classes weighted equally
+        class_weights = [1.0] * num_classes
+
+    print(f"Class counts: {sorted_counts}")
+    print(f"Class weights ({weight_type}): {class_weights}")
+
+    return torch.FloatTensor(class_weights)
+
+
 def train_epoch(
     model: nn.Module,
     train_loader: DataLoader,
@@ -212,7 +267,8 @@ def save_checkpoint(
     val_losses: List[float],
     train_accs: List[float],
     val_accs: List[float],
-    checkpoint_config: Any
+    checkpoint_config: Any,
+    class_weights: Optional[torch.Tensor] = None
 ) -> None:
     """Save training checkpoint.
 
@@ -233,6 +289,7 @@ def save_checkpoint(
         train_accs: History of training accuracies
         val_accs: History of validation accuracies
         checkpoint_config: Configuration for checkpoint saving behavior
+        class_weights: Optional class weights used for loss function
     """
     checkpoint = {
         'epoch': epoch,
@@ -246,6 +303,10 @@ def save_checkpoint(
         'train_accs': train_accs,
         'val_accs': val_accs,
     }
+
+    # Add class weights if they exist
+    if class_weights is not None:
+        checkpoint['class_weights'] = class_weights.cpu()
 
     # Add scheduler state if available
     if scheduler is not None:
@@ -289,7 +350,7 @@ def load_checkpoint(
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[Any] = None,
     scaler: Optional[GradScaler] = None,
-) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[Any], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float]:
+) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[Any], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float, Optional[torch.Tensor]]:
     """Load training checkpoint.
 
     Args:
@@ -300,7 +361,7 @@ def load_checkpoint(
         scaler: The GradScaler to load state into (optional)
 
     Returns:
-        Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc)
+        Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights)
     """
     checkpoint = torch.load(checkpoint_path)
 
@@ -328,7 +389,10 @@ def load_checkpoint(
     if val_accs:
         best_val_acc = max(best_val_acc, max(val_accs))
 
-    return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc
+    # Get class weights if they exist
+    class_weights = checkpoint.get('class_weights', None)
+
+    return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights
 
 
 def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epochs: int) -> Optional[Any]:
@@ -481,8 +545,41 @@ def main():
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     model = model.to(device)
 
-    # Create loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
+    # Initialize variables for training history
+    start_epoch = 0
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+    best_val_acc = 0.0
+    class_weights = None
+
+    # Check if we need to resume training from a checkpoint
+    if config.model.pretrained_checkpoint:
+        # Check if the weights path is a checkpoint file
+        if os.path.isfile(config.model.pretrained_checkpoint):
+            print(f"Loading checkpoint from: {config.model.pretrained_checkpoint}")
+            model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, loaded_weights = load_checkpoint(
+                config.model.pretrained_checkpoint, model
+            )
+            # We need to increment the epoch as start_epoch is the last completed epoch
+            start_epoch += 1
+            print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
+
+            # If class weights were in the checkpoint and we're using class weights, use them
+            if loaded_weights is not None and config.training.use_class_weights:
+                class_weights = loaded_weights.to(device)
+                print(f"Using class weights from checkpoint: {class_weights}")
+        else:
+            print(f"No checkpoint found at: {config.model.pretrained_checkpoint}")
+            # If it's not a checkpoint file, it might be just a state dict
+            if os.path.isfile(config.model.pretrained_checkpoint):
+                print(f"Loading model state dict from: {config.model.pretrained_checkpoint}")
+                state_dict = torch.load(config.model.pretrained_checkpoint, map_location=device)
+                model.load_state_dict(state_dict)
+                print(f"Loaded model state dict from: {config.model.pretrained_checkpoint}")
+
+    # Create optimizer
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config.training.learning_rate,
@@ -505,33 +602,33 @@ def main():
     if gradient_accumulation_steps > 1:
         print(f"Using gradient accumulation with {gradient_accumulation_steps} steps")
 
-    # Initialize training history variables
-    start_epoch = 0
-    train_losses = []
-    val_losses = []
-    train_accs = []
-    val_accs = []
-    best_val_acc = 0.0
+    # If we resumed from a checkpoint, update optimizer and scheduler with loaded states
+    if config.model.pretrained_checkpoint and os.path.isfile(config.model.pretrained_checkpoint):
+        _, optimizer, scheduler, scaler, _, _, _, _, _, _, _ = load_checkpoint(
+            config.model.pretrained_checkpoint, model, optimizer, scheduler, scaler
+        )
 
-    # Check if we need to resume training from a checkpoint
-    if config.model.pretrained_checkpoint:
-        # Check if the weights path is a checkpoint file
-        if os.path.isfile(config.model.pretrained_checkpoint):
-            print(f"Loading checkpoint from: {config.model.pretrained_checkpoint}")
-            model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc = load_checkpoint(
-                config.model.pretrained_checkpoint, model, optimizer, scheduler, scaler
+    # Create loss function with class weights if enabled
+    if config.training.use_class_weights:
+        # If we didn't get class weights from a checkpoint, compute them
+        if class_weights is None:
+            class_weights = compute_class_weights(
+                labels=labels,
+                num_classes=config.model.num_classes,
+                weight_type=config.training.class_weight_type,
+                manual_weights=config.training.manual_class_weights
             )
-            # We need to increment the epoch as start_epoch is the last completed epoch
-            start_epoch += 1
-            print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
-        else:
-            print(f"No checkpoint found at: {config.model.pretrained_checkpoint}")
-            # If it's not a checkpoint file, it might be just a state dict
-            if os.path.isfile(config.model.pretrained_checkpoint):
-                print(f"Loading model state dict from: {config.model.pretrained_checkpoint}")
-                state_dict = torch.load(config.model.pretrained_checkpoint, map_location=device)
-                model.load_state_dict(state_dict)
-                print(f"Loaded model state dict from: {config.model.pretrained_checkpoint}")
+            class_weights = class_weights.to(device)
+
+        print(f"Using class weights: {class_weights}")
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+        # Log class weights to wandb if enabled
+        if wandb_run is not None:
+            wandb_run.config.update({"class_weights": class_weights.cpu().numpy().tolist()})
+    else:
+        criterion = nn.CrossEntropyLoss()
+        class_weights = None
 
     # Visualize training samples if requested
     if config.training.visualize:
@@ -635,7 +732,8 @@ def main():
                 val_losses=val_losses,
                 train_accs=train_accs,
                 val_accs=val_accs,
-                checkpoint_config=config.training.checkpoint
+                checkpoint_config=config.training.checkpoint,
+                class_weights=class_weights
             )
 
             # Visualize predictions every 10 epochs if requested
