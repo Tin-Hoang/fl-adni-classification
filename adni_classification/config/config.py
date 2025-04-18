@@ -55,6 +55,7 @@ class TrainingConfig:
     mixed_precision: bool = False
     visualize: bool = False
     lr_scheduler: str = "plateau"
+    val_epoch_freq: int = 5  # Run validation every N epochs
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
@@ -171,6 +172,7 @@ class Config:
                 "mixed_precision": self.training.mixed_precision,
                 "visualize": self.training.visualize,
                 "lr_scheduler": self.training.lr_scheduler,
+                "val_epoch_freq": self.training.val_epoch_freq,
                 "checkpoint": {
                     "save_best": self.training.checkpoint.save_best,
                     "save_latest": self.training.checkpoint.save_latest,
