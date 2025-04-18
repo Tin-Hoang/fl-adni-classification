@@ -427,9 +427,8 @@ def get_transforms(mode: str = "train",
 
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
-        # EnsureChannelFirstd(keys=["image"]),
-        # Use specific orientation to ensure consistency
-        # Orientationd(keys=["image"], axcodes="RAS"),
+        EnsureChannelFirstd(keys=["image"]),
+        Orientationd(keys=["image"], axcodes="RAS"),  # Use specific orientation to ensure consistency
     ]
 
     # Add spacing transform if requested
