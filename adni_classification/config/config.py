@@ -18,6 +18,8 @@ class DataConfig:
     resize_mode: str = "trilinear"
     use_spacing: bool = True
     spacing_size: List[float] = field(default_factory=lambda: [1.5, 1.5, 1.5])
+    cache_rate: float = 1.0  # Percentage of data to cache (0.0-1.0)
+    cache_num_workers: int = 0  # Number of workers for CacheDataset initialization
 
 
 @dataclass
@@ -56,6 +58,9 @@ class TrainingConfig:
     visualize: bool = False
     lr_scheduler: str = "plateau"
     val_epoch_freq: int = 5  # Run validation every N epochs
+    use_class_weights: bool = False
+    class_weight_type: str = "inverse"  # Options: "inverse", "sqrt_inverse", "effective", "manual"
+    manual_class_weights: Optional[List[float]] = None  # Manual class weights if class_weight_type is "manual"
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
@@ -152,6 +157,8 @@ class Config:
                 "resize_mode": self.data.resize_mode,
                 "use_spacing": self.data.use_spacing,
                 "spacing_size": self.data.spacing_size,
+                "cache_rate": self.data.cache_rate,
+                "cache_num_workers": self.data.cache_num_workers,
             },
             "model": {
                 "name": self.model.name,
@@ -173,6 +180,9 @@ class Config:
                 "visualize": self.training.visualize,
                 "lr_scheduler": self.training.lr_scheduler,
                 "val_epoch_freq": self.training.val_epoch_freq,
+                "use_class_weights": self.training.use_class_weights,
+                "class_weight_type": self.training.class_weight_type,
+                "manual_class_weights": self.training.manual_class_weights,
                 "checkpoint": {
                     "save_best": self.training.checkpoint.save_best,
                     "save_latest": self.training.checkpoint.save_latest,
