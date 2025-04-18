@@ -17,8 +17,9 @@ training:
   num_epochs: 300
   learning_rate: 0.0001
   weight_decay: 0.0001
-  num_workers: 10
+  num_workers: 30
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
+  mixed_precision: false
   visualize: false
   lr_scheduler: "plateau"
   val_epoch_freq: 10

@@ -469,6 +469,10 @@ def main():
             # The method might already be set
             pass
 
+    print("\n" + "="*80)
+    print(f"Training config: {config.to_dict()}")
+    print("\n" + "="*80)
+
     # Create datasets with transforms
     train_transform = get_transforms(
         mode="train",
@@ -500,7 +504,6 @@ def main():
 
     # Add this code to examine class distribution
     labels = [sample["label"].item() for sample in train_dataset]
-    print(f"Training class distribution: {Counter(labels)}")
 
     # Create data loaders with proper multiprocessing settings
     train_loader = DataLoader(

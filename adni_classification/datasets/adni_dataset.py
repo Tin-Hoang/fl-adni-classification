@@ -13,11 +13,8 @@ from monai.transforms import (
     Spacingd,
     ScaleIntensityRanged,
     RandAffined,
-    RandFlipd,
-    RandRotate90d,
     ToTensord,
     Resized,
-    Lambdad,
     Rand3DElasticd,
     RandGaussianNoised,
     RandAdjustContrastd,
@@ -170,6 +167,7 @@ class ADNIDataset(Dataset):
             img_dir: Path to the directory containing the image files
             transform: Optional transform to apply to the images
         """
+        print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
         self.transform = transform
@@ -216,6 +214,15 @@ class ADNIDataset(Dataset):
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
         print(f"Final dataset size: {len(self.data)} samples")
 
+        # Print first 5 images with their label groups
+        print("\nFirst 5 images with label groups:")
+        for i, (idx, row) in enumerate(self.data.head(5).iterrows()):
+            image_id = row["Image Data ID"]
+            group = row["Group"]
+            label = self.label_map[group]
+            file_path = self.image_paths[image_id]
+            print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
+
     def _detect_csv_format(self) -> str:
         """Detect the format of the CSV file.
 
@@ -223,18 +230,14 @@ class ADNIDataset(Dataset):
             String indicating the detected format: "original" or "alternative"
         """
         if "DX" in self.data.columns and "image_id" in self.data.columns:
-            print("\n" + "="*80)
             print("Detected ALTERNATIVE CSV format with:")
             print("- 'DX' column for diagnosis (Dementia, MCI, CN)")
             print("- 'image_id' column for image identifiers (without 'I' prefix)")
-            print("="*80 + "\n")
             return "alternative"
         elif "Group" in self.data.columns and "Image Data ID" in self.data.columns:
-            print("\n" + "="*80)
             print("Detected ORIGINAL CSV format with:")
             print("- 'Group' column for diagnosis (AD, MCI, CN)")
             print("- 'Image Data ID' column for image identifiers (with 'I' prefix)")
-            print("="*80 + "\n")
             return "original"
         else:
             raise ValueError("Unknown CSV format. CSV must have either 'Group' and 'Image Data ID' columns (original format) or 'DX' and 'image_id' columns (alternative format).")
@@ -269,7 +272,6 @@ class ADNIDataset(Dataset):
                              f"Check that the CSV contains the expected columns and values.")
 
         # Print summary of the standardized data
-        print(f"CSV format: {self.csv_format}")
         print(f"Total samples after standardization: {len(self.data)}")
         print("Group distribution:")
         for group, count in self.data["Group"].value_counts().items():
@@ -318,7 +320,7 @@ class ADNIDataset(Dataset):
                         continue
 
                     # Add to debugging list
-                    if len(found_ids) < 10:
+                    if len(found_ids) < 5:
                         found_ids.append((image_id, file_path, parent_dir))
 
                     # Add to the mapping - if both .nii and .nii.gz exist for same ID,
@@ -326,8 +328,8 @@ class ADNIDataset(Dataset):
                     if image_id not in image_paths or file.endswith('.nii.gz'):
                         image_paths[image_id] = file_path
 
-        # Print the first 10 IDs found for debugging
-        print("\nFirst 10 image IDs found in files:")
+        # Print the first 5 IDs found for debugging
+        print("\nFirst 5 image IDs found in files:")
         for i, (id_val, path, dir_name) in enumerate(found_ids):
             print(f"{i+1}. ID: {id_val}, Directory: {dir_name}, Path: {os.path.basename(path)}")
 
