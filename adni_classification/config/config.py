@@ -118,16 +118,20 @@ class Config:
         This includes:
         - Generating a unique output directory based on run_name and timestamp
         - If no run_name is specified, use the model name and timestamp
+        - If run_name is specified, append a timestamp to it
         """
         # Generate timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        # Generate run_name if not provided
+        # Generate run_name if not provided or append timestamp if provided
         if not self.wandb.run_name:
             model_identifier = f"{self.model.name}"
             if self.model.name == "resnet3d" and self.model.model_depth:
                 model_identifier = f"{self.model.name}{self.model.model_depth}"
             self.wandb.run_name = f"{model_identifier}_{timestamp}"
+        else:
+            # Append timestamp to existing run_name
+            self.wandb.run_name = f"{self.wandb.run_name}_{timestamp}"
 
         # Update output directory to include run_name and timestamp if it doesn't already
         if self.training.output_dir == "outputs" or not self.training.output_dir:
