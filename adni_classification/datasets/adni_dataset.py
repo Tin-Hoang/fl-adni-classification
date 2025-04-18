@@ -2,9 +2,10 @@
 
 import os
 import pandas as pd
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from torch.utils.data import Dataset
 import monai
+from monai.data import CacheDataset
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -134,7 +135,7 @@ class ShapeChecker:
         return image
 
 
-class ADNIDataset(Dataset):
+class ADNIDataset(CacheDataset):
     """Dataset for ADNI MRI classification.
 
     This dataset loads 3D MRI images from the ADNI dataset and their corresponding labels.
@@ -159,6 +160,8 @@ class ADNIDataset(Dataset):
         csv_path: str,
         img_dir: str,
         transform: Optional[monai.transforms.Compose] = None,
+        cache_rate: float = 1.0,
+        num_workers: int = 0,
     ):
         """Initialize the dataset.
 
@@ -166,11 +169,12 @@ class ADNIDataset(Dataset):
             csv_path: Path to the CSV file containing image metadata and labels
             img_dir: Path to the directory containing the image files
             transform: Optional transform to apply to the images
+            cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
+            num_workers: Number of subprocesses to use for data loading (default: 0)
         """
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
-        self.transform = transform
 
         # Load the CSV file
         self.data = pd.read_csv(csv_path)
@@ -211,6 +215,9 @@ class ADNIDataset(Dataset):
         # Keep only rows with valid image files
         self.data = self.data[self.data["Image Data ID"].isin(self.image_paths.keys())]
 
+        # Create a list of data dictionaries for CacheDataset
+        data_list = self._create_data_list()
+
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
         print(f"Final dataset size: {len(self.data)} samples")
 
@@ -222,6 +229,32 @@ class ADNIDataset(Dataset):
             label = self.label_map[group]
             file_path = self.image_paths[image_id]
             print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
+
+        # Initialize the CacheDataset
+        super().__init__(
+            data=data_list,
+            transform=transform,
+            cache_rate=cache_rate,
+            num_workers=num_workers
+        )
+
+    def _create_data_list(self) -> List[Dict[str, Any]]:
+        """Create a list of data dictionaries for CacheDataset.
+
+        Returns:
+            List of dictionaries, each containing image path and label
+        """
+        data_list = []
+        for _, row in self.data.iterrows():
+            image_id = row["Image Data ID"]
+            label = self.label_map[row["Group"]]
+            image_path = self.image_paths[image_id]
+
+            data_list.append({
+                "image": image_path,
+                "label": label,
+            })
+        return data_list
 
     def _detect_csv_format(self) -> str:
         """Detect the format of the CSV file.
@@ -328,11 +361,6 @@ class ADNIDataset(Dataset):
                     if image_id not in image_paths or file.endswith('.nii.gz'):
                         image_paths[image_id] = file_path
 
-        # Print the first 5 IDs found for debugging
-        print("\nFirst 5 image IDs found in files:")
-        for i, (id_val, path, dir_name) in enumerate(found_ids):
-            print(f"{i+1}. ID: {id_val}, Directory: {dir_name}, Path: {os.path.basename(path)}")
-
         return image_paths
 
     def _extract_id_from_filename(self, filename: str) -> Optional[str]:
@@ -365,38 +393,6 @@ class ADNIDataset(Dataset):
                     return f"I{part}"
 
         return None
-
-    def __len__(self) -> int:
-        """Return the number of samples in the dataset."""
-        return len(self.data)
-
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """Get a sample from the dataset.
-
-        Args:
-            idx: Index of the sample to get
-
-        Returns:
-            A dictionary containing the image and label
-        """
-        row = self.data.iloc[idx]
-        image_id = row["Image Data ID"]
-        label = self.label_map[row["Group"]]
-
-        # Get the image path
-        image_path = self.image_paths[image_id]
-
-        # Create a dictionary with the image path and label
-        data_dict = {
-            "image": image_path,
-            "label": label,
-        }
-
-        # Apply transforms if any
-        if self.transform:
-            data_dict = self.transform(data_dict)
-
-        return data_dict
 
 
 def get_transforms(mode: str = "train",
@@ -514,7 +510,6 @@ def get_transforms(mode: str = "train",
         ]
         return Compose(common_transforms + val_transforms)
 
-
 def test_image_path_mapping():
     """Test the image path mapping logic.
 
@@ -530,11 +525,17 @@ def test_image_path_mapping():
                         help="Path to the directory containing the image files")
     parser.add_argument("--csv_format", type=str, choices=["original", "alternative"],
                         help="CSV format to test explicitly (will be auto-detected if not specified)")
+    parser.add_argument("--cache_rate", type=float, default=1.0,
+                        help="Percentage of data to cache (0.0-1.0)")
+    parser.add_argument("--num_workers", type=int, default=0,
+                        help="Number of worker processes for data loading")
     args = parser.parse_args()
 
     print("Testing ADNI dataset image path mapping...")
     print(f"CSV path: {args.csv_path}")
     print(f"Image directory: {args.img_dir}")
+    print(f"Cache rate: {args.cache_rate}")
+    print(f"Number of workers: {args.num_workers}")
 
     # Read and print the first few rows of the CSV
     df = pd.read_csv(args.csv_path)
@@ -555,7 +556,12 @@ def test_image_path_mapping():
     try:
         # Create a dataset with ID validation
         print("\nAttempting to create dataset with strict ID validation...")
-        dataset = ADNIDataset(args.csv_path, args.img_dir)
+        dataset = ADNIDataset(
+            args.csv_path,
+            args.img_dir,
+            cache_rate=args.cache_rate,
+            num_workers=args.num_workers
+        )
 
         # If successful, print information about it
         print(f"Successfully created dataset with {len(dataset)} samples")
@@ -642,6 +648,10 @@ def test_transforms():
                         help="Whether to include spacing transform (true/false)")
     parser.add_argument("--spacing_size", type=str, default="1.5,1.5,1.5",
                         help="Spacing dimensions (x,y,z) in mm")
+    parser.add_argument("--cache_rate", type=float, default=1.0,
+                        help="Percentage of data to cache (0.0-1.0)")
+    parser.add_argument("--num_workers", type=int, default=0,
+                        help="Number of worker processes for data loading")
     parser.add_argument("--visualize", action="store_true",
                         help="Visualize the transformed images")
     args = parser.parse_args()
@@ -659,6 +669,8 @@ def test_transforms():
         print(f"Spacing size: {spacing_size}")
     print(f"CSV path: {args.csv_path}")
     print(f"Image directory: {args.img_dir}")
+    print(f"Cache rate: {args.cache_rate}")
+    print(f"Number of workers: {args.num_workers}")
 
     # Create transforms for testing
     test_transforms = get_transforms(
@@ -671,7 +683,12 @@ def test_transforms():
 
     # Create a dataset without transforms first
     try:
-        dataset = ADNIDataset(args.csv_path, args.img_dir)
+        dataset = ADNIDataset(
+            args.csv_path,
+            args.img_dir,
+            cache_rate=args.cache_rate,
+            num_workers=args.num_workers
+        )
         print(f"Successfully created dataset with {len(dataset)} samples")
 
         # Test transforms on a few samples

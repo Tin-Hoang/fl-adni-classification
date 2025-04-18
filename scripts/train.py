@@ -490,16 +490,21 @@ def main():
         spacing_size=tuple(config.data.spacing_size)
     )
 
+    # Create datasets using the factory function with cache parameters from config
     train_dataset = ADNIDataset(
         csv_path=config.data.train_csv_path,
         img_dir=config.data.img_dir,
-        transform=train_transform
+        transform=train_transform,
+        cache_rate=config.data.cache_rate,
+        num_workers=config.data.cache_num_workers
     )
 
     val_dataset = ADNIDataset(
         csv_path=config.data.val_csv_path,
         img_dir=config.data.img_dir,
-        transform=val_transform
+        transform=val_transform,
+        cache_rate=config.data.cache_rate,
+        num_workers=config.data.cache_num_workers
     )
 
     # Add this code to examine class distribution

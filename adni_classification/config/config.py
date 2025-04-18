@@ -18,6 +18,8 @@ class DataConfig:
     resize_mode: str = "trilinear"
     use_spacing: bool = True
     spacing_size: List[float] = field(default_factory=lambda: [1.5, 1.5, 1.5])
+    cache_rate: float = 1.0  # Percentage of data to cache (0.0-1.0)
+    cache_num_workers: int = 0  # Number of workers for CacheDataset initialization
 
 
 @dataclass
@@ -155,6 +157,8 @@ class Config:
                 "resize_mode": self.data.resize_mode,
                 "use_spacing": self.data.use_spacing,
                 "spacing_size": self.data.spacing_size,
+                "cache_rate": self.data.cache_rate,
+                "cache_num_workers": self.data.cache_num_workers,
             },
             "model": {
                 "name": self.model.name,
