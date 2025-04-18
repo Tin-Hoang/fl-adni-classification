@@ -462,12 +462,12 @@ def main():
         )
 
     # Set multiprocessing method to spawn for better cleanup
-    # if config.training.num_workers > 0:
-    #     try:
-    #         mp.set_start_method('spawn', force=True)
-    #     except RuntimeError:
-    #         # The method might already be set
-    #         pass
+    if config.training.num_workers > 0:
+        try:
+            mp.set_start_method('spawn', force=True)
+        except RuntimeError:
+            # The method might already be set
+            pass
 
     print("\n" + "="*80)
     print(f"Training config: {config.to_dict()}")
@@ -645,7 +645,7 @@ def main():
 
     # Training loop
     for epoch in range(start_epoch, config.training.num_epochs):
-        print(f"Epoch {epoch + 1}/{config.training.num_epochs} -----------------")
+        print(f"Epoch {epoch + 1}/{config.training.num_epochs} " + "="*40)
 
         # Get current learning rate
         current_lr = optimizer.param_groups[0]['lr']

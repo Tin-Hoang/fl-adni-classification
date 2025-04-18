@@ -35,7 +35,7 @@ training:
     save_frequency: 10
 
 wandb:
-  use_wandb: false
+  use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["securefed-cnn", "1.5T_bl_scaled_594images_skullstripped"]
