@@ -57,6 +57,7 @@ class TrainingConfig:
     weight_decay: float
     num_workers: int
     output_dir: str
+    seed: int = 42  # Random seed for reproducibility
     gradient_accumulation_steps: int = 1
     mixed_precision: bool = False
     visualize: bool = False
@@ -183,6 +184,7 @@ class Config:
                 "weight_decay": self.training.weight_decay,
                 "num_workers": self.training.num_workers,
                 "output_dir": self.training.output_dir,
+                "seed": self.training.seed,
                 "gradient_accumulation_steps": self.training.gradient_accumulation_steps,
                 "mixed_precision": self.training.mixed_precision,
                 "visualize": self.training.visualize,
