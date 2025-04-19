@@ -586,18 +586,15 @@ def main():
     # Add this code to examine class distribution
     labels = [sample["label"].item() for sample in train_dataset]
 
-    # Ensure num_workers is at least 1 to enable multiprocessing
-    num_workers = max(1, config.training.num_workers)
-
     # Create data loaders with optimized multiprocessing settings
     # Using proper worker init and cleanup to prevent semaphore leaks
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
         shuffle=True,
-        num_workers=num_workers,
+        num_workers=config.training.num_workers,
         pin_memory=True,
-        prefetch_factor=2 if num_workers > 0 else None,
+        prefetch_factor=2 if config.training.num_workers > 0 else None,
         multiprocessing_context=config.data.multiprocessing_context,
         worker_init_fn=worker_init_fn,
         drop_last=True
@@ -607,9 +604,9 @@ def main():
         val_dataset,
         batch_size=config.training.batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=config.training.num_workers,
         pin_memory=True,
-        prefetch_factor=2 if num_workers > 0 else None,
+        prefetch_factor=2 if config.training.num_workers > 0 else None,
         multiprocessing_context=config.data.multiprocessing_context,
         worker_init_fn=worker_init_fn
     )

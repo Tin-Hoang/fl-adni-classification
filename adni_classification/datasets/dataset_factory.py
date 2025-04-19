@@ -4,8 +4,9 @@ from typing import Dict, Any, Union, Optional, Tuple
 import torch
 import monai
 
-from adni_classification.datasets.adni_smartcache_dataset import ADNIDataset as ADNISmartCacheDataset
-from adni_classification.datasets.adni_cache_dataset import ADNIDataset as ADNICacheDataset
+from adni_classification.datasets.adni_smartcache_dataset import ADNISmartCacheDataset
+from adni_classification.datasets.adni_cache_dataset import ADNICacheDataset
+from adni_classification.datasets.adni_dataset import ADNIDataset
 from adni_classification.datasets.transforms import get_transforms
 
 
@@ -19,11 +20,11 @@ def create_adni_dataset(
     replace_rate: float = 0.1,
     cache_num: Optional[int] = None,
     **kwargs: Any
-) -> Union[ADNISmartCacheDataset, ADNICacheDataset]:
+) -> Union[ADNISmartCacheDataset, ADNICacheDataset, ADNIDataset]:
     """Create a dataset instance based on the specified type.
 
     Args:
-        dataset_type: Type of dataset to create ('smartcache' or 'cache')
+        dataset_type: Type of dataset to create ('smartcache', 'cache', or 'normal')
         csv_path: Path to the CSV file containing image metadata and labels
         img_dir: Path to the directory containing the image files
         transform: Optional transform to apply to the images
@@ -64,8 +65,15 @@ def create_adni_dataset(
             cache_num=cache_num,
             **kwargs
         )
+    elif dataset_type.lower() == "normal":
+        return ADNIDataset(
+            csv_path=csv_path,
+            img_dir=img_dir,
+            transform=transform,
+            **kwargs  # Pass any additional arguments
+        )
     else:
-        raise ValueError(f"Dataset type '{dataset_type}' not supported. Available types: 'smartcache', 'cache'")
+        raise ValueError(f"Dataset type '{dataset_type}' not supported. Available types: 'smartcache', 'cache', 'normal'")
 
 
 def get_transforms_from_config(

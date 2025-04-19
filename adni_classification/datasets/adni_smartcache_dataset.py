@@ -10,7 +10,7 @@ from monai.data import SmartCacheDataset
 from adni_classification.datasets.transforms import get_transforms
 
 
-class ADNIDataset(SmartCacheDataset):
+class ADNISmartCacheDataset(SmartCacheDataset):
     """Dataset for ADNI MRI classification.
 
     This dataset loads 3D MRI images from the ADNI dataset and their corresponding labels.
@@ -336,7 +336,7 @@ def test_image_path_mapping():
     try:
         # Create a dataset with ID validation
         print("\nAttempting to create dataset with strict ID validation...")
-        dataset = ADNIDataset(
+        dataset = ADNISmartCacheDataset(
             args.csv_path,
             args.img_dir,
             cache_rate=args.cache_rate,
@@ -471,7 +471,7 @@ def test_transforms():
 
     # Create a dataset without transforms first
     try:
-        dataset = ADNIDataset(
+        dataset = ADNISmartCacheDataset(
             args.csv_path,
             args.img_dir,
             cache_rate=args.cache_rate,

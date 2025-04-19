@@ -14,7 +14,7 @@ class DataConfig:
     train_csv_path: str
     val_csv_path: str
     img_dir: str
-    dataset_type: str = "cache"  # Options: "smartcache", "cache"
+    dataset_type: str = "normal"  # Options: "smartcache", "cache", "normal"
     resize_size: List[int] = field(default_factory=lambda: [160, 160, 160])
     resize_mode: str = "trilinear"
     use_spacing: bool = False

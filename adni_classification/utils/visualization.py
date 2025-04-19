@@ -9,8 +9,6 @@ from typing import Dict, Any, List, Tuple, Optional
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
 
-from adni_classification.datasets.adni_smartcache_dataset import ADNIDataset, get_transforms
-
 
 def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Optional[str] = None) -> None:
     """Visualize a batch of images from the dataloader.
