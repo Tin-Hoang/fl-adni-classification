@@ -162,7 +162,6 @@ class ADNIDataset(SmartCacheDataset):
         transform: Optional[monai.transforms.Compose] = None,
         cache_rate: float = 1.0,
         num_workers: int = 0,
-        device: Optional[Union[str, torch.device]] = None,
         replace_rate: float = 0.1,
         cache_num: Optional[int] = None,
     ):
@@ -174,14 +173,12 @@ class ADNIDataset(SmartCacheDataset):
             transform: Optional transform to apply to the images
             cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
             num_workers: Number of subprocesses to use for data loading (default: 0)
-            device: Device to use for transforms (default: None, will use CPU)
             replace_rate: Rate to randomly replace items in cache with new items (default: 0.1)
             cache_num: Number of items to cache. Default: None (cache_rate * len(data))
         """
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
-        self.device = device
 
         # Load the CSV file
         self.data = pd.read_csv(csv_path)

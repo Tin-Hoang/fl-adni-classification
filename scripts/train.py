@@ -676,7 +676,6 @@ def main():
         transform=train_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
-        device=None  # Default to CPU
     )
 
     val_dataset = ADNIDataset(
@@ -685,7 +684,6 @@ def main():
         transform=val_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
-        device=None  # Default to CPU
     )
 
     # Add this code to examine class distribution
