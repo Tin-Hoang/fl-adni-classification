@@ -2,8 +2,9 @@
 
 import os
 import pandas as pd
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Union
 from torch.utils.data import Dataset
+import torch
 import monai
 from monai.data import CacheDataset
 from monai.transforms import (
@@ -162,6 +163,7 @@ class ADNIDataset(CacheDataset):
         transform: Optional[monai.transforms.Compose] = None,
         cache_rate: float = 1.0,
         num_workers: int = 0,
+        device: Optional[Union[str, torch.device]] = None,
     ):
         """Initialize the dataset.
 
@@ -171,10 +173,12 @@ class ADNIDataset(CacheDataset):
             transform: Optional transform to apply to the images
             cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
             num_workers: Number of subprocesses to use for data loading (default: 0)
+            device: Device to use for transforms (default: None, will use CPU)
         """
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
+        self.device = device
 
         # Load the CSV file
         self.data = pd.read_csv(csv_path)
@@ -220,6 +224,8 @@ class ADNIDataset(CacheDataset):
 
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
         print(f"Final dataset size: {len(self.data)} samples")
+        if self.device:
+            print(f"Using device: {self.device} for data transforms")
 
         # Print first 5 images with their label groups
         print("\nFirst 5 images with label groups:")
@@ -399,7 +405,8 @@ def get_transforms(mode: str = "train",
                 resize_size: Tuple[int, int, int] = (160, 160, 160),
                 resize_mode: str = "trilinear",
                 use_spacing: bool = True,
-                spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5)) -> monai.transforms.Compose:
+                spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5),
+                device: Optional[Union[str, torch.device]] = None) -> monai.transforms.Compose:
     """Get transforms for training or validation.
 
     Args:
@@ -408,6 +415,7 @@ def get_transforms(mode: str = "train",
         resize_mode: Interpolation mode for resizing
         use_spacing: Whether to include the Spacing transform (default: True)
         spacing_size: Tuple of (x, y, z) spacing in mm (default: (1.5, 1.5, 1.5))
+        device: Device to use for transforms (default: None, will use CPU)
 
     Returns:
         A Compose transform
@@ -429,14 +437,14 @@ def get_transforms(mode: str = "train",
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
-        Orientationd(keys=["image"], axcodes="RAS"),  # Use specific orientation to ensure consistency
+        Orientationd(keys=["image"], axcodes="RAS", device=device),  # Use specific orientation to ensure consistency
     ]
 
     # Add spacing transform if requested
     if use_spacing:
         common_transforms.append(
             # Ensure consistent spacing
-            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear")
+            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear", device=device)
         )
 
     # Add the rest of the transforms
@@ -455,6 +463,7 @@ def get_transforms(mode: str = "train",
             keys=["image"],
             spatial_size=resize_size,
             mode=resize_mode,
+            device=device,
         ),
     ])
 
@@ -468,6 +477,7 @@ def get_transforms(mode: str = "train",
                 scale_range=(0.2, 0.2, 0.2),
                 mode="bilinear",
                 padding_mode="zeros",
+                device=device,
             ),
 
             # Add elastic deformations
@@ -479,6 +489,7 @@ def get_transforms(mode: str = "train",
                 spatial_size=resize_size,  # Use the same resize_size from parameters
                 mode="bilinear",
                 padding_mode="zeros",
+                device=device,
             ),
 
             # Add intensity augmentations
@@ -495,12 +506,12 @@ def get_transforms(mode: str = "train",
             ),
 
             # Convert to tensor
-            ToTensord(keys=["image", "label"]),
+            ToTensord(keys=["image", "label"], device=device),
         ]
         return Compose(common_transforms + train_transforms)
     else:  # val
         val_transforms = [
-            ToTensord(keys=["image", "label"]),
+            ToTensord(keys=["image", "label"], device=device),
         ]
         return Compose(common_transforms + val_transforms)
 
@@ -523,13 +534,19 @@ def test_image_path_mapping():
                         help="Percentage of data to cache (0.0-1.0)")
     parser.add_argument("--num_workers", type=int, default=0,
                         help="Number of worker processes for data loading")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device to use for transforms (e.g., 'cuda' or 'cpu')")
     args = parser.parse_args()
+
+    # Parse device
+    device = torch.device(args.device) if args.device else None
 
     print("Testing ADNI dataset image path mapping...")
     print(f"CSV path: {args.csv_path}")
     print(f"Image directory: {args.img_dir}")
     print(f"Cache rate: {args.cache_rate}")
     print(f"Number of workers: {args.num_workers}")
+    print(f"Device: {device}")
 
     # Read and print the first few rows of the CSV
     df = pd.read_csv(args.csv_path)
@@ -554,7 +571,8 @@ def test_image_path_mapping():
             args.csv_path,
             args.img_dir,
             cache_rate=args.cache_rate,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            device=device
         )
 
         # If successful, print information about it
@@ -648,6 +666,8 @@ def test_transforms():
                         help="Number of worker processes for data loading")
     parser.add_argument("--visualize", action="store_true",
                         help="Visualize the transformed images")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device to use for transforms (e.g., 'cuda' or 'cpu')")
     args = parser.parse_args()
 
     # Parse resize dimensions
@@ -657,6 +677,9 @@ def test_transforms():
     use_spacing = args.use_spacing.lower() == "true"
     spacing_size = tuple(map(float, args.spacing_size.split(',')))
 
+    # Parse device
+    device = torch.device(args.device) if args.device else None
+
     print(f"Testing transforms with resize size: {resize_size}")
     print(f"Using spacing transform: {use_spacing}")
     if use_spacing:
@@ -665,6 +688,7 @@ def test_transforms():
     print(f"Image directory: {args.img_dir}")
     print(f"Cache rate: {args.cache_rate}")
     print(f"Number of workers: {args.num_workers}")
+    print(f"Device: {device}")
 
     # Create transforms for testing
     test_transforms = get_transforms(
@@ -672,7 +696,8 @@ def test_transforms():
         resize_size=resize_size,
         resize_mode="trilinear",
         use_spacing=use_spacing,
-        spacing_size=spacing_size
+        spacing_size=spacing_size,
+        device=device
     )
 
     # Create a dataset without transforms first
@@ -681,7 +706,8 @@ def test_transforms():
             args.csv_path,
             args.img_dir,
             cache_rate=args.cache_rate,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            device=device
         )
         print(f"Successfully created dataset with {len(dataset)} samples")
 
@@ -706,7 +732,7 @@ def test_transforms():
             if isinstance(transformed_image, np.ndarray):
                 print(f"Transformed image: NumPy array with shape {transformed_image.shape}")
             else:
-                print(f"Transformed image: Tensor with shape {transformed_image.shape}")
+                print(f"Transformed image: Tensor with shape {transformed_image.shape} on {transformed_image.device}")
 
             # Visualize if requested
             if args.visualize:

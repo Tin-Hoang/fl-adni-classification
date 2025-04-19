@@ -6,8 +6,8 @@ data:
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
-  cache_rate: 1.0  # Cache 100% of data in memory for faster training
-  cache_num_workers: 4  # Workers for creating the cache (separate from DataLoader workers)
+  cache_rate: 0.5  # Cache 100% of data in memory for faster training
+  cache_num_workers: 10  # Workers for creating the cache (separate from DataLoader workers)
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model
