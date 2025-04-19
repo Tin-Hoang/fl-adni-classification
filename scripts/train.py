@@ -21,13 +21,11 @@ from torch.optim.lr_scheduler import (
 from collections import Counter
 import numpy as np
 import matplotlib.pyplot as plt
-import atexit
 import gc
-import signal
 import tempfile
 
 from adni_classification.models.model_factory import ModelFactory
-from adni_classification.datasets.adni_dataset import ADNIDataset, get_transforms
+from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
 from adni_classification.utils.visualization import (
     visualize_batch,
     visualize_predictions,
@@ -650,27 +648,23 @@ def main():
     print(f"Training config: {config.to_dict()}")
     print("\n" + "="*80)
 
-    # Create datasets with transforms
-    train_transform = get_transforms(
-        mode="train",
-        resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode,
-        use_spacing=config.data.use_spacing,
-        spacing_size=tuple(config.data.spacing_size),
-        device=None  # Default to CPU
+    # Create transforms from config
+    train_transform = get_transforms_from_config(
+        config=config.data,
+        mode="train"
     )
 
-    val_transform = get_transforms(
-        mode="val",
-        resize_size=tuple(config.data.resize_size),
-        resize_mode=config.data.resize_mode,
-        use_spacing=config.data.use_spacing,
-        spacing_size=tuple(config.data.spacing_size),
-        device=None  # Default to CPU
+    val_transform = get_transforms_from_config(
+        config=config.data,
+        mode="val"
     )
 
-    # Create datasets using the factory function with cache parameters from config
-    train_dataset = ADNIDataset(
+    # Get dataset type from config (default to smartcache for backwards compatibility)
+    dataset_type = getattr(config.data, "dataset_type", "cache")
+
+    # Create datasets using the factory function
+    train_dataset = create_adni_dataset(
+        dataset_type=dataset_type,
         csv_path=config.data.train_csv_path,
         img_dir=config.data.img_dir,
         transform=train_transform,
@@ -678,7 +672,8 @@ def main():
         num_workers=config.data.cache_num_workers,
     )
 
-    val_dataset = ADNIDataset(
+    val_dataset = create_adni_dataset(
+        dataset_type=dataset_type,
         csv_path=config.data.val_csv_path,
         img_dir=config.data.img_dir,
         transform=val_transform,

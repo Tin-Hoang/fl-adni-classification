@@ -2,12 +2,14 @@ data:
   train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv"
   val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_val_119images.csv"
   img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
+  dataset_type: "cache"  # Options: "smartcache", "cache"
   resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
   cache_rate: 0.5  # Cache 100% of data in memory for faster training
   cache_num_workers: 8  # Workers for creating the cache (separate from DataLoader workers)
+  transform_device: "cpu"  # Device to use for transforms (e.g., "cuda" or "cpu")
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model

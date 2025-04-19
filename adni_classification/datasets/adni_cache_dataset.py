@@ -2,140 +2,15 @@
 
 import os
 import pandas as pd
-from typing import Dict, Any, Optional, Tuple, List, Union
+from typing import Dict, Any, Optional, List
 import torch
 import monai
-from monai.data import SmartCacheDataset
-from monai.transforms import (
-    Compose,
-    LoadImaged,
-    EnsureChannelFirstd,
-    Orientationd,
-    Spacingd,
-    ScaleIntensityRanged,
-    RandAffined,
-    ToTensord,
-    Resized,
-    Rand3DElasticd,
-    RandGaussianNoised,
-    RandAdjustContrastd,
-)
+from monai.data import CacheDataset
+
+from adni_classification.datasets.transforms import get_transforms
 
 
-# Define these functions at the module level so they can be pickled
-def debug_print_stage(x, stage="DEBUG"):
-    """Print debug information about an image tensor at a specific stage.
-
-    Args:
-        x: Image tensor
-        stage: Processing stage description
-
-    Returns:
-        x: The original image tensor (unchanged)
-    """
-    print(f"{stage} Image shape: {x.shape}")
-    return x
-
-
-def debug_original(x):
-    """Debug function for original image."""
-    return debug_print_stage(x, "ORIGINAL")
-
-
-def debug_orientation(x):
-    """Debug function after orientation transformation."""
-    return debug_print_stage(x, "AFTER ORIENTATION")
-
-
-def debug_spacing(x):
-    """Debug function after spacing transformation."""
-    return debug_print_stage(x, "AFTER SPACING")
-
-
-def debug_resize(x):
-    """Debug function after resize transformation."""
-    return debug_print_stage(x, "AFTER RESIZE")
-
-
-# Function for shape debug that can be pickled (module-level)
-def shape_debug_func(x, expected_size):
-    """Debug function to check tensor shape.
-
-    Args:
-        x: Image tensor
-        expected_size: Expected size of the tensor
-
-    Returns:
-        x: The original or resized image tensor
-    """
-    current_shape = x.shape[1:]  # Get spatial dimensions
-
-    if current_shape != expected_size:
-        print(f"Warning: Shape mismatch before correction. Current: {current_shape}, Expected: {expected_size}")
-        # Ensure shape matches by force resize
-        resize = monai.transforms.Resize(spatial_size=expected_size)
-        x = resize(x)
-        print(f"After resize: {x.shape[1:]}")
-    return x
-
-
-# Create a wrapper class for shape_debug_func with fixed expected_size
-class ShapeCheckerFunction:
-    """Class that checks and corrects image shape, designed to be picklable.
-
-    Args:
-        expected_size: Expected size tuple
-    """
-    def __init__(self, expected_size):
-        self.expected_size = expected_size
-
-    def __call__(self, x):
-        """Check and correct the image shape.
-
-        Args:
-            x: Input image tensor
-
-        Returns:
-            Image tensor with corrected shape
-        """
-        return shape_debug_func(x, self.expected_size)
-
-    def __reduce__(self):
-        """Support pickling by returning a tuple of class, args for reconstruction."""
-        return (self.__class__, (self.expected_size,))
-
-
-# Create a custom shape checker that can be pickled
-class ShapeChecker:
-    """Shape checking transform that can be pickled."""
-
-    def __init__(self, expected_size):
-        self.expected_size = expected_size
-
-    def __call__(self, image):
-        """Check that the image has the expected shape.
-
-        Args:
-            image: The image tensor to check
-
-        Returns:
-            The original image or resized image if needed
-        """
-        # Get the spatial dimensions (excluding channel dimension)
-        spatial_shape = image.shape[1:]
-        expected_shape = tuple(self.expected_size)
-
-        # Only resize if shapes don't match (without debug prints)
-        if spatial_shape != expected_shape:
-            if len(spatial_shape) == len(expected_shape):
-                # Use monai's Resize transform to fix the shape
-                resize = monai.transforms.Resize(spatial_size=expected_shape)
-                return resize(image)
-
-        return image
-
-
-class ADNIDataset(SmartCacheDataset):
+class ADNIDataset(CacheDataset):
     """Dataset for ADNI MRI classification.
 
     This dataset loads 3D MRI images from the ADNI dataset and their corresponding labels.
@@ -162,7 +37,6 @@ class ADNIDataset(SmartCacheDataset):
         transform: Optional[monai.transforms.Compose] = None,
         cache_rate: float = 1.0,
         num_workers: int = 0,
-        replace_rate: float = 0.1,
         cache_num: Optional[int] = None,
     ):
         """Initialize the dataset.
@@ -173,7 +47,6 @@ class ADNIDataset(SmartCacheDataset):
             transform: Optional transform to apply to the images
             cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
             num_workers: Number of subprocesses to use for data loading (default: 0)
-            replace_rate: Rate to randomly replace items in cache with new items (default: 0.1)
             cache_num: Number of items to cache. Default: None (cache_rate * len(data))
         """
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
@@ -240,15 +113,13 @@ class ADNIDataset(SmartCacheDataset):
             cache_num = len(data_list)
             print(f"Setting cache_num to dataset size: {cache_num}")
 
-        # Initialize the SmartCacheDataset
+        # Initialize the CacheDataset
         super().__init__(
             data=data_list,
             transform=transform,
-            replace_rate=replace_rate,
             cache_num=cache_num,
             cache_rate=cache_rate,
-            num_init_workers=num_workers,
-            num_replace_workers=num_workers,
+            num_workers=num_workers,
             seed=42
         )
 
@@ -408,113 +279,6 @@ class ADNIDataset(SmartCacheDataset):
 
         return None
 
-
-def get_transforms(mode: str = "train",
-                resize_size: Tuple[int, int, int] = (160, 160, 160),
-                resize_mode: str = "trilinear",
-                use_spacing: bool = True,
-                spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5),
-                device: Optional[Union[str, torch.device]] = None) -> monai.transforms.Compose:
-    """Get transforms for training or validation.
-
-    Args:
-        mode: Either "train" or "val"
-        resize_size: Tuple of (height, width, depth) for resizing
-        resize_mode: Interpolation mode for resizing
-        use_spacing: Whether to include the Spacing transform (default: True)
-        spacing_size: Tuple of (x, y, z) spacing in mm (default: (1.5, 1.5, 1.5))
-        device: Device to use for transforms (default: None, will use CPU)
-
-    Returns:
-        A Compose transform
-    """
-    # Ensure resize_size is a tuple for consistency
-    if not isinstance(resize_size, tuple):
-        resize_size = tuple(resize_size)
-
-    # Ensure spacing_size is a tuple
-    if not isinstance(spacing_size, tuple):
-        spacing_size = tuple(spacing_size)
-
-    common_transforms = [
-        LoadImaged(keys=["image"], image_only=False),
-        EnsureChannelFirstd(keys=["image"]),
-        Orientationd(keys=["image"], axcodes="RAS"),  # Use specific orientation to ensure consistency
-    ]
-
-    # Add spacing transform if requested
-    if use_spacing:
-        common_transforms.append(
-            # Ensure consistent spacing
-            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear")
-        )
-
-    # Add the rest of the transforms
-    common_transforms.extend([
-        # More robust intensity scaling using percentiles
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=0.0,
-            a_max=100.0,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        # Ensure all images have the same size
-        Resized(
-            keys=["image"],
-            spatial_size=resize_size,
-            mode=resize_mode,
-        ),
-    ])
-
-    if mode == "train":
-        train_transforms = [
-            # Existing augmentations
-            RandAffined(
-                keys=["image"],
-                prob=0.8,
-                rotate_range=(0.1, 0.1, 0.1),
-                scale_range=(0.2, 0.2, 0.2),
-                mode="bilinear",
-                padding_mode="zeros",
-                device=device,
-            ),
-
-            # Add elastic deformations
-            Rand3DElasticd(
-                keys=["image"],
-                prob=0.3,
-                sigma_range=(5, 8),
-                magnitude_range=(0.1, 0.3),
-                spatial_size=resize_size,  # Use the same resize_size from parameters
-                mode="bilinear",
-                padding_mode="zeros",
-                device=device,
-            ),
-
-            # Add intensity augmentations
-            RandGaussianNoised(
-                keys=["image"],
-                prob=0.5,
-                mean=0.0,
-                std=0.1,
-            ),
-            RandAdjustContrastd(
-                keys=["image"],
-                prob=0.3,
-                gamma=(0.8, 1.2),
-            ),
-
-            # Convert to tensor
-            ToTensord(keys=["image", "label"]),
-        ]
-        return Compose(common_transforms + train_transforms)
-    else:  # val
-        val_transforms = [
-            ToTensord(keys=["image", "label"]),
-        ]
-        return Compose(common_transforms + val_transforms)
 
 def test_image_path_mapping():
     """Test the image path mapping logic.

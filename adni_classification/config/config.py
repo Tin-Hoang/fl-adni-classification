@@ -14,12 +14,15 @@ class DataConfig:
     train_csv_path: str
     val_csv_path: str
     img_dir: str
+    dataset_type: str = "cache"  # Options: "smartcache", "cache"
     resize_size: List[int] = field(default_factory=lambda: [160, 160, 160])
     resize_mode: str = "trilinear"
-    use_spacing: bool = True
-    spacing_size: List[float] = field(default_factory=lambda: [1.5, 1.5, 1.5])
+    use_spacing: bool = False
+    spacing_size: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     cache_rate: float = 1.0  # Percentage of data to cache (0.0-1.0)
-    cache_num_workers: int = 0  # Number of workers for CacheDataset initialization
+    cache_num_workers: int = 8  # Number of workers for CacheDataset initialization
+    use_multiprocessing_transforms: bool = False  # Whether to use multiprocessing-safe transforms
+    transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
 
 
 @dataclass
@@ -153,12 +156,15 @@ class Config:
                 "train_csv_path": self.data.train_csv_path,
                 "val_csv_path": self.data.val_csv_path,
                 "img_dir": self.data.img_dir,
+                "dataset_type": self.data.dataset_type,
                 "resize_size": self.data.resize_size,
                 "resize_mode": self.data.resize_mode,
                 "use_spacing": self.data.use_spacing,
                 "spacing_size": self.data.spacing_size,
                 "cache_rate": self.data.cache_rate,
                 "cache_num_workers": self.data.cache_num_workers,
+                "use_multiprocessing_transforms": self.data.use_multiprocessing_transforms,
+                "transform_device": self.data.transform_device,
             },
             "model": {
                 "name": self.model.name,
