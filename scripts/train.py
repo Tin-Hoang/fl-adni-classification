@@ -596,11 +596,11 @@ def main():
         print("Could not increase file descriptor limit")
 
     # Set torch multiprocessing start method to 'spawn'
-    # import torch.multiprocessing as mp
-    # try:
-    #     mp.set_start_method('spawn')
-    # except RuntimeError:
-    #     pass  # Method already set
+    import torch.multiprocessing as mp
+    try:
+        mp.set_start_method('spawn')
+    except RuntimeError:
+        pass  # Method already set
 
     # Set globals to properly clean up multiprocessing resources
     # These settings help prevent semaphore leaks
@@ -704,6 +704,7 @@ def main():
         pin_memory=True,
         persistent_workers=num_workers > 0,  # Keep workers alive between batches
         prefetch_factor=2 if num_workers > 0 else None,  # Prefetch 2 batches per worker
+        multiprocessing_context='spawn'
     )
 
     val_loader = DataLoader(
@@ -714,6 +715,7 @@ def main():
         pin_memory=True,
         persistent_workers=num_workers > 0,
         prefetch_factor=2 if num_workers > 0 else None,
+        multiprocessing_context='spawn'
     )
 
     # Create model
