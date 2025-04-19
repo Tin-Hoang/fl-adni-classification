@@ -546,6 +546,39 @@ def cleanup_resources():
         pass
 
 
+def worker_init_fn(worker_id):
+    """Initialize worker process.
+
+    Args:
+        worker_id: ID of the worker process
+    """
+    # Set different seeds for different workers for better randomization
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+
+    # Make sure each worker has its own CUDA context to avoid conflicts
+    if torch.cuda.is_available():
+        # Just use the current device - don't reference main's device variable
+        device_id = torch.cuda.current_device()
+        torch.cuda.set_device(device_id)
+
+
+def mp_cleanup():
+    """Ensure proper cleanup of multiprocessing resources."""
+    if hasattr(mp, 'current_process') and mp.current_process().name == 'MainProcess':
+        # Only clean up from the main process
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Try to clean up any lingering semaphores
+        try:
+            # Force the resource tracker to clean up
+            from multiprocessing.resource_tracker import _resource_tracker
+            _resource_tracker._check_trash()
+        except:
+            pass
+
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Train ADNI classification model")
@@ -574,22 +607,7 @@ def main():
     os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 
-    # Register a proper cleanup handler for multiprocessing resources
-    def mp_cleanup():
-        """Ensure proper cleanup of multiprocessing resources."""
-        if hasattr(mp, 'current_process') and mp.current_process().name == 'MainProcess':
-            # Only clean up from the main process
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            # Try to clean up any lingering semaphores
-            try:
-                # Force the resource tracker to clean up
-                from multiprocessing.resource_tracker import _resource_tracker
-                _resource_tracker._check_trash()
-            except:
-                pass
-
+    # Register cleanup handler
     atexit.register(mp_cleanup)
 
     # Load configuration
@@ -674,13 +692,6 @@ def main():
 
     # Create data loaders with optimized multiprocessing settings
     # Using proper worker init and cleanup to prevent semaphore leaks
-    def worker_init_fn(worker_id):
-        # Set different seeds for different workers for better randomization
-        worker_seed = torch.initial_seed() % 2**32
-        np.random.seed(worker_seed)
-        # Make sure each worker has its own CUDA context to avoid conflicts
-        torch.cuda.set_device(device)
-
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
