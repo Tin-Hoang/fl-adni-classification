@@ -120,7 +120,6 @@ class ADNIDataset(CacheDataset):
             cache_num=cache_num,
             cache_rate=cache_rate,
             num_workers=num_workers,
-            seed=42
         )
 
     def _create_data_list(self) -> List[Dict[str, Any]]:
