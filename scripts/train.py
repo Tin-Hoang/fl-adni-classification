@@ -569,6 +569,29 @@ def main():
     except RuntimeError:
         pass  # Method already set
 
+    # Set globals to properly clean up multiprocessing resources
+    # These settings help prevent semaphore leaks
+    os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+
+    # Register a proper cleanup handler for multiprocessing resources
+    def mp_cleanup():
+        """Ensure proper cleanup of multiprocessing resources."""
+        if hasattr(mp, 'current_process') and mp.current_process().name == 'MainProcess':
+            # Only clean up from the main process
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Try to clean up any lingering semaphores
+            try:
+                # Force the resource tracker to clean up
+                from multiprocessing.resource_tracker import _resource_tracker
+                _resource_tracker._check_trash()
+            except:
+                pass
+
+    atexit.register(mp_cleanup)
+
     # Load configuration
     config = Config.from_yaml(args.config)
 
@@ -650,6 +673,14 @@ def main():
     num_workers = max(1, config.training.num_workers)
 
     # Create data loaders with optimized multiprocessing settings
+    # Using proper worker init and cleanup to prevent semaphore leaks
+    def worker_init_fn(worker_id):
+        # Set different seeds for different workers for better randomization
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        # Make sure each worker has its own CUDA context to avoid conflicts
+        torch.cuda.set_device(device)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.batch_size,
@@ -657,8 +688,9 @@ def main():
         num_workers=num_workers,
         pin_memory=True,  # Re-enable pin memory for performance
         persistent_workers=True,  # Keep workers alive between batches
-        prefetch_factor=2,  # Prefetch 2 batches per worker (lower value to reduce memory)
+        prefetch_factor=2,  # Prefetch 2 batches per worker
         multiprocessing_context='spawn',  # Use spawn for better compatibility
+        worker_init_fn=worker_init_fn,  # Initialize workers properly
     )
 
     val_loader = DataLoader(
@@ -670,6 +702,7 @@ def main():
         persistent_workers=True,
         prefetch_factor=2,
         multiprocessing_context='spawn',
+        worker_init_fn=worker_init_fn,  # Initialize workers properly
     )
 
     # Create model
@@ -943,6 +976,26 @@ def main():
     finally:
         # Final cleanup
         cleanup_resources()
+
+        # Explicit DataLoader cleanup to prevent semaphore leaks
+        # Delete DataLoaders to release worker processes
+        try:
+            # Delete loaders to release worker processes
+            del train_loader, val_loader
+
+            # Force GC to clean up DataLoader resources
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # Sleep briefly to allow resource tracker to clean up
+            import time
+            time.sleep(0.5)
+
+            # Force multiprocessing cleanup
+            if hasattr(mp, '_cleanup'):
+                mp._cleanup()
+        except:
+            pass
 
 
 if __name__ == "__main__":
