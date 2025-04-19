@@ -546,20 +546,9 @@ def cleanup_resources():
 
 
 def worker_init_fn(worker_id):
-    """Initialize worker process.
-
-    Args:
-        worker_id: ID of the worker process
-    """
-    # Set different seeds for different workers for better randomization
-    worker_seed = torch.initial_seed() % 2**32
+    """Initialize worker process."""
+    worker_seed = torch.initial_seed() % 2**32 + worker_id
     np.random.seed(worker_seed)
-
-    # Make sure each worker has its own CUDA context to avoid conflicts
-    if torch.cuda.is_available():
-        # Just use the current device - don't reference main's device variable
-        device_id = torch.cuda.current_device()
-        torch.cuda.set_device(device_id)
 
 
 def mp_cleanup():
@@ -692,8 +681,10 @@ def main():
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        prefetch_factor=2 if num_workers > 0 else None,  # Prefetch 2 batches per worker
-        multiprocessing_context=config.data.multiprocessing_context
+        prefetch_factor=2 if num_workers > 0 else None,
+        multiprocessing_context=config.data.multiprocessing_context,
+        worker_init_fn=worker_init_fn,
+        drop_last=True
     )
 
     val_loader = DataLoader(
@@ -703,7 +694,8 @@ def main():
         num_workers=num_workers,
         pin_memory=True,
         prefetch_factor=2 if num_workers > 0 else None,
-        multiprocessing_context=config.data.multiprocessing_context
+        multiprocessing_context=config.data.multiprocessing_context,
+        worker_init_fn=worker_init_fn
     )
 
     # Create model
