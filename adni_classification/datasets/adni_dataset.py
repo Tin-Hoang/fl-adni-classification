@@ -239,6 +239,12 @@ class ADNIDataset(SmartCacheDataset):
             file_path = self.image_paths[image_id]
             print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
 
+        # Ensure there's enough cache for all data items to prevent index errors
+        # If cache_num is not provided, use the total dataset size to ensure complete caching
+        if cache_num is None:
+            cache_num = len(data_list)
+            print(f"Setting cache_num to dataset size: {cache_num}")
+
         # Initialize the SmartCacheDataset
         super().__init__(
             data=data_list,
