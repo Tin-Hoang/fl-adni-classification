@@ -26,6 +26,7 @@ import tempfile
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
+from adni_classification.utils.torch_utils import set_seed
 from adni_classification.utils.visualization import (
     visualize_batch,
     visualize_predictions,
@@ -599,6 +600,9 @@ def main():
     # Create output directory
     os.makedirs(config.training.output_dir, exist_ok=True)
 
+    # Set seed
+    set_seed(config.training.seed)
+
     # Set torch multiprocessing start method to 'spawn'
     if config.data.multiprocessing_context == "spawn":
         import torch.multiprocessing as mp
@@ -688,7 +692,6 @@ def main():
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=num_workers > 0,  # Keep workers alive between batches
         prefetch_factor=2 if num_workers > 0 else None,  # Prefetch 2 batches per worker
         multiprocessing_context=config.data.multiprocessing_context
     )
@@ -699,7 +702,6 @@ def main():
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=num_workers > 0,
         prefetch_factor=2 if num_workers > 0 else None,
         multiprocessing_context=config.data.multiprocessing_context
     )
