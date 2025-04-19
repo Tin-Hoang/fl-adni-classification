@@ -132,98 +132,61 @@ def train_epoch(
     batch_idx = -1
 
     # Add error handling for DataLoader issues
-    try:
-        for batch_idx, batch in enumerate(pbar):
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+    for batch_idx, batch in enumerate(pbar):
+        images = batch["image"].to(device)
+        labels = batch["label"].to(device)
 
-            # Mixed precision training
-            if use_mixed_precision and scaler is not None:
-                with autocast(device_type='cuda'):
-                    outputs = model(images)
-                    loss = criterion(outputs, labels)
-                    # Scale loss for gradient accumulation
-                    loss = loss / gradient_accumulation_steps
-
-                # Scale gradients and backpropagate
-                scaler.scale(loss).backward()
-
-                # Step optimizer if we've accumulated enough gradients or it's the last batch
-                if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
-            else:
-                # Regular training
+        # Mixed precision training
+        if use_mixed_precision and scaler is not None:
+            with autocast(device_type='cuda'):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 # Scale loss for gradient accumulation
                 loss = loss / gradient_accumulation_steps
-                loss.backward()
 
-                # Step optimizer if we've accumulated enough gradients or it's the last batch
-                if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
-                    optimizer.step()
-                    optimizer.zero_grad()
+            # Scale gradients and backpropagate
+            scaler.scale(loss).backward()
 
-            total_loss += loss.item() * gradient_accumulation_steps
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+            # Step optimizer if we've accumulated enough gradients or it's the last batch
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+        else:
+            # Regular training
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            # Scale loss for gradient accumulation
+            loss = loss / gradient_accumulation_steps
+            loss.backward()
 
-            # Update progress bar
-            current_loss = total_loss / (batch_idx + 1)
-            current_acc = 100.0 * correct / total
-            pbar.set_postfix({
-                'loss': f'{current_loss:.4f}',
-                'acc': f'{current_acc:.2f}%'
+            # Step optimizer if we've accumulated enough gradients or it's the last batch
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == num_batches - 1:
+                optimizer.step()
+                optimizer.zero_grad()
+
+        total_loss += loss.item() * gradient_accumulation_steps
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+
+        # Update progress bar
+        current_loss = total_loss / (batch_idx + 1)
+        current_acc = 100.0 * correct / total
+        pbar.set_postfix({
+            'loss': f'{current_loss:.4f}',
+            'acc': f'{current_acc:.2f}%'
+        })
+
+        if log_batch_metrics and wandb_run is not None:
+            wandb_run.log({
+                "train/batch_loss": loss.item() * gradient_accumulation_steps,
+                "train/batch_accuracy": 100.0 * correct / total,
             })
-
-            if log_batch_metrics and wandb_run is not None:
-                wandb_run.log({
-                    "train/batch_loss": loss.item() * gradient_accumulation_steps,
-                    "train/batch_accuracy": 100.0 * correct / total,
-                })
-
-    except OSError as e:
-        if "Too many open files" in str(e):
-            print(f"OSError (Too many open files): {e}")
-            print("Trying to recover by cleaning up resources...")
-            # Force cleanup only when necessary
-            gc.collect()
-            torch.cuda.empty_cache()
-            # Sleep to let files close
-            import time
-            time.sleep(2)
-
-        if batch_idx == 0:
-            # If we failed at the very first batch, re-raise to avoid silent failures
-            raise
-        # If we've processed at least some batches, we'll continue with what we have
-        print(f"Processed {batch_idx} batches before error. Continuing with partial epoch.")
-        if total == 0:
-            # If no samples were processed successfully, we can't calculate metrics
-            return 0.0, 0.0
-    except RuntimeError as e:
-        print(f"RuntimeError in DataLoader: {e}")
-        if "CUDA" in str(e):
-            print("CUDA error detected. Trying to recover...")
-            torch.cuda.empty_cache()
-        if batch_idx == 0:
-            # If we failed at the very first batch, re-raise to avoid silent failures
-            raise
-        # If we've processed at least some batches, we'll continue with what we have
-        print(f"Processed {batch_idx} batches before error. Continuing with partial epoch.")
-        if total == 0:
-            # If no samples were processed successfully, we can't calculate metrics
-            return 0.0, 0.0
 
     # Calculate final metrics based on what was successfully processed
     avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
     avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
-
-    # Only clean up at the end of the epoch
-    torch.cuda.empty_cache()
 
     return avg_loss, avg_accuracy
 
@@ -259,75 +222,38 @@ def validate(
     batch_idx = -1
 
     with torch.no_grad():
-        try:
-            for batch_idx, batch in enumerate(pbar):
-                images = batch["image"].to(device)
-                labels = batch["label"].to(device)
+        for batch_idx, batch in enumerate(pbar):
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
 
-                if use_mixed_precision:
-                    with autocast(device_type='cuda'):
-                        outputs = model(images)
-                        loss = criterion(outputs, labels)
-                else:
+            if use_mixed_precision:
+                with autocast(device_type='cuda'):
                     outputs = model(images)
                     loss = criterion(outputs, labels)
+            else:
+                outputs = model(images)
+                loss = criterion(outputs, labels)
 
-                total_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
+            total_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
 
-                # Collect true and predicted labels for confusion matrix
-                all_labels.extend(labels.cpu().numpy())
-                all_predictions.extend(predicted.cpu().numpy())
+            # Collect true and predicted labels for confusion matrix
+            all_labels.extend(labels.cpu().numpy())
+            all_predictions.extend(predicted.cpu().numpy())
 
-                # Update progress bar
-                current_loss = total_loss / (batch_idx + 1)
-                current_acc = 100.0 * correct / total
-                pbar.set_postfix({
-                    'loss': f'{current_loss:.4f}',
-                    'acc': f'{current_acc:.2f}%'
-                })
-
-        except OSError as e:
-            if "Too many open files" in str(e):
-                print(f"OSError (Too many open files): {e}")
-                print("Trying to recover by cleaning up resources...")
-                # Force cleanup only when necessary
-                gc.collect()
-                torch.cuda.empty_cache()
-                # Sleep to let files close
-                import time
-                time.sleep(2)
-
-            if batch_idx == 0:
-                # If we failed at the very first batch, re-raise to avoid silent failures
-                raise
-            # If we've processed at least some batches, we'll continue with what we have
-            print(f"Processed {batch_idx} batches before error. Continuing with partial validation.")
-            if total == 0:
-                # If no samples were processed successfully, we can't calculate metrics
-                return 0.0, 0.0, np.array([]), np.array([])
-        except RuntimeError as e:
-            print(f"RuntimeError in validation DataLoader: {e}")
-            if "CUDA" in str(e):
-                print("CUDA error detected. Trying to recover...")
-                torch.cuda.empty_cache()
-            if batch_idx == 0:
-                # If we failed at the very first batch, re-raise to avoid silent failures
-                raise
-            # If we've processed at least some batches, we'll continue with what we have
-            print(f"Processed {batch_idx} batches before error. Continuing with partial validation.")
-            if total == 0:
-                # If no samples were processed successfully, we can't calculate metrics
-                return 0.0, 0.0, np.array([]), np.array([])
+            # Update progress bar
+            current_loss = total_loss / (batch_idx + 1)
+            current_acc = 100.0 * correct / total
+            pbar.set_postfix({
+                'loss': f'{current_loss:.4f}',
+                'acc': f'{current_acc:.2f}%'
+            })
 
     # Calculate metrics based on what was successfully processed
     avg_loss = total_loss / (batch_idx + 1) if batch_idx >= 0 else 0.0
     avg_accuracy = 100.0 * correct / total if total > 0 else 0.0
-
-    # Only clean up at the end of validation
-    torch.cuda.empty_cache()
 
     return avg_loss, avg_accuracy, np.array(all_labels), np.array(all_predictions)
 
@@ -573,16 +499,6 @@ def main():
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
 
-    # Increase file descriptor limit if possible
-    try:
-        import resource
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        # Try to increase the limit to the hard limit
-        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
-        print(f"Increased file descriptor limit from {soft} to {hard}")
-    except (ImportError, ValueError, resource.error):
-        print("Could not increase file descriptor limit")
-
     # Load configuration
     config = Config.from_yaml(args.config)
 
@@ -815,7 +731,7 @@ def main():
     try:
         # Training loop
         for epoch in range(start_epoch, config.training.num_epochs):
-            print(f"Epoch {epoch + 1}/{config.training.num_epochs} " + "="*40)
+            print(f"Epoch {epoch + 1}/{config.training.num_epochs} " + "="*80)
 
             # Get current learning rate
             current_lr = optimizer.param_groups[0]['lr']
