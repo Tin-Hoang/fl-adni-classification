@@ -69,33 +69,38 @@ def create_adni_dataset(
 
 
 def get_transforms_from_config(
-    config: Dict[str, Any],
+    config: Union[Dict[str, Any], Any],
     mode: str = "train",
     device: Optional[torch.device] = None
 ) -> monai.transforms.Compose:
     """Get transforms based on configuration.
 
     Args:
-        config: Configuration dictionary for transforms
+        config: Configuration dictionary or DataConfig object for transforms
         mode: Either "train" or "val"
         device: Device to use for transforms (default: None, will use CPU)
 
     Returns:
         A Compose transform
     """
-    # Get transform parameters from config
-    resize_size = config.get("resize_size", (160, 160, 160))
-    resize_mode = config.get("resize_mode", "trilinear")
-    use_spacing = config.get("use_spacing", True)
-    spacing_size = config.get("spacing_size", (1, 1, 1))
+    # Handle both dictionary and DataConfig objects
+    if isinstance(config, dict):
+        resize_size = config.get("resize_size", (160, 160, 160))
+        resize_mode = config.get("resize_mode", "trilinear")
+        use_spacing = config.get("use_spacing", True)
+        spacing_size = config.get("spacing_size", (1, 1, 1))
+        transform_device = config.get("transform_device")
+    else:
+        # It's a DataConfig-like object - use duck typing
+        resize_size = getattr(config, "resize_size", (160, 160, 160))
+        resize_mode = getattr(config, "resize_mode", "trilinear")
+        use_spacing = getattr(config, "use_spacing", True)
+        spacing_size = getattr(config, "spacing_size", (1, 1, 1))
+        transform_device = getattr(config, "transform_device", None)
 
     # Get device from config if not explicitly provided
-    if device is None and "transform_device" in config:
-        transform_device = config.get("transform_device")
-        if transform_device is not None:
-            device = torch.device(transform_device)
-        else:
-            device = None
+    if device is None and transform_device is not None:
+        device = torch.device(transform_device)
 
     return get_transforms(
         mode=mode,
