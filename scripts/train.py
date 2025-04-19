@@ -593,6 +593,12 @@ def main():
     except (ImportError, ValueError, resource.error):
         print("Could not increase file descriptor limit")
 
+    # Load configuration
+    config = Config.from_yaml(args.config)
+
+    # Create output directory
+    os.makedirs(config.training.output_dir, exist_ok=True)
+
     # Set torch multiprocessing start method to 'spawn'
     if config.data.multiprocessing_context == "spawn":
         import torch.multiprocessing as mp
@@ -600,12 +606,6 @@ def main():
             mp.set_start_method('spawn')
         except RuntimeError:
             pass  # Method already set
-
-    # Load configuration
-    config = Config.from_yaml(args.config)
-
-    # Create output directory
-    os.makedirs(config.training.output_dir, exist_ok=True)
 
     # Save the processed configuration to the output directory
     config_output_path = os.path.join(config.training.output_dir, "config.yaml")
