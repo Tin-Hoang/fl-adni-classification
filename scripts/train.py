@@ -656,7 +656,8 @@ def main():
         resize_size=tuple(config.data.resize_size),
         resize_mode=config.data.resize_mode,
         use_spacing=config.data.use_spacing,
-        spacing_size=tuple(config.data.spacing_size)
+        spacing_size=tuple(config.data.spacing_size),
+        device=device
     )
 
     val_transform = get_transforms(
@@ -664,7 +665,8 @@ def main():
         resize_size=tuple(config.data.resize_size),
         resize_mode=config.data.resize_mode,
         use_spacing=config.data.use_spacing,
-        spacing_size=tuple(config.data.spacing_size)
+        spacing_size=tuple(config.data.spacing_size),
+        device=device
     )
 
     # Create datasets using the factory function with cache parameters from config
@@ -673,7 +675,8 @@ def main():
         img_dir=config.data.img_dir,
         transform=train_transform,
         cache_rate=config.data.cache_rate,
-        num_workers=config.data.cache_num_workers
+        num_workers=config.data.cache_num_workers,
+        device=device
     )
 
     val_dataset = ADNIDataset(
@@ -681,7 +684,8 @@ def main():
         img_dir=config.data.img_dir,
         transform=val_transform,
         cache_rate=config.data.cache_rate,
-        num_workers=config.data.cache_num_workers
+        num_workers=config.data.cache_num_workers,
+        device=device
     )
 
     # Add this code to examine class distribution
@@ -697,11 +701,9 @@ def main():
         batch_size=config.training.batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,  # Re-enable pin memory for performance
-        # persistent_workers=True,  # Keep workers alive between batches
-        prefetch_factor=2,  # Prefetch 2 batches per worker
-        # multiprocessing_context='spawn',  # Use spawn for better compatibility
-        # worker_init_fn=worker_init_fn,  # Initialize workers properly
+        pin_memory=True,
+        persistent_workers=num_workers > 0,  # Keep workers alive between batches
+        prefetch_factor=2 if num_workers > 0 else None,  # Prefetch 2 batches per worker
     )
 
     val_loader = DataLoader(
@@ -710,10 +712,8 @@ def main():
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
-        # persistent_workers=True,
-        prefetch_factor=2,
-        # multiprocessing_context='spawn',
-        # worker_init_fn=worker_init_fn,  # Initialize workers properly
+        persistent_workers=num_workers > 0,
+        prefetch_factor=2 if num_workers > 0 else None,
     )
 
     # Create model

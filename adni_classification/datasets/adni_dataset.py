@@ -437,14 +437,14 @@ def get_transforms(mode: str = "train",
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
-        Orientationd(keys=["image"], axcodes="RAS", device=device),  # Use specific orientation to ensure consistency
+        Orientationd(keys=["image"], axcodes="RAS"),  # Use specific orientation to ensure consistency
     ]
 
     # Add spacing transform if requested
     if use_spacing:
         common_transforms.append(
             # Ensure consistent spacing
-            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear", device=device)
+            Spacingd(keys=["image"], pixdim=spacing_size, mode="bilinear")
         )
 
     # Add the rest of the transforms
@@ -463,7 +463,6 @@ def get_transforms(mode: str = "train",
             keys=["image"],
             spatial_size=resize_size,
             mode=resize_mode,
-            device=device,
         ),
     ])
 
