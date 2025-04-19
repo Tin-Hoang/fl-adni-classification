@@ -596,19 +596,19 @@ def main():
         print("Could not increase file descriptor limit")
 
     # Set torch multiprocessing start method to 'spawn'
-    import torch.multiprocessing as mp
-    try:
-        mp.set_start_method('spawn')
-    except RuntimeError:
-        pass  # Method already set
+    # import torch.multiprocessing as mp
+    # try:
+    #     mp.set_start_method('spawn')
+    # except RuntimeError:
+    #     pass  # Method already set
 
     # Set globals to properly clean up multiprocessing resources
     # These settings help prevent semaphore leaks
-    os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+    # os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
+    # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 
     # Register cleanup handler
-    atexit.register(mp_cleanup)
+    # atexit.register(mp_cleanup)
 
     # Load configuration
     config = Config.from_yaml(args.config)
@@ -698,10 +698,10 @@ def main():
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,  # Re-enable pin memory for performance
-        persistent_workers=True,  # Keep workers alive between batches
+        # persistent_workers=True,  # Keep workers alive between batches
         prefetch_factor=2,  # Prefetch 2 batches per worker
-        multiprocessing_context='spawn',  # Use spawn for better compatibility
-        worker_init_fn=worker_init_fn,  # Initialize workers properly
+        # multiprocessing_context='spawn',  # Use spawn for better compatibility
+        # worker_init_fn=worker_init_fn,  # Initialize workers properly
     )
 
     val_loader = DataLoader(
@@ -710,10 +710,10 @@ def main():
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True,
+        # persistent_workers=True,
         prefetch_factor=2,
-        multiprocessing_context='spawn',
-        worker_init_fn=worker_init_fn,  # Initialize workers properly
+        # multiprocessing_context='spawn',
+        # worker_init_fn=worker_init_fn,  # Initialize workers properly
     )
 
     # Create model
@@ -831,8 +831,8 @@ def main():
         visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
 
     # Add cleanup handlers to ensure resources are released
-    atexit.register(cleanup_resources)
-    signal.signal(signal.SIGTERM, lambda sig, frame: (cleanup_resources(), exit(0)))
+    # atexit.register(cleanup_resources)
+    # signal.signal(signal.SIGTERM, lambda sig, frame: (cleanup_resources(), exit(0)))
 
     try:
         # Training loop
