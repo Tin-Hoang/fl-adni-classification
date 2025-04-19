@@ -23,6 +23,7 @@ class DataConfig:
     cache_num_workers: int = 8  # Number of workers for CacheDataset initialization
     use_multiprocessing_transforms: bool = False  # Whether to use multiprocessing-safe transforms
     transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
+    multiprocessing_context: str = "spawn"  # Options: "spawn", "fork", "forkserver"
 
 
 @dataclass
@@ -165,6 +166,7 @@ class Config:
                 "cache_num_workers": self.data.cache_num_workers,
                 "use_multiprocessing_transforms": self.data.use_multiprocessing_transforms,
                 "transform_device": self.data.transform_device,
+                "multiprocessing_context": self.data.multiprocessing_context,
             },
             "model": {
                 "name": self.model.name,

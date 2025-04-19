@@ -594,19 +594,12 @@ def main():
         print("Could not increase file descriptor limit")
 
     # Set torch multiprocessing start method to 'spawn'
-    import torch.multiprocessing as mp
-    try:
-        mp.set_start_method('spawn')
-    except RuntimeError:
-        pass  # Method already set
-
-    # Set globals to properly clean up multiprocessing resources
-    # These settings help prevent semaphore leaks
-    # os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
-    # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
-
-    # Register cleanup handler
-    # atexit.register(mp_cleanup)
+    if config.data.multiprocessing_context == "spawn":
+        import torch.multiprocessing as mp
+        try:
+            mp.set_start_method('spawn')
+        except RuntimeError:
+            pass  # Method already set
 
     # Load configuration
     config = Config.from_yaml(args.config)
@@ -697,7 +690,7 @@ def main():
         pin_memory=True,
         persistent_workers=num_workers > 0,  # Keep workers alive between batches
         prefetch_factor=2 if num_workers > 0 else None,  # Prefetch 2 batches per worker
-        multiprocessing_context='spawn'
+        multiprocessing_context=config.data.multiprocessing_context
     )
 
     val_loader = DataLoader(
@@ -708,7 +701,7 @@ def main():
         pin_memory=True,
         persistent_workers=num_workers > 0,
         prefetch_factor=2 if num_workers > 0 else None,
-        multiprocessing_context='spawn'
+        multiprocessing_context=config.data.multiprocessing_context
     )
 
     # Create model
@@ -824,10 +817,6 @@ def main():
     if config.training.visualize:
         print("Visualizing training samples...")
         visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
-
-    # Add cleanup handlers to ensure resources are released
-    # atexit.register(cleanup_resources)
-    # signal.signal(signal.SIGTERM, lambda sig, frame: (cleanup_resources(), exit(0)))
 
     try:
         # Training loop
