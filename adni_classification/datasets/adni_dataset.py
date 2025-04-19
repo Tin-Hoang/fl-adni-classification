@@ -224,8 +224,6 @@ class ADNIDataset(SmartCacheDataset):
 
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
         print(f"Final dataset size: {len(self.data)} samples")
-        if self.device:
-            print(f"Using device: {self.device} for data transforms")
 
         # Print first 5 images with their label groups
         print("\nFirst 5 images with label groups:")
