@@ -3,10 +3,9 @@
 import os
 import pandas as pd
 from typing import Dict, Any, Optional, Tuple, List, Union
-from torch.utils.data import Dataset
 import torch
 import monai
-from monai.data import CacheDataset
+from monai.data import SmartCacheDataset
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -136,7 +135,7 @@ class ShapeChecker:
         return image
 
 
-class ADNIDataset(CacheDataset):
+class ADNIDataset(SmartCacheDataset):
     """Dataset for ADNI MRI classification.
 
     This dataset loads 3D MRI images from the ADNI dataset and their corresponding labels.
@@ -164,6 +163,8 @@ class ADNIDataset(CacheDataset):
         cache_rate: float = 1.0,
         num_workers: int = 0,
         device: Optional[Union[str, torch.device]] = None,
+        replace_rate: float = 0.1,
+        cache_num: Optional[int] = None,
     ):
         """Initialize the dataset.
 
@@ -174,6 +175,8 @@ class ADNIDataset(CacheDataset):
             cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
             num_workers: Number of subprocesses to use for data loading (default: 0)
             device: Device to use for transforms (default: None, will use CPU)
+            replace_rate: Rate to randomly replace items in cache with new items (default: 0.1)
+            cache_num: Number of items to cache. Default: None (cache_rate * len(data))
         """
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
@@ -236,12 +239,16 @@ class ADNIDataset(CacheDataset):
             file_path = self.image_paths[image_id]
             print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
 
-        # Initialize the CacheDataset
+        # Initialize the SmartCacheDataset
         super().__init__(
             data=data_list,
             transform=transform,
+            replace_rate=replace_rate,
+            cache_num=cache_num,
             cache_rate=cache_rate,
-            num_workers=num_workers
+            num_init_workers=num_workers,
+            num_replace_workers=num_workers,
+            seed=42
         )
 
     def _create_data_list(self) -> List[Dict[str, Any]]:
@@ -428,12 +435,6 @@ def get_transforms(mode: str = "train",
     if not isinstance(spacing_size, tuple):
         spacing_size = tuple(spacing_size)
 
-    # Create a shape checker instance that can be pickled
-    shape_checker = ShapeChecker(resize_size)
-
-    # Create a function for shape checking that can be pickled
-    shape_check_func = ShapeCheckerFunction(resize_size)
-
     common_transforms = [
         LoadImaged(keys=["image"], image_only=False),
         EnsureChannelFirstd(keys=["image"]),
@@ -505,12 +506,12 @@ def get_transforms(mode: str = "train",
             ),
 
             # Convert to tensor
-            ToTensord(keys=["image", "label"], device=device),
+            ToTensord(keys=["image", "label"]),
         ]
         return Compose(common_transforms + train_transforms)
     else:  # val
         val_transforms = [
-            ToTensord(keys=["image", "label"], device=device),
+            ToTensord(keys=["image", "label"]),
         ]
         return Compose(common_transforms + val_transforms)
 

@@ -7,7 +7,7 @@ data:
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
   cache_rate: 0.5  # Cache 100% of data in memory for faster training
-  cache_num_workers: 10  # Workers for creating the cache (separate from DataLoader workers)
+  cache_num_workers: 8  # Workers for creating the cache (separate from DataLoader workers)
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model
@@ -15,11 +15,11 @@ model:
   pretrained_checkpoint: null
 
 training:
-  batch_size: 10
+  batch_size: 8
   num_epochs: 300
   learning_rate: 0.0001
   weight_decay: 0.0001
-  num_workers: 10
+  num_workers: 8
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
   mixed_precision: false
   visualize: false

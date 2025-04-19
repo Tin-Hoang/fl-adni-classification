@@ -657,7 +657,7 @@ def main():
         resize_mode=config.data.resize_mode,
         use_spacing=config.data.use_spacing,
         spacing_size=tuple(config.data.spacing_size),
-        device=device
+        device=None  # Default to CPU
     )
 
     val_transform = get_transforms(
@@ -666,7 +666,7 @@ def main():
         resize_mode=config.data.resize_mode,
         use_spacing=config.data.use_spacing,
         spacing_size=tuple(config.data.spacing_size),
-        device=device
+        device=None  # Default to CPU
     )
 
     # Create datasets using the factory function with cache parameters from config
@@ -676,7 +676,7 @@ def main():
         transform=train_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
-        device=device
+        device=None  # Default to CPU
     )
 
     val_dataset = ADNIDataset(
@@ -685,7 +685,7 @@ def main():
         transform=val_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
-        device=device
+        device=None  # Default to CPU
     )
 
     # Add this code to examine class distribution
