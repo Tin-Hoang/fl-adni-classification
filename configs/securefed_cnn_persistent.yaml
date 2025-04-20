@@ -10,8 +10,8 @@ data:
   cache_rate: 0.5  # Cache 100% of data in memory for faster training
   cache_num_workers: 8  # Workers for creating the cache (separate from DataLoader workers)
   cache_dir: "/scratch/th01167/fl-adni/persistent_cache"  # Directory to store the persistent cache (for PersistentDataset)
-  transform_device: "cpu"  # Device to use for transforms (e.g., "cuda" or "cpu")
-  multiprocessing_context: "fork"  # Options: "spawn", "fork", "forkserver"
+  transform_device: "cuda"  # Device to use for transforms (e.g., "cuda" or "cpu")
+  multiprocessing_context: "spawn"  # Options: "spawn", "fork", "forkserver"
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model
@@ -20,7 +20,7 @@ model:
 
 training:
   batch_size: 8
-  num_epochs: 300
+  num_epochs: 1000
   learning_rate: 0.0001
   weight_decay: 0.0001
   num_workers: 8

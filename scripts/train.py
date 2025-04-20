@@ -504,9 +504,9 @@ def main():
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         resource.setrlimit(resource.RLIMIT_NOFILE, (65536, hard))
-        logger.info(f"Increased file descriptor limit to 65536 (was {soft})")
+        print(f"Increased file descriptor limit to 65536 (was {soft})")
     except Exception as e:
-        logger.error(f"Failed to increase file descriptor limit: {e}")
+        print(f"Failed to increase file descriptor limit: {e}")
 
     # Load configuration
     config = Config.from_yaml(args.config)
