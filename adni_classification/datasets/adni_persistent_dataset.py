@@ -279,6 +279,53 @@ class ADNIPersistentDataset(PersistentDataset):
 
         return None
 
+    def __getitem__(self, index):
+        """Override __getitem__ to handle PyTorch 2.6 compatibility.
+
+        Adapted from MONAI's PersistentDataset implementation but with weights_only=False
+        for torch.load to support MetaTensor in PyTorch 2.6+.
+
+        Args:
+            index: Index of the data item to retrieve
+
+        Returns:
+            The data item at the specified index, processed by the transform if applicable
+        """
+        # Get the actual data item from the data_list we created in __init__
+        item = super().data[index]
+
+        if isinstance(item, dict):
+            # For dictionaries, use the 'image' key which contains the file path
+            hash_key = item.get('image', '')
+        else:
+            hash_key = item
+
+        import hashlib
+        itemhash = hashlib.md5(str(hash_key).encode("utf-8")).hexdigest()
+        hashfile = os.path.join(self.cache_dir, itemhash + '.pt')
+
+        if os.path.exists(hashfile):
+            try:
+                # Set weights_only=False to support MONAI's MetaTensor
+                return torch.load(hashfile, weights_only=False)
+            except Exception as e:
+                print(f"Error loading cache file {hashfile}: {e}")
+                print("Recomputing and caching the item...")
+
+        # If not cached or error loading cache, compute and cache the result
+        if self.transform is not None:
+            result = self.transform(item)
+        else:
+            result = item
+
+        # Save to cache
+        try:
+            torch.save(result, hashfile)
+        except Exception as e:
+            print(f"Error saving cache file {hashfile}: {e}")
+
+        return result
+
 
 def test_persistent_dataset():
     """Test the persistent dataset.
