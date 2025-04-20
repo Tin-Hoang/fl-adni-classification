@@ -1,19 +1,26 @@
-"""Dataset module for ADNI classification."""
+"""Dataset module for ADNI classification using PersistentDataset.
+
+This implementation uses MONAI's PersistentDataset which caches data to disk
+instead of keeping it in memory, providing a compromise between speed and memory usage.
+"""
 
 import os
 import pandas as pd
 from typing import Dict, Any, Optional, List
 import torch
 import monai
-from monai.data import CacheDataset
+from monai.data import PersistentDataset
 
 from adni_classification.datasets.transforms import get_transforms
 
 
-class ADNICacheDataset(CacheDataset):
-    """Dataset for ADNI MRI classification.
+class ADNIPersistentDataset(PersistentDataset):
+    """Dataset for ADNI MRI classification using disk-based caching.
 
     This dataset loads 3D MRI images from the ADNI dataset and their corresponding labels.
+    It uses MONAI's PersistentDataset which saves preprocessed data to disk instead of RAM.
+    This provides a good balance between memory usage and performance.
+
     The dataset supports two CSV formats:
 
     Original format:
@@ -35,9 +42,8 @@ class ADNICacheDataset(CacheDataset):
         csv_path: str,
         img_dir: str,
         transform: Optional[monai.transforms.Compose] = None,
-        cache_rate: float = 1.0,
+        cache_dir: str = "./persistent_cache",
         num_workers: int = 0,
-        cache_num: Optional[int] = None,
     ):
         """Initialize the dataset.
 
@@ -45,14 +51,18 @@ class ADNICacheDataset(CacheDataset):
             csv_path: Path to the CSV file containing image metadata and labels
             img_dir: Path to the directory containing the image files
             transform: Optional transform to apply to the images
-            cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
+            cache_dir: Directory to store the persistent cache (default: "./persistent_cache")
             num_workers: Number of subprocesses to use for data loading (default: 0)
-            cache_num: Number of items to cache. Default: None (cache_rate * len(data))
         """
         print("="*80)
-        print(f"Initializing ADNICacheDataset with CSV path: {csv_path} and image directory: {img_dir}")
+        print(f"Initializing ADNIPersistentDataset with CSV path: {csv_path} and image directory: {img_dir}")
+        print(f"Persistent cache directory: {cache_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
+        self.cache_dir = cache_dir
+
+        # Create cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
 
         # Load the CSV file
         self.data = pd.read_csv(csv_path)
@@ -93,7 +103,7 @@ class ADNICacheDataset(CacheDataset):
         # Keep only rows with valid image files
         self.data = self.data[self.data["Image Data ID"].isin(self.image_paths.keys())]
 
-        # Create a list of data dictionaries for CacheDataset
+        # Create a list of data dictionaries for PersistentDataset
         data_list = self._create_data_list()
 
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
@@ -108,23 +118,16 @@ class ADNICacheDataset(CacheDataset):
             file_path = self.image_paths[image_id]
             print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
 
-        # Ensure there's enough cache for all data items to prevent index errors
-        # If cache_num is not provided, use the total dataset size to ensure complete caching
-        if cache_num is None:
-            cache_num = len(data_list)
-            print(f"Setting cache_num to dataset size: {cache_num}")
-
-        # Initialize the CacheDataset
+        # Initialize the PersistentDataset
         super().__init__(
             data=data_list,
             transform=transform,
-            cache_num=cache_num,
-            cache_rate=cache_rate,
+            cache_dir=cache_dir,
             num_workers=num_workers,
         )
 
     def _create_data_list(self) -> List[Dict[str, Any]]:
-        """Create a list of data dictionaries for CacheDataset.
+        """Create a list of data dictionaries for PersistentDataset.
 
         Returns:
             List of dictionaries, each containing image path and label
@@ -280,25 +283,25 @@ class ADNICacheDataset(CacheDataset):
         return None
 
 
-def test_image_path_mapping():
-    """Test the image path mapping logic.
+def test_persistent_dataset():
+    """Test the persistent dataset.
 
     This function creates a test dataset and prints information about the mapped image paths.
-    It can be run directly to verify that the image path mapping logic is working correctly.
+    It can be run directly to verify that the dataset works correctly.
     """
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test the ADNI dataset image path mapping")
-    parser.add_argument("--csv_path", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
+    parser = argparse.ArgumentParser(description="Test the ADNI persistent dataset")
+    parser.add_argument("--csv_path", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
                         help="Path to the CSV file containing image metadata and labels")
-    parser.add_argument("--img_dir", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
+    parser.add_argument("--img_dir", type=str,
+                        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
                         help="Path to the directory containing the image files")
+    parser.add_argument("--cache_dir", type=str, default="./persistent_cache",
+                        help="Directory to store the persistent cache")
     parser.add_argument("--csv_format", type=str, choices=["original", "alternative"],
                         help="CSV format to test explicitly (will be auto-detected if not specified)")
-    parser.add_argument("--cache_rate", type=float, default=1.0,
-                        help="Percentage of data to cache (0.0-1.0)")
-    parser.add_argument("--num_workers", type=int, default=0,
-                        help="Number of worker processes for data loading")
     parser.add_argument("--device", type=str, default=None,
                         help="Device to use for transforms (e.g., 'cuda' or 'cpu')")
     args = parser.parse_args()
@@ -306,11 +309,10 @@ def test_image_path_mapping():
     # Parse device
     device = torch.device(args.device) if args.device else None
 
-    print("Testing ADNI dataset image path mapping...")
+    print("Testing ADNI persistent dataset...")
     print(f"CSV path: {args.csv_path}")
     print(f"Image directory: {args.img_dir}")
-    print(f"Cache rate: {args.cache_rate}")
-    print(f"Number of workers: {args.num_workers}")
+    print(f"Cache directory: {args.cache_dir}")
     print(f"Device: {device}")
 
     # Read and print the first few rows of the CSV
@@ -330,14 +332,12 @@ def test_image_path_mapping():
             print(f"{i+1}. {img_id}")
 
     try:
-        # Create a dataset with ID validation
-        print("\nAttempting to create dataset with strict ID validation...")
-        dataset = ADNICacheDataset(
+        # Create the dataset without transforms first to see raw data
+        print("\nAttempting to create persistent dataset...")
+        dataset = ADNIPersistentDataset(
             args.csv_path,
             args.img_dir,
-            cache_rate=args.cache_rate,
-            num_workers=args.num_workers,
-            device=device
+            cache_dir=args.cache_dir,
         )
 
         # If successful, print information about it
@@ -371,27 +371,7 @@ def test_image_path_mapping():
         if len(dataset.image_paths) > 5:
             print(f"  ... and {len(dataset.image_paths) - 5} more")
 
-        # Count all file formats
-        for img_path in dataset.image_paths.values():
-            if img_path.endswith('.nii.gz'):
-                file_formats['.nii.gz'] += 1
-            elif img_path.endswith('.nii'):
-                file_formats['.nii'] += 1
-
-        print("\nFile format distribution:")
-        print(f"  .nii files: {file_formats['.nii']}")
-        print(f"  .nii.gz files: {file_formats['.nii.gz']}")
-
-        # If using the alternative format, show the mapping from DX to Group
-        if dataset.csv_format == "alternative":
-            print("\nDX to Group mapping:")
-            dx_counts = dataset.data.groupby(["DX", "Group"]).size().reset_index(name="count")
-            for _, row in dx_counts.iterrows():
-                print(f"  {row['DX']} -> {row['Group']}: {row['count']} samples")
-
-        print("\nFinal dataset summary:")
-        print(f"Total images found: {len(dataset.image_paths)}")
-        print(f"Total samples in dataset: {len(dataset)}")
+        print("\nTest completed successfully.")
 
     except ValueError as e:
         print(f"\nError creating dataset: {e}")
@@ -400,11 +380,4 @@ def test_image_path_mapping():
 
 
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "test_transforms":
-        print("The test_transforms function has been moved to the transforms module.")
-        print("Please use the following command instead:")
-        print("python -m adni_classification.datasets.transforms [options]")
-    else:
-        test_image_path_mapping()
+    test_persistent_dataset()

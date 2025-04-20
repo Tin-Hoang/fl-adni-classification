@@ -51,7 +51,8 @@ class ADNISmartCacheDataset(SmartCacheDataset):
             replace_rate: Rate to randomly replace items in cache with new items (default: 0.1)
             cache_num: Number of items to cache. Default: None (cache_rate * len(data))
         """
-        print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
+        print("="*80)
+        print(f"Initializing ADNISmartCacheDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
 
@@ -101,7 +102,7 @@ class ADNISmartCacheDataset(SmartCacheDataset):
         print(f"Final dataset size: {len(self.data)} samples")
 
         # Print first 5 images with their label groups
-        print("\nFirst 5 images with label groups:")
+        print("First 5 images with label groups:")
         for i, (idx, row) in enumerate(self.data.head(5).iterrows()):
             image_id = row["Image Data ID"]
             group = row["Group"]

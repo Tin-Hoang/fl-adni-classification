@@ -572,6 +572,7 @@ def main():
         transform=train_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
+        cache_dir=config.data.cache_dir,
     )
 
     val_dataset = create_adni_dataset(
@@ -581,6 +582,7 @@ def main():
         transform=val_transform,
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
+        cache_dir=config.data.cache_dir,
     )
 
     # Add this code to examine class distribution
@@ -610,7 +612,7 @@ def main():
         multiprocessing_context=config.data.multiprocessing_context,
         worker_init_fn=worker_init_fn
     )
-
+    print("Loading complete! Creating model...")
     # Create model
     model_kwargs = {
         "num_classes": config.model.num_classes,
@@ -634,6 +636,7 @@ def main():
 
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     model = model.to(device)
+    print("Model created!")
 
     # Initialize variables for training history
     start_epoch = 0

@@ -14,13 +14,14 @@ class DataConfig:
     train_csv_path: str
     val_csv_path: str
     img_dir: str
-    dataset_type: str = "normal"  # Options: "smartcache", "cache", "normal"
+    dataset_type: str = "normal"  # Options: "smartcache", "cache", "normal", "persistent"
     resize_size: List[int] = field(default_factory=lambda: [160, 160, 160])
     resize_mode: str = "trilinear"
     use_spacing: bool = False
     spacing_size: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     cache_rate: float = 1.0  # Percentage of data to cache (0.0-1.0)
     cache_num_workers: int = 8  # Number of workers for CacheDataset initialization
+    cache_dir: str = "./persistent_cache"  # Directory to store the persistent cache (for PersistentDataset)
     use_multiprocessing_transforms: bool = False  # Whether to use multiprocessing-safe transforms
     transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
     multiprocessing_context: str = "spawn"  # Options: "spawn", "fork", "forkserver"
@@ -165,6 +166,7 @@ class Config:
                 "spacing_size": self.data.spacing_size,
                 "cache_rate": self.data.cache_rate,
                 "cache_num_workers": self.data.cache_num_workers,
+                "cache_dir": self.data.cache_dir,
                 "use_multiprocessing_transforms": self.data.use_multiprocessing_transforms,
                 "transform_device": self.data.transform_device,
                 "multiprocessing_context": self.data.multiprocessing_context,

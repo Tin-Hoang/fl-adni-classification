@@ -44,6 +44,7 @@ class ADNIDataset(Dataset):
             img_dir: Path to the directory containing the image files
             transform: Optional transform to apply to the images
         """
+        print("="*80)
         print(f"Initializing ADNIDataset with CSV path: {csv_path} and image directory: {img_dir}")
         self.csv_path = csv_path
         self.img_dir = img_dir
@@ -88,13 +89,13 @@ class ADNIDataset(Dataset):
         self.data = self.data[self.data["Image Data ID"].isin(self.image_paths.keys())]
 
         # Create a list of data dictionaries for Dataset
-        self.data_list = self._create_data_list()
+        data_list = self._create_data_list()
 
         print(f"Found {len(self.image_paths)} image files in {img_dir}")
         print(f"Final dataset size: {len(self.data)} samples")
 
         # Print first 5 images with their label groups
-        print("\nFirst 5 images with label groups:")
+        print("First 5 images with label groups:")
         for i, (idx, row) in enumerate(self.data.head(5).iterrows()):
             image_id = row["Image Data ID"]
             group = row["Group"]
@@ -104,7 +105,7 @@ class ADNIDataset(Dataset):
 
         # Initialize the Dataset
         super().__init__(
-            data=self.data_list,
+            data=data_list,
             transform=transform,
         )
 
