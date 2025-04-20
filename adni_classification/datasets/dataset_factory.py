@@ -31,10 +31,13 @@ def create_adni_dataset(
         img_dir: Path to the directory containing the image files
         transform: Optional transform to apply to the images
         cache_rate: The percentage of data to be cached (default: 1.0 = 100%)
+                    Only used for SmartCacheDataset and CacheDataset
         num_workers: Number of subprocesses to use for data loading (default: 0)
+                     Only used for SmartCacheDataset and CacheDataset
         replace_rate: Rate to randomly replace items in cache with new items (default: 0.1)
                       Only used for SmartCacheDataset
         cache_num: Number of items to cache. Default: None (cache_rate * len(data))
+                   Only used for SmartCacheDataset and CacheDataset
         cache_dir: Directory to store the persistent cache (default: "./persistent_cache")
                    Only used for PersistentDataset
         **kwargs: Additional arguments to pass to the dataset constructor
@@ -75,7 +78,6 @@ def create_adni_dataset(
             img_dir=img_dir,
             transform=transform,
             cache_dir=cache_dir,
-            num_workers=num_workers,
             **kwargs
         )
     elif dataset_type.lower() == "normal":

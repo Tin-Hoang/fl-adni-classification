@@ -43,7 +43,6 @@ class ADNIPersistentDataset(PersistentDataset):
         img_dir: str,
         transform: Optional[monai.transforms.Compose] = None,
         cache_dir: str = "./persistent_cache",
-        num_workers: int = 0,
     ):
         """Initialize the dataset.
 
@@ -52,7 +51,6 @@ class ADNIPersistentDataset(PersistentDataset):
             img_dir: Path to the directory containing the image files
             transform: Optional transform to apply to the images
             cache_dir: Directory to store the persistent cache (default: "./persistent_cache")
-            num_workers: Number of subprocesses to use for data loading (default: 0)
         """
         print("="*80)
         print(f"Initializing ADNIPersistentDataset with CSV path: {csv_path} and image directory: {img_dir}")
@@ -123,7 +121,6 @@ class ADNIPersistentDataset(PersistentDataset):
             data=data_list,
             transform=transform,
             cache_dir=cache_dir,
-            num_workers=num_workers,
         )
 
     def _create_data_list(self) -> List[Dict[str, Any]]:
