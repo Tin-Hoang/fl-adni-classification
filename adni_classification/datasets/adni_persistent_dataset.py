@@ -116,7 +116,11 @@ class ADNIPersistentDataset(PersistentDataset):
             file_path = self.image_paths[image_id]
             print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
 
-        # Initialize the PersistentDataset
+        # Store the data list for our own __getitem__ implementation
+        self._data_list = data_list
+
+        # Initialize the PersistentDataset with the same data list
+        # Note: Our custom __getitem__ will override the parent implementation
         super().__init__(
             data=data_list,
             transform=transform,
@@ -282,8 +286,8 @@ class ADNIPersistentDataset(PersistentDataset):
     def __getitem__(self, index):
         """Override __getitem__ to handle PyTorch 2.6 compatibility.
 
-        Adapted from MONAI's PersistentDataset implementation but with weights_only=False
-        for torch.load to support MetaTensor in PyTorch 2.6+.
+        This method completely overrides PersistentDataset's __getitem__ to handle
+        PyTorch 2.6+ compatibility by setting weights_only=False when loading from cache.
 
         Args:
             index: Index of the data item to retrieve
@@ -291,9 +295,10 @@ class ADNIPersistentDataset(PersistentDataset):
         Returns:
             The data item at the specified index, processed by the transform if applicable
         """
-        # Get the actual data item from the data_list we created in __init__
-        item = super().data[index]
+        # Use the cached data list reference
+        item = self._data_list[index]
 
+        # Generate a hash of the input item (similar to MONAI's implementation)
         if isinstance(item, dict):
             # For dictionaries, use the 'image' key which contains the file path
             hash_key = item.get('image', '')
@@ -387,6 +392,19 @@ def test_persistent_dataset():
         # If successful, print information about it
         print(f"Successfully created dataset with {len(dataset)} samples")
         print(f"Detected CSV format: {dataset.csv_format}")
+
+        # Test loading a few samples to verify the __getitem__ method works
+        print("\nTesting data loading from the dataset:")
+        for i in range(min(3, len(dataset))):
+            try:
+                sample = dataset[i]
+                if isinstance(sample, dict) and "label" in sample:
+                    label_value = sample["label"].item() if hasattr(sample["label"], "item") else sample["label"]
+                    print(f"Sample {i}: Label = {label_value}")
+                else:
+                    print(f"Sample {i}: {type(sample)}")
+            except Exception as e:
+                print(f"Error loading sample {i}: {e}")
 
         # Print information about the mapped image paths
         print("\nImage path mapping:")
