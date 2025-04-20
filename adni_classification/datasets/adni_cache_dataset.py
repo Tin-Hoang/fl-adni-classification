@@ -7,8 +7,6 @@ import torch
 import monai
 from monai.data import CacheDataset
 
-from adni_classification.datasets.transforms import get_transforms
-
 
 class ADNICacheDataset(CacheDataset):
     """Dataset for ADNI MRI classification.

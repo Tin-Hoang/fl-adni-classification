@@ -22,7 +22,7 @@ training:
   num_epochs: 300
   learning_rate: 0.0001
   weight_decay: 0.0001
-  num_workers: 24
+  num_workers: 8
   seed: 42  # Random seed for reproducibility
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
   mixed_precision: false

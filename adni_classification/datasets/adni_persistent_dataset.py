@@ -10,8 +10,10 @@ from typing import Dict, Any, Optional, List
 import torch
 import monai
 from monai.data import PersistentDataset
+from monai.data.meta_tensor import MetaTensor
 
-from adni_classification.datasets.transforms import get_transforms
+# Allowlist MetaTensor for PyTorch 2.6+
+torch.serialization.add_safe_globals([MetaTensor])
 
 
 class ADNIPersistentDataset(PersistentDataset):
@@ -282,54 +284,6 @@ class ADNIPersistentDataset(PersistentDataset):
                     return f"I{part}"
 
         return None
-
-    def __getitem__(self, index):
-        """Override __getitem__ to handle PyTorch 2.6 compatibility.
-
-        This method completely overrides PersistentDataset's __getitem__ to handle
-        PyTorch 2.6+ compatibility by setting weights_only=False when loading from cache.
-
-        Args:
-            index: Index of the data item to retrieve
-
-        Returns:
-            The data item at the specified index, processed by the transform if applicable
-        """
-        # Use the cached data list reference
-        item = self._data_list[index]
-
-        # Generate a hash of the input item (similar to MONAI's implementation)
-        if isinstance(item, dict):
-            # For dictionaries, use the 'image' key which contains the file path
-            hash_key = item.get('image', '')
-        else:
-            hash_key = item
-
-        import hashlib
-        itemhash = hashlib.md5(str(hash_key).encode("utf-8")).hexdigest()
-        hashfile = os.path.join(self.cache_dir, itemhash + '.pt')
-
-        if os.path.exists(hashfile):
-            try:
-                # Set weights_only=False to support MONAI's MetaTensor
-                return torch.load(hashfile, weights_only=False)
-            except Exception as e:
-                print(f"Error loading cache file {hashfile}: {e}")
-                print("Recomputing and caching the item...")
-
-        # If not cached or error loading cache, compute and cache the result
-        if self.transform is not None:
-            result = self.transform(item)
-        else:
-            result = item
-
-        # Save to cache
-        try:
-            torch.save(result, hashfile)
-        except Exception as e:
-            print(f"Error saving cache file {hashfile}: {e}")
-
-        return result
 
 
 def test_persistent_dataset():
