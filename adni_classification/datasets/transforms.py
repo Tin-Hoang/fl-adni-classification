@@ -68,7 +68,7 @@ def get_transforms(mode: str = "train",
         ScaleIntensityRanged(
             keys=["image"],
             a_min=0.0,
-            a_max=100.0,
+            a_max=1000.0,
             b_min=0.0,
             b_max=1.0,
             clip=True,
