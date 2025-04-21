@@ -113,7 +113,8 @@ def get_transforms(mode: str = "train",
                 scale_range=(0.9, 1.1),
                 translate_range=5,
                 prob=0.5,
-                mode="bilinear"
+                mode="bilinear",
+                device=device
             ),
             # Apply elastic deformation with sigma=10-20 and magnitude=10-20 voxels
             Rand3DElasticd(
@@ -121,7 +122,8 @@ def get_transforms(mode: str = "train",
                 sigma_range=(10, 20),
                 magnitude_range=(10, 20),
                 prob=0.5,
-                mode="bilinear"
+                mode="bilinear",
+                device=device
             ),
 
             # Add Gaussian noise with a standard deviation of 0.01
