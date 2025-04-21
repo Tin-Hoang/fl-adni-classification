@@ -16,6 +16,9 @@ from monai.transforms import (
     Rand3DElasticd,
     RandGaussianNoised,
     RandAdjustContrastd,
+    RandFlipd,
+    RandRotated,
+    RandZoomd,
 )
 
 
@@ -80,40 +83,58 @@ def get_transforms(mode: str = "train",
 
     if mode == "train":
         train_transforms = [
-            # Existing augmentations
+            # Flip along the left-right axis (x-axis) with 50% probability
+            RandFlipd(
+                keys=["image"],
+                spatial_axis=0,
+                prob=0.5
+            ),
+            # Rotate randomly within ±10 degrees (0.17 radians) along each axis
+            RandRotated(
+                keys=["image"],
+                range_x=0.17,
+                range_y=0.17,
+                range_z=0.17,
+                prob=0.5,
+                mode="bilinear"
+            ),
+            # Zoom (scale) between 90% and 110% of original size
+            RandZoomd(
+                keys=["image"],
+                min_zoom=0.9,
+                max_zoom=1.1,
+                prob=0.5,
+                mode="trilinear"  # Suitable for 3D MRI
+            ),
+            # Apply affine transformation: rotation (±10 degrees), scaling (0.9-1.1), translation (±5 voxels)
             RandAffined(
                 keys=["image"],
-                prob=0.8,
-                rotate_range=(0.1, 0.1, 0.1),
-                scale_range=(0.2, 0.2, 0.2),
-                mode="bilinear",
-                padding_mode="zeros",
-                device=device,
+                rotate_range=(0.17, 0.17, 0.17),
+                scale_range=(0.9, 1.1),
+                translate_range=5,
+                prob=0.5,
+                mode="bilinear"
             ),
-
-            # Add elastic deformations
+            # Apply elastic deformation with sigma=10-20 and magnitude=10-20 voxels
             Rand3DElasticd(
                 keys=["image"],
-                prob=0.3,
-                sigma_range=(5, 8),
-                magnitude_range=(0.1, 0.3),
-                spatial_size=resize_size,  # Use the same resize_size from parameters
-                mode="bilinear",
-                padding_mode="zeros",
-                device=device,
+                sigma_range=(10, 20),
+                magnitude_range=(10, 20),
+                prob=0.5,
+                mode="bilinear"
             ),
 
-            # Add intensity augmentations
+            # Add Gaussian noise with a standard deviation of 0.01
             RandGaussianNoised(
                 keys=["image"],
                 prob=0.5,
-                mean=0.0,
-                std=0.1,
+                std=0.01
             ),
+            # Adjust contrast with gamma randomly sampled between 0.9 and 1.1
             RandAdjustContrastd(
                 keys=["image"],
-                prob=0.3,
-                gamma=(0.8, 1.2),
+                prob=0.5,
+                gamma=(0.9, 1.1)
             ),
 
             # Convert to tensor
@@ -243,12 +264,40 @@ def test_transforms():
 
             print(f"\nSample {i+1}: {Path(image_path).name}, Label: {label_name} ({label})")
 
+            # Debug print - load and print raw image data before transformation
+            import nibabel as nib
+            raw_img = nib.load(image_path)
+            raw_data = raw_img.get_fdata()
+            print(f"BEFORE transform - Raw image:")
+            print(f"  Shape: {raw_data.shape}")
+            print(f"  Data type: {raw_data.dtype}")
+            print(f"  Value range: [{raw_data.min():.4f}, {raw_data.max():.4f}]")
+            print(f"  Mean: {raw_data.mean():.4f}, Std: {raw_data.std():.4f}")
+            print(f"  Header info - Spacing/Pixdim: {raw_img.header.get_zooms()}")
+            print(f"  Header info - Affine:\n{raw_img.affine}")
+
             # Apply transforms
             print("Applying transforms...")
             transformed = test_transforms({"image": image_path, "label": label})
 
-            # Get transformed image shape
+            # Debug print - display transformed image data
             transformed_image = transformed["image"]
+            print(f"AFTER transform - Transformed image:")
+            if isinstance(transformed_image, np.ndarray):
+                print(f"  Type: NumPy array")
+                print(f"  Shape: {transformed_image.shape}")
+                print(f"  Data type: {transformed_image.dtype}")
+                print(f"  Value range: [{transformed_image.min():.4f}, {transformed_image.max():.4f}]")
+                print(f"  Mean: {transformed_image.mean():.4f}, Std: {transformed_image.std():.4f}")
+            else:
+                print(f"  Type: Tensor")
+                print(f"  Shape: {transformed_image.shape}")
+                print(f"  Data type: {transformed_image.dtype}")
+                print(f"  Device: {transformed_image.device}")
+                print(f"  Value range: [{transformed_image.min().item():.4f}, {transformed_image.max().item():.4f}]")
+                print(f"  Mean: {transformed_image.mean().item():.4f}, Std: {transformed_image.std().item():.4f}")
+
+            # Get transformed image shape
             if isinstance(transformed_image, np.ndarray):
                 print(f"Transformed image: NumPy array with shape {transformed_image.shape}")
             else:
