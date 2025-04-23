@@ -87,55 +87,42 @@ def get_transforms(mode: str = "train",
             RandFlipd(
                 keys=["image"],
                 spatial_axis=0,
-                prob=0.5
+                prob=0.2
             ),
-            # Rotate randomly within ±10 degrees (0.17 radians) along each axis
-            RandRotated(
-                keys=["image"],
-                range_x=0.17,
-                range_y=0.17,
-                range_z=0.17,
-                prob=0.5,
-                mode="bilinear"
-            ),
-            # Zoom (scale) between 90% and 110% of original size
-            RandZoomd(
-                keys=["image"],
-                min_zoom=0.9,
-                max_zoom=1.1,
-                prob=0.5,
-                mode="trilinear"  # Suitable for 3D MRI
-            ),
-            # Apply affine transformation: rotation (±10 degrees), scaling (0.9-1.1), translation (±5 voxels)
+            # Apply affine transformation
             RandAffined(
                 keys=["image"],
-                rotate_range=(0.17, 0.17, 0.17),
-                scale_range=(0.9, 1.1),
-                translate_range=5,
-                prob=0.5,
+                rotate_range=(0.17, 0.17, 0.17),  # ±10 degrees
+                scale_range=(0.1, 0.1, 0.1),      # ±10% scaling
+                translate_range=5,                # ±5 voxels
+                prob=0.2,
                 mode="bilinear",
+                padding_mode="border",
+                spatial_size=resize_size,
                 device=device
             ),
-            # Apply elastic deformation with sigma=10-20 and magnitude=10-20 voxels
+            # Apply elastic deformation
             Rand3DElasticd(
                 keys=["image"],
-                sigma_range=(10, 20),
-                magnitude_range=(10, 20),
-                prob=0.5,
+                sigma_range=(5, 8),
+                magnitude_range=(5, 15),
+                spatial_size=resize_size,
+                padding_mode="border",
+                prob=0.2,
                 mode="bilinear",
                 device=device
             ),
 
-            # Add Gaussian noise with a standard deviation of 0.01
+            # Add Gaussian noise
             RandGaussianNoised(
                 keys=["image"],
-                prob=0.5,
+                prob=0.2,
                 std=0.01
             ),
-            # Adjust contrast with gamma randomly sampled between 0.9 and 1.1
+            # Adjust contrast
             RandAdjustContrastd(
                 keys=["image"],
-                prob=0.5,
+                prob=0.2,
                 gamma=(0.9, 1.1)
             ),
 
