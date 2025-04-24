@@ -14,7 +14,8 @@ class SecureFedCNN(BaseModel):
         self,
         num_classes: int = 3,
         pretrained_checkpoint: str = None,
-        input_size: list = [182, 218, 182]
+        input_size: list = [182, 218, 182],
+        classification_mode: str = "CN_MCI_AD"
     ):
         """Initialize Secure Federated CNN model.
 
@@ -22,11 +23,25 @@ class SecureFedCNN(BaseModel):
             num_classes: Number of output classes (default: 3 for CN, MCI, AD)
             pretrained_checkpoint: Path to pretrained weights file
             input_size: Size of the input image (default: [182, 218, 182])
+            classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
         """
+        # Determine the actual number of classes based on classification_mode
+        if classification_mode == "CN_AD":
+            actual_num_classes = 2
+        else:  # Default: "CN_MCI_AD"
+            actual_num_classes = 3
+
+        # Override num_classes if classification_mode is specified
+        if num_classes != actual_num_classes:
+            print(f"Warning: Specified num_classes={num_classes} doesn't match {classification_mode} mode which requires {actual_num_classes} classes.")
+            print(f"Setting num_classes to {actual_num_classes} for {classification_mode} mode.")
+            num_classes = actual_num_classes
+
         super().__init__(num_classes)
 
-        # Store input size
+        # Store input size and classification mode
         self.input_size = input_size if input_size else [182, 218, 182]
+        self.classification_mode = classification_mode
 
         # Ensure input_size is a list of integers
         if isinstance(self.input_size, (list, tuple)) and len(self.input_size) == 3:
@@ -34,6 +49,7 @@ class SecureFedCNN(BaseModel):
 
         # Print the input size for debugging
         print(f"SecureFedCNN initialized with input_size: {self.input_size}")
+        print(f"Classification mode: {self.classification_mode} with {num_classes} output classes")
 
         # Define the first convolutional block
         self.conv1 = nn.Sequential(

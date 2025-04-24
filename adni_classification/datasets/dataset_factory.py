@@ -21,6 +21,7 @@ def create_adni_dataset(
     replace_rate: float = 0.1,
     cache_num: Optional[int] = None,
     cache_dir: str = "./persistent_cache",
+    classification_mode: str = "CN_MCI_AD",
     **kwargs: Any
 ) -> Union[ADNISmartCacheDataset, ADNICacheDataset, ADNIDataset, ADNIPersistentDataset]:
     """Create a dataset instance based on the specified type.
@@ -40,6 +41,7 @@ def create_adni_dataset(
                    Only used for SmartCacheDataset and CacheDataset
         cache_dir: Directory to store the persistent cache (default: "./persistent_cache")
                    Only used for PersistentDataset
+        classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
         **kwargs: Additional arguments to pass to the dataset constructor
 
     Returns:
@@ -49,43 +51,41 @@ def create_adni_dataset(
         ValueError: If dataset_type is not supported
     """
     print(f"Creating ADNI dataset of type: {dataset_type}")
+    print(f"Classification mode: {classification_mode}")
+
+    # Add classification_mode to kwargs
+    common_kwargs = {
+        "csv_path": csv_path,
+        "img_dir": img_dir,
+        "transform": transform,
+        "classification_mode": classification_mode,
+        **kwargs
+    }
 
     if dataset_type.lower() == "smartcache":
         return ADNISmartCacheDataset(
-            csv_path=csv_path,
-            img_dir=img_dir,
-            transform=transform,
             cache_rate=cache_rate,
             num_workers=num_workers,
             replace_rate=replace_rate,
             cache_num=cache_num,
-            **kwargs
+            **common_kwargs
         )
     elif dataset_type.lower() == "cache":
         # Note: CacheDataset doesn't use replace_rate, but we ignore it here for API compatibility
         return ADNICacheDataset(
-            csv_path=csv_path,
-            img_dir=img_dir,
-            transform=transform,
             cache_rate=cache_rate,
             num_workers=num_workers,
             cache_num=cache_num,
-            **kwargs
+            **common_kwargs
         )
     elif dataset_type.lower() == "persistent":
         return ADNIPersistentDataset(
-            csv_path=csv_path,
-            img_dir=img_dir,
-            transform=transform,
             cache_dir=cache_dir,
-            **kwargs
+            **common_kwargs
         )
     elif dataset_type.lower() == "normal":
         return ADNIDataset(
-            csv_path=csv_path,
-            img_dir=img_dir,
-            transform=transform,
-            **kwargs  # Pass any additional arguments
+            **common_kwargs
         )
     else:
         raise ValueError(f"Dataset type '{dataset_type}' not supported. Available types: 'smartcache', 'cache', 'persistent', 'normal'")

@@ -38,10 +38,27 @@ class ModelFactory:
 
         # Extract input_size from kwargs if specified in config for SecureFedCNN
         if model_name == "securefed_cnn":
+            # Extract data config information if needed
+            data_config = None
+            if "data" in kwargs:
+                data_config = kwargs.pop("data")
+
+            # Get classification mode from kwargs or data config
+            classification_mode = kwargs.get("classification_mode", None)
+            if classification_mode is None and data_config and "classification_mode" in data_config:
+                classification_mode = data_config["classification_mode"]
+                kwargs["classification_mode"] = classification_mode
+                print(f"Using classification_mode '{classification_mode}' from data config")
+
+            # Adjust num_classes based on classification mode if it wasn't explicitly provided
+            if classification_mode == "CN_AD" and "num_classes" not in kwargs:
+                kwargs["num_classes"] = 2
+                print(f"Setting num_classes=2 for classification_mode={classification_mode}")
+
             if "input_size" not in kwargs:
                 # Try to get resize_size from data config
-                if "data" in kwargs and "resize_size" in kwargs["data"]:
-                    resize_size = kwargs["data"]["resize_size"]
+                if data_config and "resize_size" in data_config:
+                    resize_size = data_config["resize_size"]
                     print(f"Using resize_size {resize_size} from config as input_size for SecureFedCNN")
 
                     # Convert list to proper format if needed
@@ -50,11 +67,8 @@ class ModelFactory:
                     else:
                         input_size = resize_size
 
-                    # Remove data from kwargs since it's not a model parameter
-                    data_config = kwargs.pop("data")
-
-                    # Create the model with explicit input_size
-                    return cls._models[model_name](input_size=input_size, **kwargs)
+                    # Add input_size to kwargs
+                    kwargs["input_size"] = input_size
             else:
                 print(f"Using provided input_size {kwargs['input_size']} for SecureFedCNN")
 
