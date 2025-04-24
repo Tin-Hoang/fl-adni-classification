@@ -626,9 +626,16 @@ def main():
     print("Loading complete! Creating model...")
     # Create model
     model_kwargs = {
-        "num_classes": config.model.num_classes,
         "pretrained_checkpoint": config.model.pretrained_checkpoint,
     }
+
+    # Set num_classes based on classification_mode if not explicitly set in config
+    if config.data.classification_mode == "CN_AD":
+        model_kwargs["num_classes"] = 2
+        print(f"Setting num_classes=2 for classification_mode={config.data.classification_mode}")
+    else:
+        model_kwargs["num_classes"] = config.model.num_classes
+        print(f"Using num_classes={config.model.num_classes} from model config")
 
     # Add model-specific parameters
     if config.model.name == "resnet3d" and config.model.model_depth is not None:
@@ -716,9 +723,12 @@ def main():
     if config.training.use_class_weights:
         # If we didn't get class weights from a checkpoint, compute them
         if class_weights is None:
+            # Determine the actual number of classes based on our model configuration
+            num_classes = model_kwargs["num_classes"]
+
             class_weights = compute_class_weights(
                 labels=labels,
-                num_classes=config.model.num_classes,
+                num_classes=num_classes,
                 weight_type=config.training.class_weight_type,
                 manual_weights=config.training.manual_class_weights
             )
@@ -787,10 +797,17 @@ def main():
                 if should_generate_cm:
                     print(f"\tGenerating confusion matrix for epoch {epoch + 1}...")
                     cm_path = os.path.join(config.training.output_dir, f"confusion_matrix_epoch_{epoch + 1}.png")
+
+                    # Set class names based on classification mode
+                    if config.data.classification_mode == "CN_AD":
+                        class_names = ["CN", "AD"]
+                    else:
+                        class_names = ["CN", "MCI", "AD"]
+
                     cm_fig = plot_confusion_matrix(
                         y_true=true_labels,
                         y_pred=predicted_labels,
-                        class_names=["CN", "MCI", "AD"],
+                        class_names=class_names,
                         normalize=False,
                         save_path=cm_path,
                         title=f"Confusion Matrix - Epoch {epoch + 1}"
