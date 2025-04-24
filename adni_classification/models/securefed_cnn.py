@@ -25,23 +25,27 @@ class SecureFedCNN(BaseModel):
             input_size: Size of the input image (default: [182, 218, 182])
             classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
         """
-        # Determine the actual number of classes based on classification_mode
-        if classification_mode == "CN_AD":
-            actual_num_classes = 2
-        else:  # Default: "CN_MCI_AD"
-            actual_num_classes = 3
+        # Print the model configuration for clarity
+        print(f"SecureFedCNN initializing with:")
+        print(f"- num_classes: {num_classes}")
+        print(f"- classification_mode: {classification_mode}")
 
-        # Override num_classes if classification_mode is specified
-        if num_classes != actual_num_classes:
-            print(f"Warning: Specified num_classes={num_classes} doesn't match {classification_mode} mode which requires {actual_num_classes} classes.")
-            print(f"Setting num_classes to {actual_num_classes} for {classification_mode} mode.")
-            num_classes = actual_num_classes
+        # For backwards compatibility only - don't force override num_classes
+        # Only print warning if there's an apparent mismatch
+        expected_classes = 2 if classification_mode == "CN_AD" else 3
+        if num_classes != expected_classes:
+            print(f"Note: Using {num_classes} output classes with {classification_mode} mode.")
+            print(f"This is different from the default of {expected_classes} classes for {classification_mode} mode.")
 
+        # Initialize the base model with the specified number of classes
         super().__init__(num_classes)
+
+        # Store classification mode for reference
+        self.classification_mode = classification_mode
+        print(f"Classification mode: {classification_mode} with {num_classes} output classes")
 
         # Store input size and classification mode
         self.input_size = input_size if input_size else [182, 218, 182]
-        self.classification_mode = classification_mode
 
         # Ensure input_size is a list of integers
         if isinstance(self.input_size, (list, tuple)) and len(self.input_size) == 3:
@@ -49,7 +53,6 @@ class SecureFedCNN(BaseModel):
 
         # Print the input size for debugging
         print(f"SecureFedCNN initialized with input_size: {self.input_size}")
-        print(f"Classification mode: {self.classification_mode} with {num_classes} output classes")
 
         # Define the first convolutional block
         self.conv1 = nn.Sequential(

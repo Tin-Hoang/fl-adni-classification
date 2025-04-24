@@ -655,7 +655,8 @@ def main():
     # Pass data configuration for models that need it (like SecureFedCNN)
     if config.model.name == "securefed_cnn":
         model_kwargs["data"] = {
-            "resize_size": config.data.resize_size
+            "resize_size": config.data.resize_size,
+            "classification_mode": config.data.classification_mode
         }
 
     model = ModelFactory.create_model(config.model.name, **model_kwargs)

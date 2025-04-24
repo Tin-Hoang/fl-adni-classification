@@ -43,17 +43,23 @@ class ModelFactory:
             if "data" in kwargs:
                 data_config = kwargs.pop("data")
 
-            # Get classification mode from kwargs or data config
-            classification_mode = kwargs.get("classification_mode", None)
-            if classification_mode is None and data_config and "classification_mode" in data_config:
+            # Get classification_mode from data config and pass it to the model
+            if data_config and "classification_mode" in data_config:
                 classification_mode = data_config["classification_mode"]
                 kwargs["classification_mode"] = classification_mode
                 print(f"Using classification_mode '{classification_mode}' from data config")
+            else:
+                classification_mode = kwargs.get("classification_mode", "CN_MCI_AD")
 
-            # Adjust num_classes based on classification mode if it wasn't explicitly provided
-            if classification_mode == "CN_AD" and "num_classes" not in kwargs:
-                kwargs["num_classes"] = 2
-                print(f"Setting num_classes=2 for classification_mode={classification_mode}")
+            # If num_classes is explicitly set in the model config, respect that value
+            # Otherwise, derive it from the classification mode
+            if "num_classes" not in kwargs:
+                if classification_mode == "CN_AD":
+                    kwargs["num_classes"] = 2
+                    print(f"Setting num_classes=2 for classification_mode={classification_mode}")
+                else:
+                    kwargs["num_classes"] = 3
+                    print(f"Setting num_classes=3 for classification_mode={classification_mode}")
 
             if "input_size" not in kwargs:
                 # Try to get resize_size from data config
