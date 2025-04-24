@@ -582,6 +582,7 @@ def main():
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
+        classification_mode=config.data.classification_mode,
     )
 
     val_dataset = create_adni_dataset(
@@ -592,6 +593,7 @@ def main():
         cache_rate=config.data.cache_rate,
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
+        classification_mode=config.data.classification_mode,
     )
 
     # Add this code to examine class distribution

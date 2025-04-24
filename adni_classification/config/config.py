@@ -25,6 +25,7 @@ class DataConfig:
     use_multiprocessing_transforms: bool = False  # Whether to use multiprocessing-safe transforms
     transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
     multiprocessing_context: str = "spawn"  # Options: "spawn", "fork", "forkserver"
+    classification_mode: str = "CN_MCI_AD"  # Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
 
 
 @dataclass
@@ -170,6 +171,7 @@ class Config:
                 "use_multiprocessing_transforms": self.data.use_multiprocessing_transforms,
                 "transform_device": self.data.transform_device,
                 "multiprocessing_context": self.data.multiprocessing_context,
+                "classification_mode": self.data.classification_mode,
             },
             "model": {
                 "name": self.model.name,
