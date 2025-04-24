@@ -599,6 +599,12 @@ def main():
     # Add this code to examine class distribution
     labels = [sample["label"].item() for sample in train_dataset]
 
+    # Print the unique labels for debugging
+    unique_labels = set(labels)
+    label_counts = {label: labels.count(label) for label in unique_labels}
+    print(f"[DEBUG] Dataset labels: {sorted(unique_labels)}")
+    print(f"[DEBUG] Label distribution: {label_counts}")
+
     # Create data loaders with optimized multiprocessing settings
     # Using proper worker init and cleanup to prevent semaphore leaks
     train_loader = DataLoader(
@@ -677,10 +683,15 @@ def main():
             start_epoch += 1
             print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
 
-            # If class weights were in the checkpoint and we're using class weights, use them
+            # If class weights were in the checkpoint and we're using class weights, use them only if they match our model's num_classes
             if loaded_weights is not None and config.training.use_class_weights:
-                class_weights = loaded_weights.to(device)
-                print(f"Using class weights from checkpoint: {class_weights}")
+                if loaded_weights.size(0) == model_kwargs["num_classes"]:
+                    class_weights = loaded_weights.to(device)
+                    print(f"Using class weights from checkpoint: {class_weights}")
+                else:
+                    print(f"Warning: Loaded class weights have shape {loaded_weights.size(0)} but model has {model_kwargs['num_classes']} classes.")
+                    print("Will recompute class weights based on current dataset.")
+                    class_weights = None
         else:
             print(f"No checkpoint found at: {config.model.pretrained_checkpoint}")
             # If it's not a checkpoint file, it might be just a state dict
@@ -721,19 +732,25 @@ def main():
 
     # Create loss function with class weights if enabled
     if config.training.use_class_weights:
-        # If we didn't get class weights from a checkpoint, compute them
-        if class_weights is None:
-            # Determine the actual number of classes based on our model configuration
-            num_classes = model_kwargs["num_classes"]
+        # Determine the actual number of classes based on our model configuration
+        num_classes = model_kwargs["num_classes"]
 
-            class_weights = compute_class_weights(
-                labels=labels,
-                num_classes=num_classes,
-                weight_type=config.training.class_weight_type,
-                manual_weights=config.training.manual_class_weights
-            )
-            class_weights = class_weights.to(device)
+        # Verify if the dataset labels match our expected number of classes
+        max_label = max(labels) if labels else 0
+        if max_label >= num_classes:
+            print(f"Warning: Dataset contains labels up to {max_label} but model only has {num_classes} output classes.")
+            print("This may indicate a mismatch between dataset classification_mode and model num_classes.")
 
+        # Compute class weights directly from the labels provided by the dataset
+        # (Dataset factory should have already handled the label mapping for CN_AD mode)
+        weights = compute_class_weights(
+            labels=labels,
+            num_classes=num_classes,
+            weight_type=config.training.class_weight_type,
+            manual_weights=config.training.manual_class_weights
+        )
+
+        class_weights = weights.to(device)
         print(f"Using class weights: {class_weights}")
         criterion = nn.CrossEntropyLoss(weight=class_weights)
 
