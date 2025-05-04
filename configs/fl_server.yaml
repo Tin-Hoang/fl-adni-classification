@@ -1,0 +1,50 @@
+# Server configuration for Federated Learning with ADNI
+
+# Use the same data configuration as clients for consistency
+# (though server typically doesn't load data)
+data:
+  train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv"
+  val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_val_119images.csv"
+  img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
+  dataset_type: "normal"
+  classification_mode: "CN_MCI_AD"
+  resize_size: [182, 218, 182]
+  resize_mode: "trilinear"
+  use_spacing: false
+  spacing_size: [1.0, 1.0, 1.0]
+  cache_rate: 0.0
+  transform_device: "cpu"
+  multiprocessing_context: "fork"
+
+model:
+  name: "securefed_cnn"
+  num_classes: 3
+  pretrained_checkpoint: null
+
+training:
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  seed: 42
+
+# Federated Learning specific settings
+fl:
+  num_rounds: 300              # Number of FL rounds to perform
+  fraction_fit: 1.0            # Fraction of clients to sample in each round for training
+  fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
+  min_fit_clients: 2           # Minimum number of clients for training
+  min_evaluate_clients: 2      # Minimum number of clients for evaluation
+  min_available_clients: 2     # Minimum number of total clients
+  local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
+  strategy: "fedavg"           # FL aggregation strategy (options: "fedavg", "fedprox")
+  save_checkpoints: true       # Whether to save model checkpoints
+  checkpoint_dir: "/scratch/th01167/fl-adni/checkpoints/fl"
+
+# Wandb logging configuration
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["federated-learning", "adni", "securefed-cnn"]
+  notes: "Federated Learning for ADNI Classification"
+  run_name: "fl-adni-securefed-cnn"

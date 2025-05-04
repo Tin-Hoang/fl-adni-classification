@@ -20,6 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
@@ -36,6 +38,9 @@ dependencies = [
     "requests>=2.28.0",
     "nibabel>=5.2.1",
     "wandb>=0.15.0",
+    "flwr[simulation]>=1.18.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "filelock>=3.15.0",
 ]
 
 [project.optional-dependencies]
@@ -78,8 +83,34 @@ python_files = ["test_*.py"]
 addopts = "--cov=adni_classification --cov-report=term-missing"
 
 [tool.hatch.build.targets.wheel]
-packages = ["adni_classification"]
+packages = ["adni_classification", "adni_flwr"]
 
 [project.urls]
 "Homepage" = "https://github.com/tin-hoang/fl-adni-classification"
 "Bug Tracker" = "https://github.com/tin-hoang/fl-adni-classification/issues"
+
+[tool.flwr.app]
+publisher = "flwrlabs"
+
+[tool.flwr.app.components]
+serverapp = "adni_flwr.server_app:app"
+clientapp = "adni_flwr.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 5
+fraction-fit = 1.0
+batch-size = 8
+client-config-files = "configs/client1.yaml,configs/client2.yaml"
+server-config-file = "configs/fl_server.yaml"
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 2  # For 2 clients
+
+[tool.flwr.federations.local-simulation-gpu]
+options.num-supernodes = 2
+options.backend.client-resources.num-cpus = 4
+options.backend.client-resources.num-gpus = 0.5  # Split GPU resources for clients
+options.backend.client-resources.object-store-memory = 30720  # 30GB

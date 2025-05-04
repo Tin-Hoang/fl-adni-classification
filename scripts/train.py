@@ -23,6 +23,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gc
 import tempfile
+import time
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
@@ -584,7 +585,6 @@ def main():
         cache_dir=config.data.cache_dir,
         classification_mode=config.data.classification_mode,
     )
-
     val_dataset = create_adni_dataset(
         dataset_type=dataset_type,
         csv_path=config.data.val_csv_path,
@@ -597,13 +597,7 @@ def main():
     )
 
     # Add this code to examine class distribution
-    labels = [sample["label"].item() for sample in train_dataset]
-
-    # Print the unique labels for debugging
-    unique_labels = set(labels)
-    label_counts = {label: labels.count(label) for label in unique_labels}
-    print(f"[DEBUG] Dataset labels: {sorted(unique_labels)}")
-    print(f"[DEBUG] Label distribution: {label_counts}")
+    labels = [sample['label'] for sample in train_dataset.base.data_list]
 
     # Create data loaders with optimized multiprocessing settings
     # Using proper worker init and cleanup to prevent semaphore leaks
@@ -614,7 +608,7 @@ def main():
         num_workers=config.training.num_workers,
         pin_memory=True,
         prefetch_factor=2 if config.training.num_workers > 0 else None,
-        multiprocessing_context=config.data.multiprocessing_context,
+        multiprocessing_context=config.data.multiprocessing_context if config.training.num_workers > 0 else None,
         worker_init_fn=worker_init_fn,
         drop_last=True
     )
@@ -626,10 +620,9 @@ def main():
         num_workers=config.training.num_workers,
         pin_memory=True,
         prefetch_factor=2 if config.training.num_workers > 0 else None,
-        multiprocessing_context=config.data.multiprocessing_context,
+        multiprocessing_context=config.data.multiprocessing_context if config.training.num_workers > 0 else None,
         worker_init_fn=worker_init_fn
     )
-    print("Loading complete! Creating model...")
     # Create model
     model_kwargs = {
         "pretrained_checkpoint": config.model.pretrained_checkpoint,
@@ -939,7 +932,6 @@ def main():
             torch.cuda.empty_cache()
 
             # Sleep briefly to allow resource tracker to clean up
-            import time
             time.sleep(0.5)
 
             # Force multiprocessing cleanup
