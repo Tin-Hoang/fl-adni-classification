@@ -21,16 +21,18 @@ model:
 training:
   batch_size: 2
   learning_rate: 0.0001
-  weight_decay: 0.0001
+  weight_decay: 0.01  # 1e-2
   num_workers: 2
   seed: 42  # Random seed for reproducibility
   output_dir: "/scratch/th01167/fl-adni/checkpoints/client2"
   mixed_precision: false
   visualize: false
   use_class_weights: true
-  class_weight_type: "inverse"
+  class_weight_type: "manual"
+  manual_class_weights: [3.1890547263681592, 0.6694677871148459, 3.5031446540880504]
   gradient_accumulation_steps: 1
   num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
+  lr_scheduler: "plateau"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
 
 # Wandb logging configuration
 wandb:

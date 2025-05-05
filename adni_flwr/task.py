@@ -88,7 +88,8 @@ def train(
     device: torch.device,
     epoch_num: int = 1,
     mixed_precision: bool = False,
-    gradient_accumulation_steps: int = 1
+    gradient_accumulation_steps: int = 1,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None
 ) -> Tuple[float, float]:
     """Train the model for the specified number of epochs.
 
@@ -101,6 +102,7 @@ def train(
         epoch_num: Number of epochs to train
         mixed_precision: Whether to use mixed precision training
         gradient_accumulation_steps: Number of steps for gradient accumulation
+        scheduler: Optional learning rate scheduler to step after each epoch
 
     Returns:
         Tuple of (average loss, average accuracy)
@@ -110,10 +112,14 @@ def train(
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
-
+    current_lr = optimizer.param_groups[0]['lr']
     scaler = torch.cuda.amp.GradScaler() if mixed_precision else None
 
-    for _ in range(epoch_num):
+    for epoch in range(epoch_num):
+        epoch_loss = 0.0
+        epoch_correct = 0
+        epoch_samples = 0
+
         batch_idx = 0
         for batch in train_loader:
             images = batch["image"].to(device)
@@ -142,17 +148,40 @@ def train(
                     optimizer.step()
                     optimizer.zero_grad()
 
-            total_loss += loss.item() * gradient_accumulation_steps
+            # Track metrics for current epoch
+            epoch_loss += loss.item() * gradient_accumulation_steps
             _, predicted = torch.max(outputs.data, 1)
+            epoch_samples += labels.size(0)
+            epoch_correct += (predicted == labels).sum().item()
+
+            # Track metrics for overall training
+            total_loss += loss.item() * gradient_accumulation_steps
             total_samples += labels.size(0)
             total_correct += (predicted == labels).sum().item()
 
             batch_idx += 1
 
-    avg_loss = total_loss / len(train_loader)
+        # Calculate and log epoch metrics
+        epoch_avg_loss = epoch_loss / len(train_loader)
+        epoch_avg_acc = 100.0 * epoch_correct / epoch_samples if epoch_samples > 0 else 0.0
+        print(f"Epoch {epoch+1}/{epoch_num}: loss={epoch_avg_loss:.4f}, accuracy={epoch_avg_acc:.2f}%")
+
+        # Step the scheduler after each epoch if provided
+        if scheduler is not None:
+            # Handle ReduceLROnPlateau scheduler which requires validation loss
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(epoch_avg_loss)
+            else:
+                scheduler.step()
+
+            # Log current learning rate
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"  Learning rate: {current_lr:.8f}")
+
+    avg_loss = total_loss / (len(train_loader) * epoch_num)
     avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
 
-    return avg_loss, avg_accuracy
+    return avg_loss, avg_accuracy, current_lr
 
 
 def test(
@@ -356,6 +385,10 @@ def load_data(
 
     # Get dataset type from config (default to normal for FL)
     dataset_type = config.data.dataset_type
+
+    # Print transform processes
+    print(f"Train transform: {train_transform}")
+    print(f"Val transform: {val_transform}")
 
     # Create datasets
     train_dataset = create_adni_dataset(

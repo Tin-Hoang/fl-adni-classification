@@ -7,7 +7,10 @@ import json
 from flwr.common import Context, FitRes, EvaluateRes, Status, Code
 from flwr.client import NumPyClient, ClientApp
 from typing import Dict, Tuple, List
+from sklearn.metrics import confusion_matrix
 from adni_classification.config.config import Config
+from adni_classification.utils.torch_utils import set_seed
+from adni_classification.utils.training_utils import get_scheduler
 from adni_flwr.task import (
     load_model,
     load_data,
@@ -36,6 +39,9 @@ class ADNIClient(NumPyClient):
         # Load the model
         self.model = load_model(self.config)
 
+        # Set seed
+        set_seed(self.config.training.seed)
+
         # Load the datasets and data loaders
         self.train_loader, self.val_loader = load_data(self.config, batch_size=self.config.training.batch_size)
 
@@ -43,7 +49,7 @@ class ADNIClient(NumPyClient):
         self.local_epochs = self.config.fl.local_epochs
 
         # Create optimizer
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay,
@@ -59,6 +65,14 @@ class ADNIClient(NumPyClient):
             self.device
         )
 
+        # Initialize learning rate scheduler
+        scheduler_type = getattr(self.config.training, 'lr_scheduler', None)
+        self.scheduler = get_scheduler(
+            scheduler_type=scheduler_type if scheduler_type else "none",
+            optimizer=self.optimizer,
+            num_epochs=self.local_epochs
+        )
+
         # Get other training parameters
         self.mixed_precision = self.config.training.mixed_precision
         self.gradient_accumulation_steps = self.config.training.gradient_accumulation_steps
@@ -66,6 +80,7 @@ class ADNIClient(NumPyClient):
         print(f"Initialized ADNI client with config: {self.config.wandb.run_name if hasattr(self.config, 'wandb') and hasattr(self.config.wandb, 'run_name') else 'unknown'}")
         print(f"Train dataset size: {len(self.train_loader.dataset)}")
         print(f"Validation dataset size: {len(self.val_loader.dataset)}")
+        print(f"Using scheduler: {scheduler_type if scheduler_type else 'none'}")
 
     def fit(self, parameters, config) -> FitRes:
         """Train the model on the local dataset.
@@ -84,7 +99,7 @@ class ADNIClient(NumPyClient):
         local_epochs = config.get("local_epochs", self.local_epochs)
 
         # Train the model
-        train_loss, train_acc = train(
+        train_loss, train_acc, current_lr = train(
             model=self.model,
             train_loader=self.train_loader,
             criterion=self.criterion,
@@ -92,7 +107,8 @@ class ADNIClient(NumPyClient):
             device=self.device,
             epoch_num=local_epochs,
             mixed_precision=self.config.training.mixed_precision,
-            gradient_accumulation_steps=self.config.training.gradient_accumulation_steps
+            gradient_accumulation_steps=self.config.training.gradient_accumulation_steps,
+            scheduler=self.scheduler
         )
 
         # Log training metrics
@@ -102,6 +118,7 @@ class ADNIClient(NumPyClient):
         return get_params(self.model), len(self.train_loader.dataset), {
             "train_loss": float(train_loss),
             "train_accuracy": float(train_acc),
+            "train_lr": float(current_lr),
             "client_id": self.client_id,
         }
 
@@ -163,9 +180,6 @@ class ADNIClient(NumPyClient):
             print(f"Client {self.client_id}: Predictions length={len(predictions)}, Labels length={len(true_labels)}")
             print(f"Client {self.client_id}: First 5 predictions={predictions[:5]}, First 5 labels={true_labels[:5]}")
 
-            # Serialize predictions and labels to JSON strings
-            import json
-
             # Convert to Python native types (especially important for numpy types)
             predictions_list = [int(p) for p in predictions]
             labels_list = [int(l) for l in true_labels]
@@ -193,13 +207,10 @@ class ADNIClient(NumPyClient):
 
             # Calculate confusion matrix locally for backup/debugging
             try:
-                from sklearn.metrics import confusion_matrix
                 cm = confusion_matrix(true_labels, predictions)
                 print(f"Client {self.client_id}: Local confusion matrix:\n{cm}")
 
                 # You can still save it to a file as backup
-                import os
-                import numpy as np
                 os.makedirs("client_matrices", exist_ok=True)
                 np.save(f"client_matrices/confusion_matrix_client_{self.client_id}.npy", cm)
             except Exception as e:

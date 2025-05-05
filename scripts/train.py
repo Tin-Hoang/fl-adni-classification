@@ -12,11 +12,7 @@ from torch.amp import autocast, GradScaler
 import torch.multiprocessing as mp
 from tqdm import tqdm
 from torch.optim.lr_scheduler import (
-    CosineAnnealingLR,
     ReduceLROnPlateau,
-    StepLR,
-    MultiStepLR,
-    ExponentialLR,
 )
 from collections import Counter
 import numpy as np
@@ -28,6 +24,7 @@ import time
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
 from adni_classification.utils.torch_utils import set_seed
+from adni_classification.utils.training_utils import get_scheduler
 from adni_classification.utils.visualization import (
     visualize_batch,
     visualize_predictions,
@@ -401,38 +398,6 @@ def load_checkpoint(
     class_weights = checkpoint.get('class_weights', None)
 
     return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights
-
-
-def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epochs: int) -> Optional[Any]:
-    """Get the appropriate learning rate scheduler.
-
-    Args:
-        scheduler_type: Type of scheduler to use
-        optimizer: Optimizer to use with the scheduler
-        num_epochs: Total number of epochs
-
-    Returns:
-        Learning rate scheduler
-    """
-    if scheduler_type == "cosine":
-        # Cosine annealing scheduler
-        return CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
-    elif scheduler_type == "step":
-        # Step scheduler (reduce LR by factor of gamma every step_size epochs)
-        return StepLR(optimizer, step_size=30, gamma=0.1)
-    elif scheduler_type == "multistep":
-        # Multi-step scheduler (reduce LR at specific milestones)
-        return MultiStepLR(optimizer, milestones=[30, 60, 90], gamma=0.1)
-    elif scheduler_type == "plateau":
-        # Reduce on plateau scheduler (reduce LR when validation metric plateaus)
-        return ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True, min_lr=1e-6)
-    elif scheduler_type == "exponential":
-        # Exponential scheduler (reduce LR by gamma each epoch)
-        return ExponentialLR(optimizer, gamma=0.95)
-    else:
-        # No scheduler
-        print(f"[Warning] No learning rate scheduler specified, using no scheduler")
-        return None
 
 
 def cleanup_resources():
