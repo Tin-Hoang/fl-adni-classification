@@ -2,16 +2,17 @@
 
 import os
 import torch
+import numpy as np
+import json
 from flwr.common import Context, FitRes, EvaluateRes, Status, Code
 from flwr.client import NumPyClient, ClientApp
 from typing import Dict, Tuple, List
 from adni_classification.config.config import Config
 from adni_flwr.task import (
-    load_config_from_yaml,
     load_model,
     load_data,
     train,
-    test,
+    test_with_predictions,
     get_params,
     set_params,
     create_criterion
@@ -36,7 +37,7 @@ class ADNIClient(NumPyClient):
         self.model = load_model(self.config)
 
         # Load the datasets and data loaders
-        self.train_loader, self.val_loader = load_data(self.config)
+        self.train_loader, self.val_loader = load_data(self.config, batch_size=self.config.training.batch_size)
 
         # Determine the number of local epochs for this client
         self.local_epochs = self.config.fl.local_epochs
@@ -104,6 +105,34 @@ class ADNIClient(NumPyClient):
             "client_id": self.client_id,
         }
 
+    def test_serialization(self, metrics: Dict) -> bool:
+        """Test if the metrics can be serialized to JSON.
+
+        Args:
+            metrics: Dictionary of metrics to test
+
+        Returns:
+            True if serialization is successful, False otherwise
+        """
+        try:
+            json_str = json.dumps(metrics)
+            # Reconstruct to verify
+            json.loads(json_str)
+            print(f"Serialization test passed. Size: {len(json_str)} bytes")
+            return True
+        except Exception as e:
+            print(f"ERROR: Serialization test failed: {e}")
+
+            # Try to identify problematic keys
+            for k, v in metrics.items():
+                try:
+                    json.dumps({k: v})
+                except Exception as sub_e:
+                    print(f"  Problem with key '{k}': {sub_e}")
+                    print(f"  Type: {type(v)}, Value preview: {str(v)[:100]}")
+
+            return False
+
     def evaluate(self, parameters, config) -> EvaluateRes:
         """Evaluate the model on the local validation dataset.
 
@@ -114,27 +143,99 @@ class ADNIClient(NumPyClient):
         Returns:
             Loss, number of evaluation examples, metrics
         """
-        # Update local model with global parameters
-        set_params(self.model, parameters)
+        try:
+            # Update local model with global parameters
+            set_params(self.model, parameters)
 
-        # Evaluate the model
-        val_loss, val_acc = test(
-            model=self.model,
-            test_loader=self.val_loader,
-            criterion=self.criterion,
-            device=self.device,
-            mixed_precision=self.config.training.mixed_precision
-        )
+            # Evaluate the model to get predictions and true labels
+            val_loss, val_acc, predictions, true_labels = test_with_predictions(
+                model=self.model,
+                test_loader=self.val_loader,
+                criterion=self.criterion,
+                device=self.device,
+                mixed_precision=self.config.training.mixed_precision
+            )
 
-        # Log evaluation metrics
-        print(f"Client evaluation: loss={val_loss:.4f}, accuracy={val_acc:.2f}%")
+            # Log evaluation metrics
+            print(f"Client evaluation: loss={val_loss:.4f}, accuracy={val_acc:.2f}%")
 
-        # Return evaluation metrics
-        return float(val_loss), len(self.val_loader.dataset), {
-            "val_loss": float(val_loss),
-            "val_accuracy": float(val_acc),
-            "client_id": self.client_id,
-        }
+            # Print information about predictions and labels for debugging
+            print(f"Client {self.client_id}: Predictions length={len(predictions)}, Labels length={len(true_labels)}")
+            print(f"Client {self.client_id}: First 5 predictions={predictions[:5]}, First 5 labels={true_labels[:5]}")
+
+            # Serialize predictions and labels to JSON strings
+            import json
+
+            # Convert to Python native types (especially important for numpy types)
+            predictions_list = [int(p) for p in predictions]
+            labels_list = [int(l) for l in true_labels]
+
+            # Determine if we need to sample to reduce message size
+            max_samples = 500  # Limit to stay within message size constraints
+            if len(predictions_list) > max_samples:
+                # Random sample for large datasets
+                import random
+                indices = sorted(random.sample(range(len(predictions_list)), max_samples))
+                predictions_sample = [predictions_list[i] for i in indices]
+                labels_sample = [labels_list[i] for i in indices]
+                sample_info = f"sampled_{max_samples}_from_{len(predictions_list)}"
+            else:
+                predictions_sample = predictions_list
+                labels_sample = labels_list
+                sample_info = "full_dataset"
+
+            # Serialize to JSON strings
+            predictions_json = json.dumps(predictions_sample)
+            labels_json = json.dumps(labels_sample)
+
+            print(f"Client {self.client_id}: Serialized predictions length={len(predictions_json)} bytes")
+            print(f"Client {self.client_id}: Serialized labels length={len(labels_json)} bytes")
+
+            # Calculate confusion matrix locally for backup/debugging
+            try:
+                from sklearn.metrics import confusion_matrix
+                cm = confusion_matrix(true_labels, predictions)
+                print(f"Client {self.client_id}: Local confusion matrix:\n{cm}")
+
+                # You can still save it to a file as backup
+                import os
+                import numpy as np
+                os.makedirs("client_matrices", exist_ok=True)
+                np.save(f"client_matrices/confusion_matrix_client_{self.client_id}.npy", cm)
+            except Exception as e:
+                print(f"Client {self.client_id}: Error creating local confusion matrix: {e}")
+
+            # Create result dictionary with encoded data
+            result = {
+                "val_loss": float(val_loss),
+                "val_accuracy": float(val_acc),
+                "predictions_json": predictions_json,
+                "labels_json": labels_json,
+                "sample_info": sample_info,
+                "client_id": str(self.client_id),
+                "num_classes": 2 if self.config.data.classification_mode == "CN_AD" else 3
+            }
+
+            # Test serialization for safety
+            success = self.test_serialization(result)
+            if not success:
+                # Fall back to minimal metrics if serialization fails
+                print(f"Client {self.client_id}: WARNING - Serialization failed, falling back to minimal metrics")
+                result = {
+                    "val_loss": float(val_loss),
+                    "val_accuracy": float(val_acc),
+                    "client_id": str(self.client_id),
+                    "error": "Serialization failed"
+                }
+
+            return float(val_loss), len(self.val_loader.dataset), result
+
+        except Exception as e:
+            import traceback
+            print(f"Client {self.client_id}: Error in evaluate method: {e}")
+            print(traceback.format_exc())
+            # Return minimal results to avoid failure
+            return 0.0, 0, {"client_id": str(self.client_id), "error": str(e)}
 
 
 def client_fn(context: Context):

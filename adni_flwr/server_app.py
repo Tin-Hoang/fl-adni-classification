@@ -1,6 +1,9 @@
 """Server application for ADNI Federated Learning."""
 
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from typing import List, Tuple, Dict, Optional
 import torch
 import wandb
@@ -12,8 +15,10 @@ from flwr.server.strategy import FedAvg, Strategy
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 
-from adni_flwr.task import load_config_from_yaml, load_model, get_params
+from adni_flwr.task import load_config_from_yaml, load_model, get_params, load_data, test_with_predictions, create_criterion
 from adni_classification.config.config import Config
+from adni_classification.utils.visualization import plot_confusion_matrix
+from adni_flwr.server_fn import safe_weighted_average
 
 
 class FLWandbLogger:
@@ -208,81 +213,293 @@ class FedADNI(FedAvg):
         Returns:
             Tuple of (aggregated_loss, metrics)
         """
-        # Log client evaluation metrics
-        if self.wandb_logger:
-            for client_proxy, eval_res in results:
-                client_metrics = eval_res.metrics
-                if client_metrics:
-                    client_id = client_metrics.get("client_id", "unknown")
-                    metrics_to_log = {k: v for k, v in client_metrics.items() if k != "client_id"}
-                    self.wandb_logger.log_metrics(
-                        metrics_to_log,
-                        prefix=f"client_{client_id}/eval",
-                        step=server_round
+        # Print information about results and failures
+        print(f"aggregate_evaluate: received {len(results)} results and {len(failures)} failures")
+
+        # Print details about any failures
+        if failures:
+            for i, failure in enumerate(failures):
+                print(f"Failure {i+1}: {type(failure).__name__}: {str(failure)}")
+
+        # If no results, handle gracefully
+        if not results:
+            print("WARNING: No evaluation results to aggregate")
+            return None, {}
+
+        try:
+            # Lists to collect all predictions and labels
+            all_predictions = []
+            all_labels = []
+
+            # Log client evaluation metrics
+            if self.wandb_logger:
+                for client_proxy, eval_res in results:
+                    try:
+                        client_metrics = eval_res.metrics
+                        if not client_metrics:
+                            print(f"WARNING: Client metrics are empty for a client")
+                            continue
+
+                        client_id = client_metrics.get("client_id", "unknown")
+                        print(f"Processing metrics from client {client_id}")
+
+                        # Debug: print all keys in client metrics
+                        print(f"Client {client_id} metrics keys: {list(client_metrics.keys())}")
+
+                        # Extract and decode JSON predictions and labels if present
+                        if "predictions_json" in client_metrics and "labels_json" in client_metrics:
+                            try:
+                                import json
+
+                                # Decode JSON strings to lists
+                                predictions_json = client_metrics.get("predictions_json", "[]")
+                                labels_json = client_metrics.get("labels_json", "[]")
+                                sample_info = client_metrics.get("sample_info", "unknown")
+
+                                # Parse the JSON strings
+                                predictions = json.loads(predictions_json)
+                                labels = json.loads(labels_json)
+
+                                print(f"Client {client_id}: Decoded {len(predictions)} predictions and {len(labels)} labels. Sample info: {sample_info}")
+
+                                # Add to the global collections for aggregation
+                                all_predictions.extend(predictions)
+                                all_labels.extend(labels)
+
+                                # Get the number of classes
+                                num_classes = client_metrics.get("num_classes", 3)
+
+                                # Generate confusion matrix for this client
+                                if len(predictions) > 0 and len(labels) > 0:
+                                    # Set class names based on classification mode
+                                    class_names = ["CN", "AD"] if num_classes == 2 else ["CN", "MCI", "AD"]
+
+                                    # Create the confusion matrix
+                                    from sklearn.metrics import confusion_matrix
+                                    client_cm = confusion_matrix(labels, predictions, labels=list(range(num_classes)))
+
+                                    # Create a figure for the confusion matrix
+                                    client_title = f'Confusion Matrix - Client {client_id} - Round {server_round}'
+                                    if sample_info != "full_dataset":
+                                        client_title += f" ({sample_info})"
+
+                                    # Plot using the original visualization function
+                                    client_fig = plot_confusion_matrix(
+                                        y_true=np.array(labels),
+                                        y_pred=np.array(predictions),
+                                        class_names=class_names,
+                                        normalize=False,
+                                        title=client_title
+                                    )
+
+                                    # Log to wandb
+                                    self.wandb_logger.log_metrics(
+                                        {"confusion_matrix": wandb.Image(client_fig)},
+                                        prefix=f"client_{client_id}/eval",
+                                        step=server_round
+                                    )
+                                    plt.close(client_fig)
+                            except Exception as e:
+                                print(f"Error decoding predictions/labels from client {client_id}: {e}")
+
+                        # Log other scalar metrics (excluding the encoded data and metadata)
+                        try:
+                            metrics_to_log = {
+                                k: v for k, v in client_metrics.items()
+                                if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"]
+                                and isinstance(v, (int, float))
+                            }
+
+                            self.wandb_logger.log_metrics(
+                                metrics_to_log,
+                                prefix=f"client_{client_id}/eval",
+                                step=server_round
+                            )
+                        except Exception as e:
+                            print(f"Error logging metrics for client {client_id}: {e}")
+                    except Exception as e:
+                        print(f"Error processing evaluation result: {e}")
+
+            # Create a global confusion matrix if we have predictions and labels
+            if all_predictions and all_labels:
+                try:
+                    # Determine the number of classes
+                    num_classes = 2 if self.config.data.classification_mode == "CN_AD" else 3
+                    class_names = ["CN", "AD"] if num_classes == 2 else ["CN", "MCI", "AD"]
+
+                    print(f"Creating global confusion matrix with {len(all_predictions)} predictions")
+
+                    # Create the confusion matrix
+                    from sklearn.metrics import confusion_matrix
+                    global_cm = confusion_matrix(all_labels, all_predictions, labels=list(range(num_classes)))
+
+                    # Plot the global confusion matrix
+                    global_title = f'Global Confusion Matrix - Round {server_round}'
+                    global_fig = plot_confusion_matrix(
+                        y_true=np.array(all_labels),
+                        y_pred=np.array(all_predictions),
+                        class_names=class_names,
+                        normalize=False,
+                        title=global_title
                     )
 
-        # Aggregate metrics (let the parent class handle this)
-        aggregated_loss, aggregated_metrics = super().aggregate_evaluate(
-            server_round, results, failures
-        )
+                    # Log to wandb
+                    if self.wandb_logger:
+                        self.wandb_logger.log_metrics(
+                            {"global_confusion_matrix": wandb.Image(global_fig)},
+                            prefix="server",
+                            step=server_round
+                        )
 
-        # Log aggregated evaluation metrics
-        if self.wandb_logger:
+                        # Calculate global accuracy directly
+                        correct = sum(1 for p, l in zip(all_predictions, all_labels) if p == l)
+                        global_accuracy = 100.0 * correct / len(all_predictions)
+
+                        # Log the accuracy
+                        self.wandb_logger.log_metrics(
+                            {"global_accuracy": global_accuracy},
+                            prefix="server",
+                            step=server_round
+                        )
+
+                    plt.close(global_fig)
+                    print(f"Logged global confusion matrix with {len(all_predictions)} predictions")
+
+                except Exception as e:
+                    print(f"Error creating global confusion matrix: {e}")
+
+            # Aggregate metrics (let the parent class handle this)
+            aggregated_loss, aggregated_metrics = super().aggregate_evaluate(
+                server_round, results, failures
+            )
+
+            print(f"Aggregated loss: {aggregated_loss}, metrics keys: {aggregated_metrics.keys() if aggregated_metrics else 'None'}")
+
+            # Log aggregated evaluation metrics
+            if self.wandb_logger:
+                try:
+                    if aggregated_loss is not None:
+                        self.wandb_logger.log_metrics(
+                            {"val_aggregated_loss": aggregated_loss},
+                            prefix="server",
+                            step=server_round
+                        )
+                    if aggregated_metrics:
+                        # Filter out non-scalar and special keys
+                        filtered_metrics = {
+                            k: v for k, v in aggregated_metrics.items()
+                            if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"]
+                            and isinstance(v, (int, float))
+                        }
+
+                        if filtered_metrics:  # Only log if there are metrics left
+                            self.wandb_logger.log_metrics(
+                                filtered_metrics,
+                                prefix="server",
+                                step=server_round
+                            )
+                except Exception as e:
+                    print(f"Error logging aggregated metrics: {e}")
+
+            # Print server model's current loss and accuracy
             if aggregated_loss is not None:
-                self.wandb_logger.log_metrics(
-                    {"val_aggregated_loss": aggregated_loss},
-                    prefix="server",
-                    step=server_round
-                )
+                print(f"Server model evaluation loss after round {server_round}: {aggregated_loss:.4f}")
             if aggregated_metrics:
-                # Remove client_id from aggregated metrics
-                aggregated_metrics.pop("client_id", None)
-                self.wandb_logger.log_metrics(
-                    aggregated_metrics,
-                    prefix="server",
-                    step=server_round
-                )
+                print(f"Server model evaluation metrics after round {server_round}:")
+                for metric_name, metric_value in aggregated_metrics.items():
+                    if metric_name not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"] and isinstance(metric_value, (int, float)):
+                        print(f"  {metric_name}: {metric_value:.4f}")
 
-        # Print server model's current loss and accuracy
-        if aggregated_loss is not None:
-            print(f"Server model evaluation loss after round {server_round}: {aggregated_loss:.4f}")
-        if aggregated_metrics:
-            print(f"Server model evaluation metrics after round {server_round}:")
-            for metric_name, metric_value in aggregated_metrics.items():
-                print(f"  {metric_name}: {metric_value:.4f}")
+            # Save the best model checkpoint based on the tracked metric (e.g., validation accuracy)
+            if aggregated_metrics and self.metric_name in aggregated_metrics:
+                try:
+                    metric_value = aggregated_metrics[self.metric_name]
+                    if isinstance(metric_value, (int, float)):
+                        self._save_best_checkpoint(self.model.state_dict(), metric_value)
+                    else:
+                        print(f"Cannot save checkpoint: metric {self.metric_name} is not a number")
+                except Exception as e:
+                    print(f"Error saving best checkpoint: {e}")
 
-        # Save the best model checkpoint based on the tracked metric (e.g., validation accuracy)
-        if aggregated_metrics and self.metric_name in aggregated_metrics:
-            self._save_best_checkpoint(self.model.state_dict(), aggregated_metrics[self.metric_name])
+            return aggregated_loss, aggregated_metrics
 
-        return aggregated_loss, aggregated_metrics
+        except Exception as e:
+            import traceback
+            print(f"Error in aggregate_evaluate: {e}")
+            print(traceback.format_exc())
+            return None, {}
 
 
 # Define metric aggregation function
 def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
-    """Compute weighted average of metrics."""
-    filtered_metrics = [(num_examples, dict(m)) for num_examples, m in metrics if isinstance(m, (dict, Mapping)) and m]
-    if not filtered_metrics:
+    """Compute weighted average of metrics.
+
+    Only processes scalar metrics (int, float) and passes through string metrics.
+    JSON-encoded lists will be passed through for later decoding.
+    """
+    try:
+        if not metrics:
+            print("WARNING: weighted_average received empty metrics list")
+            return {}
+
+        print(f"Weighted average received {len(metrics)} metrics")
+
+        filtered_metrics = [(num_examples, dict(m)) for num_examples, m in metrics if isinstance(m, (dict, Mapping)) and m]
+        if not filtered_metrics:
+            print("WARNING: weighted_average filtered metrics list is empty after filtering")
+            return {}
+
+        # Get all metric names that are present in at least one client
+        all_metric_names = set()
+        for _, m in filtered_metrics:
+            all_metric_names.update(name for name in m.keys() if isinstance(name, str))
+
+        print(f"Metric names present: {all_metric_names}")
+
+        acc_metrics = {}
+        for name in all_metric_names:
+            # Get all clients that reported this metric
+            client_data = [(num_examples, m.get(name)) for num_examples, m in filtered_metrics if name in m]
+
+            # Skip empty data
+            if not client_data:
+                continue
+
+            # Sample value to determine type
+            sample_value = client_data[0][1]
+
+            # Handle scalar metrics (compute weighted average)
+            if all(isinstance(value, (int, float)) for _, value in client_data):
+                try:
+                    weighted_values = [float(value) * num_examples for num_examples, value in client_data]
+                    total_examples = sum(num_examples for num_examples, _ in client_data)
+                    if total_examples > 0:
+                        acc_metrics[name] = sum(weighted_values) / total_examples
+                except Exception as e:
+                    print(f"Error processing scalar metric '{name}': {e}")
+
+            # Pass through string metrics (like JSON-encoded lists)
+            elif name in ["predictions_json", "labels_json", "sample_info", "client_id"] and isinstance(sample_value, str):
+                # Use the first client's value (arbitrary choice)
+                acc_metrics[name] = sample_value
+                print(f"Passing through string metric '{name}' with length {len(sample_value)}")
+
+            # Other scalar values (like num_classes)
+            elif name == "num_classes" and isinstance(sample_value, (int, float)):
+                # Use the first client's value
+                acc_metrics[name] = sample_value
+
+            # Error for other types that shouldn't be here
+            else:
+                print(f"Skipping metric '{name}' with type {type(sample_value).__name__} - not supported for aggregation")
+
+        print(f"Aggregated metrics keys: {list(acc_metrics.keys())}")
+        return acc_metrics
+    except Exception as e:
+        import traceback
+        print(f"Error in weighted_average: {e}")
+        print(traceback.format_exc())
         return {}
-
-    # Get all metric names that are strings and present in at least one client
-    all_metric_names = set()
-    for _, m in filtered_metrics:
-        all_metric_names.update(name for name in m.keys() if isinstance(name, str))
-
-    acc_metrics = {}
-    for name in all_metric_names:
-        # Only aggregate if all clients that reported this metric have numeric values
-        client_data = [(num_examples, m.get(name)) for num_examples, m in filtered_metrics if name in m]
-        if all(isinstance(value, (int, float)) for num_examples, value in client_data):
-            weighted_values = [value * num_examples for num_examples, value in client_data]
-            total_examples = sum(num_examples for num_examples, value in client_data)
-            if total_examples > 0:
-                acc_metrics[name] = sum(weighted_values) / total_examples
-            elif total_examples == 0 and client_data:
-                pass
-
-    return acc_metrics
 
 
 def server_fn(context: Context):
@@ -294,56 +511,84 @@ def server_fn(context: Context):
     Returns:
         Server components for the FL application
     """
-    # Get server config file from app config
-    server_config_file = context.run_config.get("server-config-file")
-    if not server_config_file or not os.path.exists(server_config_file):
-        raise ValueError(f"Server config file not found: {server_config_file}")
+    try:
+        # Get server config file from app config
+        server_config_file = context.run_config.get("server-config-file")
+        if not server_config_file or not os.path.exists(server_config_file):
+            raise ValueError(f"Server config file not found: {server_config_file}")
 
-    # Load the standardized Config object
-    config = Config.from_yaml(server_config_file)
+        # Load the standardized Config object
+        config = Config.from_yaml(server_config_file)
 
-    # Create WandB logger with the Config object
-    wandb_logger = FLWandbLogger(config)
-    wandb_logger.init_wandb()
+        # Create WandB logger with the Config object
+        wandb_logger = FLWandbLogger(config)
+        wandb_logger.init_wandb()
 
-    # Initialize model using the Config object
-    model = load_model(config)  # Assuming load_model can accept the Config object
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+        # Initialize model using the Config object
+        model = load_model(config)  # Assuming load_model can accept the Config object
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        model.to(device)
 
-    # Convert initial model parameters to flwr.common.Parameters
-    ndarrays = get_params(model)
-    initial_parameters = ndarrays_to_parameters(ndarrays)
+        # Convert initial model parameters to flwr.common.Parameters
+        ndarrays = get_params(model)
+        initial_parameters = ndarrays_to_parameters(ndarrays)
 
-    # Get FL-specific parameters from config
-    fl_config = config.fl  # Access FLConfig
-    num_rounds = fl_config.num_rounds
-    fraction_fit = fl_config.fraction_fit
-    fraction_evaluate = fl_config.fraction_evaluate
-    min_fit_clients = fl_config.min_fit_clients
-    min_evaluate_clients = fl_config.min_evaluate_clients
-    min_available_clients = fl_config.min_available_clients
+        # Get FL-specific parameters from config
+        fl_config = config.fl  # Access FLConfig
+        num_rounds = fl_config.num_rounds
+        fraction_fit = fl_config.fraction_fit
+        fraction_evaluate = fl_config.fraction_evaluate
+        min_fit_clients = fl_config.min_fit_clients
+        min_evaluate_clients = fl_config.min_evaluate_clients
+        min_available_clients = fl_config.min_available_clients
 
-    # Create strategy
-    strategy = FedADNI(
-        wandb_logger=wandb_logger,
-        model=model,
-        config=config,
-        initial_parameters=initial_parameters,
-        fraction_fit=fraction_fit,
-        fraction_evaluate=fraction_evaluate,
-        min_fit_clients=min_fit_clients,
-        min_evaluate_clients=min_evaluate_clients,
-        min_available_clients=min_available_clients,
-        evaluate_metrics_aggregation_fn=weighted_average,
-        fit_metrics_aggregation_fn=weighted_average
-    )
+        # Use a try-except block to handle potential serialization issues
+        try:
+            # First try with the original weighted_average function
+            strategy = FedADNI(
+                wandb_logger=wandb_logger,
+                model=model,
+                config=config,
+                initial_parameters=initial_parameters,
+                fraction_fit=fraction_fit,
+                fraction_evaluate=fraction_evaluate,
+                min_fit_clients=min_fit_clients,
+                min_evaluate_clients=min_evaluate_clients,
+                min_available_clients=min_available_clients,
+                evaluate_metrics_aggregation_fn=weighted_average,
+                fit_metrics_aggregation_fn=weighted_average
+            )
+        except Exception as e:
+            print(f"Error creating strategy with original weighted_average: {e}")
+            print("Falling back to safe_weighted_average...")
 
-    # Create server configuration
-    server_config = ServerConfig(num_rounds=num_rounds)
+            # If that fails, try with our safe implementation
+            strategy = FedADNI(
+                wandb_logger=wandb_logger,
+                model=model,
+                config=config,
+                initial_parameters=initial_parameters,
+                fraction_fit=fraction_fit,
+                fraction_evaluate=fraction_evaluate,
+                min_fit_clients=min_fit_clients,
+                min_evaluate_clients=min_evaluate_clients,
+                min_available_clients=min_available_clients,
+                evaluate_metrics_aggregation_fn=safe_weighted_average,
+                fit_metrics_aggregation_fn=safe_weighted_average
+            )
 
-    # Return server components
-    return ServerAppComponents(strategy=strategy, config=server_config)
+        # Create server configuration
+        server_config = ServerConfig(num_rounds=num_rounds)
+
+        # Return server components
+        return ServerAppComponents(strategy=strategy, config=server_config)
+
+    except Exception as e:
+        import traceback
+        print(f"Error in server_fn: {e}")
+        print(traceback.format_exc())
+        # Still need to return a ServerAppComponents object
+        raise
 
 
 # Create the server app

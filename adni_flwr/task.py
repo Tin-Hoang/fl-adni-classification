@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import yaml
 import numpy as np
+from sklearn.metrics import confusion_matrix
 
 from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
@@ -201,6 +202,125 @@ def test(
     avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
 
     return avg_loss, avg_accuracy
+
+
+def test_with_confusion_matrix(
+    model: nn.Module,
+    test_loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    mixed_precision: bool = False,
+    num_classes: int = 3
+) -> Tuple[float, float, np.ndarray]:
+    """Evaluate the model on the test set and generate confusion matrix.
+
+    Args:
+        model: The model to evaluate
+        test_loader: DataLoader for test data
+        criterion: Loss function
+        device: Device to use for evaluation
+        mixed_precision: Whether to use mixed precision
+        num_classes: Number of classes for the confusion matrix
+
+    Returns:
+        Tuple of (average loss, average accuracy, confusion matrix)
+    """
+    model.to(device)
+    model.eval()
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    # Store all predictions and true labels
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in test_loader:
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
+
+            if mixed_precision:
+                with torch.cuda.amp.autocast():
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+            else:
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+            total_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total_samples += labels.size(0)
+            total_correct += (predicted == labels).sum().item()
+
+            # Collect predictions and labels for confusion matrix
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(test_loader)
+    avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
+
+    # Calculate confusion matrix
+    cm = confusion_matrix(all_labels, all_preds, labels=list(range(num_classes)))
+
+    return avg_loss, avg_accuracy, cm
+
+
+def test_with_predictions(
+    model: nn.Module,
+    test_loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    mixed_precision: bool = False
+) -> Tuple[float, float, List[int], List[int]]:
+    """Evaluate the model on the test set and return predictions and true labels.
+
+    Args:
+        model: The model to evaluate
+        test_loader: DataLoader for test data
+        criterion: Loss function
+        device: Device to use for evaluation
+        mixed_precision: Whether to use mixed precision
+
+    Returns:
+        Tuple of (average loss, average accuracy, all predictions, all true labels)
+    """
+    model.to(device)
+    model.eval()
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    # Store all predictions and true labels
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in test_loader:
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
+
+            if mixed_precision:
+                with torch.cuda.amp.autocast():
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+            else:
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+            total_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total_samples += labels.size(0)
+            total_correct += (predicted == labels).sum().item()
+
+            # Collect predictions and labels
+            all_preds.extend(predicted.cpu().numpy().tolist())
+            all_labels.extend(labels.cpu().numpy().tolist())
+
+    avg_loss = total_loss / len(test_loader)
+    avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
+
+    return avg_loss, avg_accuracy, all_preds, all_labels
 
 
 def load_data(
