@@ -26,10 +26,15 @@ training:
   learning_rate: 0.0001
   weight_decay: 0.0001
   seed: 42
+  num_workers: 4
+  num_epochs: 2
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/fl"
+  checkpoint:
+    save_frequency: 10
 
 # Federated Learning specific settings
 fl:
-  num_rounds: 300              # Number of FL rounds to perform
+  num_rounds: 200              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
   min_fit_clients: 2           # Minimum number of clients for training
@@ -37,7 +42,6 @@ fl:
   min_available_clients: 2     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
   strategy: "fedavg"           # FL aggregation strategy (options: "fedavg", "fedprox")
-  save_checkpoints: true       # Whether to save model checkpoints
   checkpoint_dir: "/scratch/th01167/fl-adni/checkpoints/fl"
 
 # Wandb logging configuration

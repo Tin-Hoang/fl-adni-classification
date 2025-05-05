@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union, Dict, Any
 
 import yaml
+from .fl_config import FLConfig
 
 
 @dataclass
@@ -88,6 +89,7 @@ class Config:
     data: DataConfig
     model: ModelConfig
     training: TrainingConfig
+    fl: FLConfig
     wandb: WandbConfig
 
     @classmethod
@@ -104,12 +106,15 @@ class Config:
         # Create training config with the checkpoint config
         training_config = TrainingConfig(**training_dict, checkpoint=checkpoint_config)
 
+        fl_config = FLConfig(**config_dict.get("fl", {}))
+
         wandb_config = WandbConfig(**config_dict.get("wandb", {}))
 
         config = cls(
             data=data_config,
             model=model_config,
             training=training_config,
+            fl=fl_config,
             wandb=wandb_config,
         )
 
@@ -152,6 +157,12 @@ class Config:
         elif os.path.basename(self.training.output_dir) != self.wandb.run_name:
             # If output directory is specified but doesn't match run_name, append run_name
             self.training.output_dir = os.path.join(self.training.output_dir, f"{self.wandb.run_name}")
+
+        if self.fl.checkpoint_dir == "checkpoints" or not self.fl.checkpoint_dir:
+            self.fl.checkpoint_dir = os.path.join("checkpoints", f"{self.wandb.run_name}")
+        elif os.path.basename(self.fl.checkpoint_dir) != self.wandb.run_name:
+            # If checkpoint directory is specified but doesn't match run_name, append run_name
+            self.fl.checkpoint_dir = os.path.join(self.fl.checkpoint_dir, f"{self.wandb.run_name}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Config object to a dictionary."""
@@ -203,6 +214,18 @@ class Config:
                     "save_regular": self.training.checkpoint.save_regular,
                     "save_frequency": self.training.checkpoint.save_frequency,
                 },
+            },
+            "fl": {
+                "num_rounds": self.fl.num_rounds,
+                "strategy": self.fl.strategy,
+                "fraction_fit": self.fl.fraction_fit,
+                "fraction_evaluate": self.fl.fraction_evaluate,
+                "min_fit_clients": self.fl.min_fit_clients,
+                "min_evaluate_clients": self.fl.min_evaluate_clients,
+                "min_available_clients": self.fl.min_available_clients,
+                "local_epochs": self.fl.local_epochs,
+                "client_config_files": self.fl.client_config_files,
+                "checkpoint_dir": self.fl.checkpoint_dir,
             },
             "wandb": {
                 "use_wandb": self.wandb.use_wandb,

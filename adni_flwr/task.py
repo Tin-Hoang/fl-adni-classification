@@ -16,7 +16,7 @@ from adni_classification.config.config import Config
 from adni_classification.utils.torch_utils import set_seed
 
 
-def load_model(config: Dict[str, Any]) -> nn.Module:
+def load_model(config: Config) -> nn.Module:
     """Load a model based on the configuration.
 
     Args:
@@ -26,32 +26,32 @@ def load_model(config: Dict[str, Any]) -> nn.Module:
         The instantiated model
     """
     model_kwargs = {
-        "pretrained_checkpoint": config["model"].get("pretrained_checkpoint"),
+        "pretrained_checkpoint": config.model.pretrained_checkpoint,
     }
 
     # Set num_classes based on classification_mode if not explicitly set in config
-    if config["data"]["classification_mode"] == "CN_AD":
+    if config.data.classification_mode == "CN_AD":
         model_kwargs["num_classes"] = 2
     else:
-        model_kwargs["num_classes"] = config["model"].get("num_classes", 3)
+        model_kwargs["num_classes"] = config.model.num_classes
 
     # Add model-specific parameters
-    if config["model"]["name"] == "resnet3d" and config["model"].get("model_depth") is not None:
-        model_kwargs["model_depth"] = config["model"]["model_depth"]
-    elif config["model"]["name"] == "densenet3d":
-        if config["model"].get("growth_rate") is not None:
-            model_kwargs["growth_rate"] = config["model"]["growth_rate"]
-        if config["model"].get("block_config") is not None:
-            model_kwargs["block_config"] = config["model"]["block_config"]
+    if config.model.name == "resnet3d" and config.model.model_depth is not None:
+        model_kwargs["model_depth"] = config.model.model_depth
+    elif config.model.name == "densenet3d":
+        if config.model.growth_rate is not None:
+            model_kwargs["growth_rate"] = config.model.growth_rate
+        if config.model.block_config is not None:
+            model_kwargs["block_config"] = config.model.block_config
 
     # Pass data configuration for models that need it (like SecureFedCNN)
-    if config["model"]["name"] == "securefed_cnn":
+    if config.model.name == "securefed_cnn":
         model_kwargs["data"] = {
-            "resize_size": config["data"]["resize_size"],
-            "classification_mode": config["data"]["classification_mode"]
+            "resize_size": config.data.resize_size,
+            "classification_mode": config.data.classification_mode
         }
 
-    model = ModelFactory.create_model(config["model"]["name"], **model_kwargs)
+    model = ModelFactory.create_model(config.model.name, **model_kwargs)
     return model
 
 
@@ -204,7 +204,7 @@ def test(
 
 
 def load_data(
-    config: Dict[str, Any],
+    config: Config,
     batch_size: int = None
 ) -> Tuple[DataLoader, DataLoader]:
     """Load ADNI dataset based on configuration.
@@ -217,47 +217,47 @@ def load_data(
         Tuple of (train_loader, val_loader)
     """
     # Set the seed for reproducibility
-    set_seed(config["training"].get("seed", 42))
+    set_seed(config.training.seed)
 
     # Use provided batch size or the one from config
     if batch_size is None:
-        batch_size = config["training"]["batch_size"]
+        batch_size = config.training.batch_size
 
     # Create transforms from config
     train_transform = get_transforms_from_config(
-        config=config["data"],
+        config=config.data,
         mode="train"
     )
 
     val_transform = get_transforms_from_config(
-        config=config["data"],
+        config=config.data,
         mode="val"
     )
 
     # Get dataset type from config (default to normal for FL)
-    dataset_type = config["data"].get("dataset_type", "normal")
+    dataset_type = config.data.dataset_type
 
     # Create datasets
     train_dataset = create_adni_dataset(
         dataset_type=dataset_type,
-        csv_path=config["data"]["train_csv_path"],
-        img_dir=config["data"]["img_dir"],
+        csv_path=config.data.train_csv_path,
+        img_dir=config.data.img_dir,
         transform=train_transform,
-        cache_rate=config["data"].get("cache_rate", 0.0),
-        num_workers=config["data"].get("cache_num_workers", 1),
-        cache_dir=config["data"].get("cache_dir", None),
-        classification_mode=config["data"]["classification_mode"],
+        cache_rate=config.data.cache_rate,
+        num_workers=config.data.cache_num_workers,
+        cache_dir=config.data.cache_dir,
+        classification_mode=config.data.classification_mode,
     )
 
     val_dataset = create_adni_dataset(
         dataset_type=dataset_type,
-        csv_path=config["data"]["val_csv_path"],
-        img_dir=config["data"]["img_dir"],
+        csv_path=config.data.val_csv_path,
+        img_dir=config.data.img_dir,
         transform=val_transform,
-        cache_rate=config["data"].get("cache_rate", 0.0),
-        num_workers=config["data"].get("cache_num_workers", 1),
-        cache_dir=config["data"].get("cache_dir", None),
-        classification_mode=config["data"]["classification_mode"],
+        cache_rate=config.data.cache_rate,
+        num_workers=config.data.cache_num_workers,
+        cache_dir=config.data.cache_dir,
+        classification_mode=config.data.classification_mode,
     )
 
     # Create data loaders with optimized multiprocessing settings
@@ -265,10 +265,10 @@ def load_data(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=config["training"].get("num_workers", 2),
+        num_workers=config.training.num_workers,
         pin_memory=True,
-        prefetch_factor=2 if config["training"].get("num_workers", 0) > 0 else None,
-        multiprocessing_context=config["data"].get("multiprocessing_context", "fork"),
+        prefetch_factor=2 if config.training.num_workers > 0 else None,
+        multiprocessing_context=config.data.multiprocessing_context,
         drop_last=True
     )
 
@@ -276,16 +276,16 @@ def load_data(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=config["training"].get("num_workers", 2),
+        num_workers=config.training.num_workers,
         pin_memory=True,
-        prefetch_factor=2 if config["training"].get("num_workers", 0) > 0 else None,
-        multiprocessing_context=config["data"].get("multiprocessing_context", "fork"),
+        prefetch_factor=2 if config.training.num_workers > 0 else None,
+        multiprocessing_context=config.data.multiprocessing_context,
     )
 
     return train_loader, val_loader
 
 
-def load_config_from_yaml(config_path: str) -> Dict[str, Any]:
+def load_config_from_yaml(config_path: str) -> Config:
     """Load configuration from YAML file.
 
     Args:
@@ -294,13 +294,11 @@ def load_config_from_yaml(config_path: str) -> Dict[str, Any]:
     Returns:
         Configuration dictionary
     """
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
+    return Config.from_yaml(config_path)
 
 
 def create_criterion(
-    config: Dict[str, Any],
+    config: Config,
     train_dataset: Optional[torch.utils.data.Dataset] = None,
     device: torch.device = torch.device("cpu")
 ) -> nn.Module:
@@ -314,7 +312,7 @@ def create_criterion(
     Returns:
         Loss criterion
     """
-    if config["training"].get("use_class_weights", False) and train_dataset is not None:
+    if config.training.use_class_weights and train_dataset is not None:
         # Get labels from the training dataset
         labels = [sample["label"] for sample in train_dataset.base.data_list]
 
@@ -326,12 +324,12 @@ def create_criterion(
             class_counts[label] += 1
 
         # Determine number of classes
-        num_classes = config["model"].get("num_classes", 3)
-        if config["data"]["classification_mode"] == "CN_AD":
+        num_classes = config.model.num_classes
+        if config.data.classification_mode == "CN_AD":
             num_classes = 2
 
         # Calculate weights based on weight_type
-        weight_type = config["training"].get("class_weight_type", "inverse")
+        weight_type = config.training.class_weight_type
 
         sorted_counts = [class_counts.get(i, 0) for i in range(num_classes)]
         total_samples = sum(sorted_counts)
@@ -344,12 +342,11 @@ def create_criterion(
             beta = 0.9999
             effective_nums = [1.0 - np.power(beta, count) for count in sorted_counts]
             class_weights = [(1.0 - beta) / num if num > 0 else 1.0 for num in effective_nums]
-        elif weight_type == "manual" and config["training"].get("manual_class_weights") is not None:
-            class_weights = config["training"]["manual_class_weights"]
+        elif weight_type == "manual" and config.training.manual_class_weights is not None:
+            class_weights = config.training.manual_class_weights
         else:
             class_weights = [1.0] * num_classes
 
-        print(f"Class counts: {sorted_counts}")
         print(f"Class weights ({weight_type}): {class_weights}")
 
         weights = torch.FloatTensor(class_weights).to(device)

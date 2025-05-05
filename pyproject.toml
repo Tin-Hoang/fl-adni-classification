@@ -113,4 +113,3 @@ options.num-supernodes = 2  # For 2 clients
 options.num-supernodes = 2
 options.backend.client-resources.num-cpus = 4
 options.backend.client-resources.num-gpus = 0.5  # Split GPU resources for clients
-options.backend.client-resources.object-store-memory = 30720  # 30GB

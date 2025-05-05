@@ -30,6 +30,16 @@ training:
   use_class_weights: true
   class_weight_type: "inverse"
   gradient_accumulation_steps: 1
+  num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
+
+# Wandb logging configuration
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["federated-learning", "adni", "securefed-cnn"]
+  notes: "Federated Learning for ADNI Classification"
+  run_name: "fl-adni-securefed-cnn"
 
 # FL-specific settings
 fl:

@@ -2,9 +2,10 @@
 
 import os
 import torch
-from flwr.common import Context
+from flwr.common import Context, FitRes, EvaluateRes, Status, Code
 from flwr.client import NumPyClient, ClientApp
-
+from typing import Dict, Tuple, List
+from adni_classification.config.config import Config
 from adni_flwr.task import (
     load_config_from_yaml,
     load_model,
@@ -20,16 +21,16 @@ from adni_flwr.task import (
 class ADNIClient(NumPyClient):
     """Federated Learning Client for ADNI classification."""
 
-    def __init__(self, config_path, device):
+    def __init__(self, config: Config, device: torch.device):
         """Initialize the ADNI client.
 
         Args:
-            config_path: Path to the client configuration file
+            config: Config object containing client configuration
             device: Device to use for computation
         """
-        self.config = load_config_from_yaml(config_path)
+        self.config = config
         self.device = device
-        self.client_id = self.config.get("fl", {}).get("client_id", "unknown")
+        self.client_id = self.config.fl.client_id if hasattr(self.config.fl, 'client_id') else 'unknown'
 
         # Load the model
         self.model = load_model(self.config)
@@ -38,13 +39,13 @@ class ADNIClient(NumPyClient):
         self.train_loader, self.val_loader = load_data(self.config)
 
         # Determine the number of local epochs for this client
-        self.local_epochs = self.config.get("fl", {}).get("local_epochs", 1)
+        self.local_epochs = self.config.fl.local_epochs
 
         # Create optimizer
         self.optimizer = torch.optim.Adam(
             self.model.parameters(),
-            lr=self.config["training"]["learning_rate"],
-            weight_decay=self.config["training"].get("weight_decay", 0.0001),
+            lr=self.config.training.learning_rate,
+            weight_decay=self.config.training.weight_decay,
         )
 
         # Get the train dataset from the loader to create the criterion
@@ -58,14 +59,14 @@ class ADNIClient(NumPyClient):
         )
 
         # Get other training parameters
-        self.mixed_precision = self.config["training"].get("mixed_precision", False)
-        self.gradient_accumulation_steps = self.config["training"].get("gradient_accumulation_steps", 1)
+        self.mixed_precision = self.config.training.mixed_precision
+        self.gradient_accumulation_steps = self.config.training.gradient_accumulation_steps
 
-        print(f"Initialized ADNI client with config: {config_path}")
+        print(f"Initialized ADNI client with config: {self.config.wandb.run_name if hasattr(self.config, 'wandb') and hasattr(self.config.wandb, 'run_name') else 'unknown'}")
         print(f"Train dataset size: {len(self.train_loader.dataset)}")
         print(f"Validation dataset size: {len(self.val_loader.dataset)}")
 
-    def fit(self, parameters, config):
+    def fit(self, parameters, config) -> FitRes:
         """Train the model on the local dataset.
 
         Args:
@@ -89,8 +90,8 @@ class ADNIClient(NumPyClient):
             optimizer=self.optimizer,
             device=self.device,
             epoch_num=local_epochs,
-            mixed_precision=self.mixed_precision,
-            gradient_accumulation_steps=self.gradient_accumulation_steps
+            mixed_precision=self.config.training.mixed_precision,
+            gradient_accumulation_steps=self.config.training.gradient_accumulation_steps
         )
 
         # Log training metrics
@@ -103,7 +104,7 @@ class ADNIClient(NumPyClient):
             "client_id": self.client_id,
         }
 
-    def evaluate(self, parameters, config):
+    def evaluate(self, parameters, config) -> EvaluateRes:
         """Evaluate the model on the local validation dataset.
 
         Args:
@@ -122,7 +123,7 @@ class ADNIClient(NumPyClient):
             test_loader=self.val_loader,
             criterion=self.criterion,
             device=self.device,
-            mixed_precision=self.mixed_precision
+            mixed_precision=self.config.training.mixed_precision
         )
 
         # Log evaluation metrics
@@ -145,6 +146,9 @@ def client_fn(context: Context):
     Returns:
         An instance of NumPyClient
     """
+    # Print the context
+    print(f"Context: {context}")
+
     # Determine which GPU to use if available
     gpu_idx = context.node_config.get("gpu-id", 0)
     if torch.cuda.is_available():
@@ -166,11 +170,8 @@ def client_fn(context: Context):
 
     # Get the specific config file for this client
     config_path = client_config_files[partition_id]
-
-    print(f"Initializing client {partition_id} with config: {config_path} on device: {device}")
-
-    # Create and return the client
-    client = ADNIClient(config_path=config_path, device=device)
+    print(f'Initializing client {partition_id} with config: {config_path} on device: {device}')
+    client = ADNIClient(config=Config.from_yaml(config_path), device=device)
     return client.to_client()
 
 
