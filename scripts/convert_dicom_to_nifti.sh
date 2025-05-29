@@ -30,27 +30,18 @@ if [ $DEBUG_MODE -eq 1 ]; then
     : > "$DEBUG_LOG"
 fi
 
-# Function to map series descriptions to ADNI abbreviations
-map_series_description() {
-    local desc="$1"
-    case "$desc" in
-        "Accelerated Sagittal MPRAGE"|"Sagittal MPRAGE"|"MPRAGE"|"MP-RAGE")
-            echo "MPRAGE"
-            ;;
-        "Accelerated Sag IR-FSPGR"|"Sag IR-FSPGR"|"IR-FSPGR")
-            echo "IR-FSPGR"
-            ;;
-        "FLAIR")
-            echo "FLAIR"
-            ;;
-        "T2"|"T2-weighted")
-            echo "T2"
-            ;;
-        *)
-            # Use the description as-is if no mapping exists
-            echo "$desc" | sed 's/[^a-zA-Z0-9_-]/_/g' # Replace spaces/special chars with underscores
-            ;;
-    esac
+# Function to infer series description from folder path if DICOM extraction fails
+infer_series_from_path() {
+    local path="$1"
+    IFS='/' read -ra PATH_PARTS <<< "$path"
+    # Look for a folder name that might indicate the series (e.g., MP-RAGE_REPEAT)
+    for part in "${PATH_PARTS[@]}"; do
+        if [[ "$part" =~ ^(MP-RAGE|MPRAGE|FLAIR|T2|IR-FSPGR|Accelerated|B1-Calibration) ]]; then
+            echo "$part"
+            return
+        fi
+    done
+    echo "Unknown"
 }
 
 # Count total DICOM images in input root (before conversion)
@@ -68,12 +59,37 @@ for DICOM_DIR in "${DICOM_DIRS[@]}"; do
     CURRENT_DIR=$((CURRENT_DIR + 1))
     # Check if directory contains DICOM files (by extension or by file magic)
     if find "$DICOM_DIR" -maxdepth 1 -type f \( -iname "*.dcm" -o -iname "*.ima" -o -empty \) | grep -q .; then
-        # Compute relative path and output directory
-        REL_PATH="${DICOM_DIR#$INPUT_ROOT/}"
+        # Compute relative path starting from the subject ID level
+        # Expected structure: data/ADNI/<study_info>/ADNI/<subject_id>/<scan_info>/<date_time>/<image_id>
+        FULL_REL_PATH="${DICOM_DIR#$INPUT_ROOT/}"
+        IFS='/' read -ra PATH_PARTS <<< "$FULL_REL_PATH"
+        # Find the index of the second "ADNI" to start from subject ID
+        ADNI_COUNT=0
+        SUBJECT_INDEX=-1
+        for i in "${!PATH_PARTS[@]}"; do
+            if [ "${PATH_PARTS[$i]}" = "ADNI" ]; then
+                ADNI_COUNT=$((ADNI_COUNT + 1))
+                if [ $ADNI_COUNT -eq 2 ]; then
+                    SUBJECT_INDEX=$((i + 1))
+                    break
+                fi
+            fi
+        done
+
+        if [ $SUBJECT_INDEX -eq -1 ] || [ $SUBJECT_INDEX -ge ${#PATH_PARTS[@]} ]; then
+            echo "Error: Could not locate subject ID in path: $DICOM_DIR" >> "$LOG_FILE"
+            FAILED_DIRS=$((FAILED_DIRS + 1))
+            continue
+        fi
+
+        # Reconstruct REL_PATH starting from subject ID
+        REL_PATH=$(IFS='/'; echo "${PATH_PARTS[*]:$SUBJECT_INDEX}")
+
+        # Compute output directory
         OUT_DIR="$OUTPUT_ROOT/$REL_PATH"
 
         # Check if output directory already contains NIfTI files
-        if find "$OUT_DIR" -type f \( -iname "*.nii" -o -iname "*.nii.gz" \) | grep -q .; then
+        if [ -d "$OUT_DIR" ] && find "$OUT_DIR" -type f \( -iname "*.nii" -o -iname "*.nii.gz" \) 2>/dev/null | grep -q .; then
             echo "Skipping $CURRENT_DIR/$TOTAL_DIRS: $DICOM_DIR (NIfTI files already exist in $OUT_DIR)"
             SKIPPED_DIRS=$((SKIPPED_DIRS + 1))
             continue
@@ -83,54 +99,17 @@ for DICOM_DIR in "${DICOM_DIRS[@]}"; do
         mkdir -p "$OUT_DIR"
         echo "Converting: $DICOM_DIR -> $OUT_DIR"
 
-        # Extract subject ID from folder path (second subfolder after ADNI)
-        IFS='/' read -ra PATH_PARTS <<< "$REL_PATH"
-        if [ ${#PATH_PARTS[@]} -lt 2 ]; then
-            echo "Error: Could not extract subject ID from path: $DICOM_DIR" >> "$LOG_FILE"
-            FAILED_DIRS=$((FAILED_DIRS + 1))
-            continue
-        fi
-        SUBJECT_ID="${PATH_PARTS[1]}" # e.g., 052_S_1250
-
-        # Extract image ID from last subfolder
-        IMAGE_ID="${PATH_PARTS[-1]}" # e.g., I41844
+        # # Extract image ID from last subfolder
+        IMAGE_ID="${PATH_PARTS[-1]}" # e.g., I41838
         if [[ ! "$IMAGE_ID" =~ ^I[0-9]+$ ]]; then
             echo "Error: Invalid image ID format in path: $IMAGE_ID" >> "$LOG_FILE"
             FAILED_DIRS=$((FAILED_DIRS + 1))
             continue
         fi
 
-        # Debug mode: Log DICOM tags
-        if [ $DEBUG_MODE -eq 1 ]; then
-            echo "Debugging DICOM tags for: $DICOM_DIR" >> "$DEBUG_LOG"
-            dcm2niix -v y -o "/tmp" -f "debug_%p_%c_%i_%u_%n_%s_%d_%m" "$DICOM_DIR" >> "$DEBUG_LOG" 2>&1
-        fi
-
-        # Get DICOM Patient Name to verify subject ID
-        PATIENT_NAME=$(dcm2niix -v y -o "/tmp" "$DICOM_DIR" | grep "Patient Name" | awk -F': ' '{print $2}' | tr -d ' ')
-        if [ -z "$PATIENT_NAME" ]; then
-            echo "Warning: Could not extract Patient Name from DICOM: $DICOM_DIR" >> "$LOG_FILE"
-        elif [ "$PATIENT_NAME" != "$SUBJECT_ID" ]; then
-            echo "Warning: Subject ID mismatch in $DICOM_DIR: folder ($SUBJECT_ID) vs DICOM ($PATIENT_NAME)" >> "$LOG_FILE"
-        fi
-
-        # Get series description and map it
-        SERIES_DESC=$(dcm2niix -v y -o "/tmp" "$DICOM_DIR" | grep "Series Description" | awk -F': ' '{print $2}' | tr -d ' ')
-        if [ -z "$SERIES_DESC" ]; then
-            SERIES_DESC="Unknown"
-        fi
-        MAPPED_SERIES_DESC=$(map_series_description "$SERIES_DESC")
-
-        # Get modality for logging (optional, for verification)
-        MODALITY=$(dcm2niix -v y -o "/tmp" "$DICOM_DIR" | grep "Modality" | awk -F': ' '{print $2}' | tr -d ' ')
-        if [ -z "$MODALITY" ]; then
-            echo "Warning: Could not extract Modality from DICOM: $DICOM_DIR" >> "$LOG_FILE"
-            MODALITY="Unknown"
-        fi
-
         # Run dcm2niix with ADNI naming convention
         # Use %m for modality, %t for timestamp, %s for series number
-        if dcm2niix -z y -b y -f "ADNI_${SUBJECT_ID}_%m_${MAPPED_SERIES_DESC}_Br_%t_S%s_${IMAGE_ID}" -o "$OUT_DIR" "$DICOM_DIR" 2>> "$LOG_FILE"; then
+        if dcm2niix -z y -b y -f "ADNI_%i_%d_%t_${IMAGE_ID}" -o "$OUT_DIR" "$DICOM_DIR" 2>> "$LOG_FILE"; then
             echo "Success: Converted $DICOM_DIR"
         else
             echo "Error: Failed to convert $DICOM_DIR (see $LOG_FILE for details)"
