@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Script to split data into train and validation sets for Federated Learning.
 
-This script takes a CSV file containing data from multiple sites and splits it into train and validation datasets
-for use in a Federated Learning setup. It distributes the sites among a specified number of clients,
-then splits each client's data into train and validation sets based on a given ratio.
+This script takes a CSV file containing data from multiple sites and splits it into datasets
+for use in a Federated Learning setup. It distributes the sites among a specified number of clients.
+
+The splitting can be either two-way (train, validation) or three-way (train, validation, test)
+depending on the arguments provided.
 The main functionality is encapsulated in the `FederatedDataSplitter` class.
 
 Command-line Arguments:
@@ -14,12 +16,27 @@ Command-line Arguments:
                          Defaults to 2.
     --site-col (str): Column name for site identification.
                       Defaults to "SITE".
-    --train-ratio (float): Ratio for the train/validation split (e.g., 0.8 for 80% train).
+    --train-ratio (float): Ratio for the train set.
                            Must be between 0 and 1. Defaults to 0.8.
+    --val-ratio (float): Ratio for the validation set.
+                         If provided along with --test-ratio, a three-way split is performed.
+                         Defaults to None (two-way split).
+    --test-ratio (float): Ratio for the test set.
+                          If provided along with --val-ratio, a three-way split is performed.
+                          Defaults to None (two-way split).
     --seed (int): Random seed for reproducibility of shuffling and splitting.
                   Defaults to 42.
     --log-level (str): Set the logging level.
                        Choices: DEBUG, INFO, WARNING, ERROR. Defaults to INFO.
+
+Use Cases:
+    1. Two-way split (train, validation): Provide only --train-ratio. The remaining data will be the validation set (ratio 1.0 - train-ratio).
+       Example: python script_name.py data.csv --train-ratio 0.8
+
+    2. Three-way split (train, validation, test): Provide --train-ratio, --val-ratio, and --test-ratio.
+       The sum of the three ratios must be equal to 1.0.
+       Example: python script_name.py data.csv --train-ratio 0.6 --val-ratio 0.2 --test-ratio 0.2
+
 """
 
 import argparse
@@ -83,7 +100,9 @@ class FederatedDataSplitter:
         num_clients: int,
         site_col: str = "SITE",
         train_ratio: float = 0.8,
-        seed: int = 42
+        seed: int = 42,
+        val_ratio: float | None = None,
+        test_ratio: float | None = None
     ):
         """Initialize with input parameters.
 
@@ -92,8 +111,10 @@ class FederatedDataSplitter:
             output_dir: Directory to store output CSV files
             num_clients: Number of federated learning clients
             site_col: Column name for site identification
-            train_ratio: Ratio for train/validation split
+            train_ratio: Ratio for train set (used in both 2-way and 3-way splits)
             seed: Random seed for reproducibility
+            val_ratio: Ratio for validation set (for 3-way split)
+            test_ratio: Ratio for test set (for 3-way split)
         """
         self.csv_path = csv_path
         self.output_dir = Path(output_dir)
@@ -101,6 +122,8 @@ class FederatedDataSplitter:
         self.site_col = site_col
         self.train_ratio = train_ratio
         self.seed = seed
+        self.val_ratio = val_ratio
+        self.test_ratio = test_ratio
         self.df = None
 
         # Extract the base name from the input CSV file (without extension)
@@ -167,6 +190,7 @@ class FederatedDataSplitter:
         # Initialize DataFrames to collect all train and val data
         all_train_df = pd.DataFrame()
         all_val_df = pd.DataFrame()
+        all_test_df = pd.DataFrame() # Initialize for combined test data
 
         for client_id, sites in client_sites.items():
             # Get data for current client
@@ -177,24 +201,53 @@ class FederatedDataSplitter:
             client_df = client_df.sample(frac=1, random_state=self.seed)
 
             # Split into train and validation
-            split_idx = int(len(client_df) * self.train_ratio)
-            train_df = client_df.iloc[:split_idx]
-            val_df = client_df.iloc[split_idx:]
+            if self.val_ratio is not None and self.test_ratio is not None:
+                # Three-way split
+                train_end_idx = int(len(client_df) * self.train_ratio)
+                val_end_idx = train_end_idx + int(len(client_df) * self.val_ratio)
 
-            # Collect data for combined datasets
-            all_train_df = pd.concat([all_train_df, train_df])
-            all_val_df = pd.concat([all_val_df, val_df])
+                train_df = client_df.iloc[:train_end_idx]
+                val_df = client_df.iloc[train_end_idx:val_end_idx]
+                test_df = client_df.iloc[val_end_idx:]
 
-            logger.info(f"Client {client_id}: {len(train_df)} train, {len(val_df)} validation records")
+                # Collect data for combined datasets
+                all_train_df = pd.concat([all_train_df, train_df])
+                all_val_df = pd.concat([all_val_df, val_df])
+                all_test_df = pd.concat([all_test_df, test_df])
 
-            # Save to CSV with original filename prefix and record count
-            train_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_train_{len(train_df)}images.csv"
-            val_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_val_{len(val_df)}images.csv"
+                logger.info(f"Client {client_id}: {len(train_df)} train, {len(val_df)} validation, {len(test_df)} test records")
 
-            train_df.to_csv(train_path, index=False)
-            val_df.to_csv(val_path, index=False)
+                # Save to CSV with original filename prefix and record count
+                train_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_train_{len(train_df)}images.csv"
+                val_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_val_{len(val_df)}images.csv"
+                test_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_test_{len(test_df)}images.csv"
 
-            logger.info(f"Saved client {client_id} data to {train_path} and {val_path}")
+                train_df.to_csv(train_path, index=False)
+                val_df.to_csv(val_path, index=False)
+                test_df.to_csv(test_path, index=False)
+
+                logger.info(f"Saved client {client_id} data to {train_path}, {val_path}, and {test_path}")
+
+            else:
+                # Two-way split (train/validation)
+                split_idx = int(len(client_df) * self.train_ratio)
+                train_df = client_df.iloc[:split_idx]
+                val_df = client_df.iloc[split_idx:]
+
+                # Collect data for combined datasets
+                all_train_df = pd.concat([all_train_df, train_df])
+                all_val_df = pd.concat([all_val_df, val_df])
+
+                logger.info(f"Client {client_id}: {len(train_df)} train, {len(val_df)} validation records")
+
+                # Save to CSV with original filename prefix and record count
+                train_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_train_{len(train_df)}images.csv"
+                val_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_val_{len(val_df)}images.csv"
+
+                train_df.to_csv(train_path, index=False)
+                val_df.to_csv(val_path, index=False)
+
+                logger.info(f"Saved client {client_id} data to {train_path} and {val_path}")
 
         # Save combined datasets with original filename prefix
         all_train_path = self.output_dir / f"{self.csv_basename}_client_all_train_{len(all_train_df)}images.csv"
@@ -205,6 +258,11 @@ class FederatedDataSplitter:
 
         logger.info(f"Saved combined data: {len(all_train_df)} train, {len(all_val_df)} validation records")
         logger.info(f"Combined files: {all_train_path} and {all_val_path}")
+
+        if self.val_ratio is not None and self.test_ratio is not None:
+            all_test_path = self.output_dir / f"{self.csv_basename}_client_all_test_{len(all_test_df)}images.csv"
+            all_test_df.to_csv(all_test_path, index=False)
+            logger.info(f"Combined test file: {all_test_path}")
 
     def run(self) -> None:
         """Run the data splitting process."""
@@ -248,7 +306,21 @@ def main():
         "--train-ratio",
         type=float,
         default=0.8,
-        help="Ratio for train/validation split (default: 0.8)"
+        help="Ratio for the train set (default: 0.8)"
+    )
+
+    parser.add_argument(
+        "--val-ratio",
+        type=float,
+        default=None,
+        help="Ratio for the validation set. If provided along with --test-ratio, a three-way split is performed."
+    )
+
+    parser.add_argument(
+        "--test-ratio",
+        type=float,
+        default=None,
+        help="Ratio for the test set. If provided along with --val-ratio, a three-way split is performed."
     )
 
     parser.add_argument(
@@ -300,6 +372,24 @@ def main():
         logger.error("Train ratio must be between 0 and 1")
         return 1
 
+    # Validate ratios for 2-way or 3-way split
+    if args.val_ratio is not None or args.test_ratio is not None:
+        if args.val_ratio is None or args.test_ratio is None:
+            logger.error("For a three-way split, both --val-ratio and --test-ratio must be provided.")
+            return 1
+        if not 0 < args.val_ratio < 1 or not 0 < args.test_ratio < 1:
+            logger.error("Validation and test ratios must be between 0 and 1.")
+            return 1
+        total_ratio = args.train_ratio + args.val_ratio + args.test_ratio
+        if abs(total_ratio - 1.0) > 1e-6:
+            logger.error(f"Sum of train, validation, and test ratios ({total_ratio:.2f}) must be equal to 1.0")
+            return 1
+    else:
+        # 2-way split (train/validation)
+        if not 0 < args.train_ratio < 1:
+             logger.error("Train ratio must be between 0 and 1 for a two-way split.")
+             return 1
+
     try:
         # Initialize and run the data splitter
         splitter = FederatedDataSplitter(
@@ -308,7 +398,9 @@ def main():
             num_clients=args.num_clients,
             site_col=args.site_col,
             train_ratio=args.train_ratio,
-            seed=args.seed
+            seed=args.seed,
+            val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio
         )
         splitter.run()
         return 0
