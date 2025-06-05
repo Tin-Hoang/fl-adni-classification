@@ -18,3 +18,5 @@ class FLConfig:
     # Client configs
     client_id: Optional[int] = None
     local_epochs: Optional[int] = None
+    # Evaluation frequency - clients will only evaluate every N rounds
+    evaluate_frequency: int = 1  # Default: evaluate every round (current behavior)

@@ -48,6 +48,9 @@ class ADNIClient(NumPyClient):
         # Determine the number of local epochs for this client
         self.local_epochs = self.config.fl.local_epochs
 
+        # Get evaluation frequency (default to 1 if not specified)
+        self.evaluate_frequency = getattr(self.config.fl, 'evaluate_frequency', 1)
+
         # Create optimizer
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -81,6 +84,7 @@ class ADNIClient(NumPyClient):
         print(f"Train dataset size: {len(self.train_loader.dataset)}")
         print(f"Validation dataset size: {len(self.val_loader.dataset)}")
         print(f"Using scheduler: {scheduler_type if scheduler_type else 'none'}")
+        print(f"Evaluation frequency: every {self.evaluate_frequency} round(s)")
 
     def fit(self, parameters, config) -> FitRes:
         """Train the model on the local dataset.
@@ -160,6 +164,22 @@ class ADNIClient(NumPyClient):
         Returns:
             Loss, number of evaluation examples, metrics
         """
+        # Get the current round number from the config
+        current_round = config.get("server_round", 1)
+
+        # Check if we should evaluate in this round
+        if current_round % self.evaluate_frequency != 0:
+            print(f"Client {self.client_id}: Skipping evaluation for round {current_round} (evaluating every {self.evaluate_frequency} rounds)")
+            # Return a minimal result indicating no evaluation was performed
+            return 0.0, 0, {
+                "client_id": str(self.client_id),
+                "evaluation_skipped": True,
+                "evaluation_frequency": self.evaluate_frequency,
+                "current_round": current_round
+            }
+
+        print(f"Client {self.client_id}: Performing evaluation for round {current_round}")
+
         try:
             # Update local model with global parameters
             set_params(self.model, parameters)
@@ -224,7 +244,10 @@ class ADNIClient(NumPyClient):
                 "labels_json": labels_json,
                 "sample_info": sample_info,
                 "client_id": str(self.client_id),
-                "num_classes": 2 if self.config.data.classification_mode == "CN_AD" else 3
+                "num_classes": 2 if self.config.data.classification_mode == "CN_AD" else 3,
+                "evaluation_skipped": False,
+                "evaluation_frequency": self.evaluate_frequency,
+                "current_round": current_round
             }
 
             # Test serialization for safety
@@ -236,7 +259,10 @@ class ADNIClient(NumPyClient):
                     "val_loss": float(val_loss),
                     "val_accuracy": float(val_acc),
                     "client_id": str(self.client_id),
-                    "error": "Serialization failed"
+                    "error": "Serialization failed",
+                    "evaluation_skipped": False,
+                    "evaluation_frequency": self.evaluate_frequency,
+                    "current_round": current_round
                 }
 
             return float(val_loss), len(self.val_loader.dataset), result
@@ -246,7 +272,13 @@ class ADNIClient(NumPyClient):
             print(f"Client {self.client_id}: Error in evaluate method: {e}")
             print(traceback.format_exc())
             # Return minimal results to avoid failure
-            return 0.0, 0, {"client_id": str(self.client_id), "error": str(e)}
+            return 0.0, 0, {
+                "client_id": str(self.client_id),
+                "error": str(e),
+                "evaluation_skipped": False,
+                "evaluation_frequency": self.evaluate_frequency,
+                "current_round": current_round
+            }
 
 
 def client_fn(context: Context):

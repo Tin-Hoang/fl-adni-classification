@@ -226,6 +226,7 @@ class Config:
                 "local_epochs": self.fl.local_epochs,
                 "client_config_files": self.fl.client_config_files,
                 "checkpoint_dir": self.fl.checkpoint_dir,
+                "evaluate_frequency": self.fl.evaluate_frequency,
             },
             "wandb": {
                 "use_wandb": self.wandb.use_wandb,

@@ -9,7 +9,7 @@ import torch
 import wandb
 from collections.abc import Mapping
 
-from flwr.common import Metrics, Context, ndarrays_to_parameters, Parameters, FitRes, EvaluateRes, parameters_to_ndarrays
+from flwr.common import Metrics, Context, ndarrays_to_parameters, Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, EvaluateIns
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg, Strategy
 from flwr.server.client_manager import ClientManager
@@ -110,9 +110,64 @@ class FedADNI(FedAvg):
         self.checkpoint_dir = config.fl.checkpoint_dir
         self.best_metric = None
         self.metric_name = "val_accuracy"
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Create checkpoint directory if it doesn't exist
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        # Load server-side validation dataset for global evaluation
+        self._load_server_validation_data()
+
+    def _load_server_validation_data(self):
+        """Load validation dataset on the server for global evaluation."""
+        try:
+            print("Loading server-side validation dataset...")
+            # Load only the validation loader for server evaluation
+            _, self.server_val_loader = load_data(
+                config=self.config,
+                batch_size=self.config.training.batch_size
+            )
+
+            # Create criterion for evaluation
+            self.criterion = create_criterion(self.config, device=self.device)
+
+            print(f"Server validation dataset loaded with {len(self.server_val_loader)} batches")
+        except Exception as e:
+            print(f"Warning: Could not load server validation data: {e}")
+            print("Global accuracy evaluation will be skipped.")
+            self.server_val_loader = None
+            self.criterion = None
+
+    def _evaluate_server_model(self, server_round: int) -> Tuple[Optional[float], Optional[float], Optional[List], Optional[List]]:
+        """Evaluate the server model on the validation dataset.
+
+        Args:
+            server_round: Current round number
+
+        Returns:
+            Tuple of (loss, accuracy, predictions, labels) or (None, None, None, None) if evaluation fails
+        """
+        if self.server_val_loader is None or self.criterion is None:
+            return None, None, None, None
+
+        try:
+            print(f"Evaluating server model on validation set for round {server_round}...")
+
+            # Evaluate the server model
+            val_loss, val_accuracy, predictions, labels = test_with_predictions(
+                model=self.model,
+                test_loader=self.server_val_loader,
+                criterion=self.criterion,
+                device=self.device,
+                mixed_precision=self.config.training.mixed_precision
+            )
+
+            print(f"Server validation results - Loss: {val_loss:.4f}, Accuracy: {val_accuracy:.2f}%")
+            return val_loss, val_accuracy, predictions, labels
+
+        except Exception as e:
+            print(f"Error evaluating server model: {e}")
+            return None, None, None, None
 
     def _save_checkpoint(self, model_state_dict: dict, round_num: int):
         """Save model checkpoint."""
@@ -197,6 +252,43 @@ class FedADNI(FedAvg):
 
         return aggregated_params, aggregated_metrics
 
+    def configure_evaluate(
+        self,
+        server_round: int,
+        parameters: Parameters,
+        client_manager: ClientManager,
+    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
+        """Configure the next round of evaluation.
+
+        Args:
+            server_round: Current round number
+            parameters: Current global model parameters
+            client_manager: Client manager
+
+        Returns:
+            List of tuples (client_proxy, evaluate_ins)
+        """
+        # Get the base configuration from the parent class
+        client_instructions = super().configure_evaluate(
+            server_round, parameters, client_manager
+        )
+
+        # Add server_round to the config for each client
+        updated_instructions = []
+        for client_proxy, evaluate_ins in client_instructions:
+            # Add server_round to the existing config
+            config = evaluate_ins.config.copy() if evaluate_ins.config else {}
+            config["server_round"] = server_round
+
+            # Create new EvaluateIns with updated config
+            updated_evaluate_ins = EvaluateIns(
+                parameters=evaluate_ins.parameters,
+                config=config
+            )
+            updated_instructions.append((client_proxy, updated_evaluate_ins))
+
+        return updated_instructions
+
     def aggregate_evaluate(
         self,
         server_round: int,
@@ -216,24 +308,74 @@ class FedADNI(FedAvg):
         # Print information about results and failures
         print(f"aggregate_evaluate: received {len(results)} results and {len(failures)} failures")
 
+        # Check if server should evaluate in this round based on frequency
+        evaluate_frequency = getattr(self.config.fl, 'evaluate_frequency', 1)
+        should_evaluate_server = server_round % evaluate_frequency == 0
+
+        # Count clients that skipped evaluation vs those that actually evaluated
+        skipped_count = 0
+        evaluated_count = 0
+        actual_results = []
+
+        for client_proxy, eval_res in results:
+            client_metrics = eval_res.metrics
+            if client_metrics and client_metrics.get("evaluation_skipped", False):
+                skipped_count += 1
+                print(f"Client {client_metrics.get('client_id', 'unknown')} skipped evaluation for round {server_round}")
+            else:
+                evaluated_count += 1
+                actual_results.append((client_proxy, eval_res))
+
+        print(f"Round {server_round}: {evaluated_count} clients evaluated, {skipped_count} clients skipped evaluation")
+        print(f"Server evaluation: {'enabled' if should_evaluate_server else 'skipped'} for round {server_round} (evaluating every {evaluate_frequency} rounds)")
+
         # Print details about any failures
         if failures:
             for i, failure in enumerate(failures):
                 print(f"Failure {i+1}: {type(failure).__name__}: {str(failure)}")
 
-        # If no results, handle gracefully
-        if not results:
-            print("WARNING: No evaluation results to aggregate")
-            return None, {}
+        # Initialize server evaluation variables
+        server_val_loss, server_val_accuracy, server_predictions, server_labels = None, None, None, None
+
+        # Evaluate server model only if it's the right frequency
+        if should_evaluate_server:
+            server_val_loss, server_val_accuracy, server_predictions, server_labels = self._evaluate_server_model(server_round)
+        else:
+            print(f"Skipping server-side evaluation for round {server_round}")
+
+        # If no clients actually evaluated, handle gracefully
+        if not actual_results:
+            print("WARNING: No clients performed evaluation in this round")
+
+            if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
+                print(f"Server validation results for round {server_round}:")
+                print(f"  Server validation loss: {server_val_loss:.4f}")
+                print(f"  Server validation accuracy: {server_val_accuracy:.2f}%")
+
+                # Log server metrics even if no clients evaluated
+                if self.wandb_logger:
+                    self.wandb_logger.log_metrics(
+                        {
+                            "global_accuracy": server_val_accuracy,
+                            "global_loss": server_val_loss
+                        },
+                        prefix="server",
+                        step=server_round
+                    )
+
+                # Save best checkpoint based on server validation
+                self._save_best_checkpoint(self.model.state_dict(), server_val_accuracy)
+
+            return None, {
+                "no_client_evaluation": True,
+                "server_val_accuracy": server_val_accuracy or 0.0,
+                "server_evaluation_skipped": not should_evaluate_server
+            }
 
         try:
-            # Lists to collect all predictions and labels
-            all_predictions = []
-            all_labels = []
-
-            # Log client evaluation metrics
+            # Log client evaluation metrics for clients that actually evaluated
             if self.wandb_logger:
-                for client_proxy, eval_res in results:
+                for client_proxy, eval_res in actual_results:
                     try:
                         client_metrics = eval_res.metrics
                         if not client_metrics:
@@ -246,7 +388,7 @@ class FedADNI(FedAvg):
                         # Debug: print all keys in client metrics
                         print(f"Client {client_id} metrics keys: {list(client_metrics.keys())}")
 
-                        # Extract and decode JSON predictions and labels if present
+                        # Extract and decode JSON predictions and labels if present for client-specific confusion matrices
                         if "predictions_json" in client_metrics and "labels_json" in client_metrics:
                             try:
                                 import json
@@ -261,10 +403,6 @@ class FedADNI(FedAvg):
                                 labels = json.loads(labels_json)
 
                                 print(f"Client {client_id}: Decoded {len(predictions)} predictions and {len(labels)} labels. Sample info: {sample_info}")
-
-                                # Add to the global collections for aggregation
-                                all_predictions.extend(predictions)
-                                all_labels.extend(labels)
 
                                 # Get the number of classes
                                 num_classes = client_metrics.get("num_classes", 3)
@@ -306,7 +444,7 @@ class FedADNI(FedAvg):
                         try:
                             metrics_to_log = {
                                 k: v for k, v in client_metrics.items()
-                                if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"]
+                                if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"]
                                 and isinstance(v, (int, float))
                             }
 
@@ -320,24 +458,24 @@ class FedADNI(FedAvg):
                     except Exception as e:
                         print(f"Error processing evaluation result: {e}")
 
-            # Create a global confusion matrix if we have predictions and labels
-            if all_predictions and all_labels:
+            # Create and log global confusion matrix using server evaluation (only if server evaluated)
+            if should_evaluate_server and server_predictions is not None and server_labels is not None:
                 try:
                     # Determine the number of classes
                     num_classes = 2 if self.config.data.classification_mode == "CN_AD" else 3
                     class_names = ["CN", "AD"] if num_classes == 2 else ["CN", "MCI", "AD"]
 
-                    print(f"Creating global confusion matrix with {len(all_predictions)} predictions")
+                    print(f"Creating global confusion matrix from server evaluation with {len(server_predictions)} predictions")
 
                     # Create the confusion matrix
                     from sklearn.metrics import confusion_matrix
-                    global_cm = confusion_matrix(all_labels, all_predictions, labels=list(range(num_classes)))
+                    global_cm = confusion_matrix(server_labels, server_predictions, labels=list(range(num_classes)))
 
                     # Plot the global confusion matrix
-                    global_title = f'Global Confusion Matrix - Round {server_round}'
+                    global_title = f'Global Confusion Matrix (Server Evaluation) - Round {server_round}'
                     global_fig = plot_confusion_matrix(
-                        y_true=np.array(all_labels),
-                        y_pred=np.array(all_predictions),
+                        y_true=np.array(server_labels),
+                        y_pred=np.array(server_predictions),
                         class_names=class_names,
                         normalize=False,
                         title=global_title
@@ -346,36 +484,29 @@ class FedADNI(FedAvg):
                     # Log to wandb
                     if self.wandb_logger:
                         self.wandb_logger.log_metrics(
-                            {"global_confusion_matrix": wandb.Image(global_fig)},
-                            prefix="server",
-                            step=server_round
-                        )
-
-                        # Calculate global accuracy directly
-                        correct = sum(1 for p, l in zip(all_predictions, all_labels) if p == l)
-                        global_accuracy = 100.0 * correct / len(all_predictions)
-
-                        # Log the accuracy
-                        self.wandb_logger.log_metrics(
-                            {"global_accuracy": global_accuracy},
+                            {
+                                "global_confusion_matrix": wandb.Image(global_fig),
+                                "global_accuracy": server_val_accuracy,
+                                "global_loss": server_val_loss
+                            },
                             prefix="server",
                             step=server_round
                         )
 
                     plt.close(global_fig)
-                    print(f"Logged global confusion matrix with {len(all_predictions)} predictions")
+                    print(f"Logged global confusion matrix from server evaluation - Accuracy: {server_val_accuracy:.2f}%")
 
                 except Exception as e:
-                    print(f"Error creating global confusion matrix: {e}")
+                    print(f"Error creating global confusion matrix from server evaluation: {e}")
 
-            # Aggregate metrics (let the parent class handle this)
+            # Aggregate metrics from clients that actually evaluated (let the parent class handle this)
             aggregated_loss, aggregated_metrics = super().aggregate_evaluate(
-                server_round, results, failures
+                server_round, actual_results, failures
             )
 
             print(f"Aggregated loss: {aggregated_loss}, metrics keys: {aggregated_metrics.keys() if aggregated_metrics else 'None'}")
 
-            # Log aggregated evaluation metrics
+            # Log aggregated evaluation metrics and server-side metrics
             if self.wandb_logger:
                 try:
                     if aggregated_loss is not None:
@@ -388,7 +519,7 @@ class FedADNI(FedAvg):
                         # Filter out non-scalar and special keys
                         filtered_metrics = {
                             k: v for k, v in aggregated_metrics.items()
-                            if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"]
+                            if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"]
                             and isinstance(v, (int, float))
                         }
 
@@ -398,6 +529,17 @@ class FedADNI(FedAvg):
                                 prefix="server",
                                 step=server_round
                             )
+
+                    # Log server-side metrics only if server evaluated
+                    if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
+                        self.wandb_logger.log_metrics(
+                            {
+                                "global_accuracy": server_val_accuracy,
+                                "global_loss": server_val_loss
+                            },
+                            prefix="server",
+                            step=server_round
+                        )
                 except Exception as e:
                     print(f"Error logging aggregated metrics: {e}")
 
@@ -407,19 +549,42 @@ class FedADNI(FedAvg):
             if aggregated_metrics:
                 print(f"Server model evaluation metrics after round {server_round}:")
                 for metric_name, metric_value in aggregated_metrics.items():
-                    if metric_name not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes"] and isinstance(metric_value, (int, float)):
+                    if metric_name not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"] and isinstance(metric_value, (int, float)):
                         print(f"  {metric_name}: {metric_value:.4f}")
 
-            # Save the best model checkpoint based on the tracked metric (e.g., validation accuracy)
-            if aggregated_metrics and self.metric_name in aggregated_metrics:
+            # Print server-side validation results only if server evaluated
+            if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
+                print(f"Server validation results after round {server_round}:")
+                print(f"  Server validation loss: {server_val_loss:.4f}")
+                print(f"  Server validation accuracy: {server_val_accuracy:.2f}%")
+
+                # Save the best model checkpoint based on server validation accuracy
                 try:
-                    metric_value = aggregated_metrics[self.metric_name]
-                    if isinstance(metric_value, (int, float)):
-                        self._save_best_checkpoint(self.model.state_dict(), metric_value)
-                    else:
-                        print(f"Cannot save checkpoint: metric {self.metric_name} is not a number")
+                    self._save_best_checkpoint(self.model.state_dict(), server_val_accuracy)
                 except Exception as e:
                     print(f"Error saving best checkpoint: {e}")
+            elif should_evaluate_server:
+                print(f"Server evaluation was attempted but failed for round {server_round}")
+
+            # Fallback to aggregated metrics if server evaluation is not available or not performed
+            if not should_evaluate_server or server_val_accuracy is None:
+                if aggregated_metrics and self.metric_name in aggregated_metrics:
+                    try:
+                        metric_value = aggregated_metrics[self.metric_name]
+                        if isinstance(metric_value, (int, float)):
+                            self._save_best_checkpoint(self.model.state_dict(), metric_value)
+                        else:
+                            print(f"Cannot save checkpoint: metric {self.metric_name} is not a number")
+                    except Exception as e:
+                        print(f"Error saving best checkpoint: {e}")
+
+            # Add server evaluation info to aggregated metrics
+            if aggregated_metrics is None:
+                aggregated_metrics = {}
+
+            aggregated_metrics["server_evaluation_performed"] = should_evaluate_server
+            if should_evaluate_server and server_val_accuracy is not None:
+                aggregated_metrics["server_val_accuracy"] = server_val_accuracy
 
             return aggregated_loss, aggregated_metrics
 
@@ -427,7 +592,7 @@ class FedADNI(FedAvg):
             import traceback
             print(f"Error in aggregate_evaluate: {e}")
             print(traceback.format_exc())
-            return None, {}
+            return None, {"server_evaluation_performed": should_evaluate_server}
 
 
 # Define metric aggregation function
