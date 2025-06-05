@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Script to remove duplicate ADNI files based on specific criteria."""
+"""Script to remove duplicate ADNI files based on specific criteria.
+
+This script iterates through ADNI image files in a specified directory, groups them by subject ID,
+and applies a duplicate removal logic. The process involves two main steps:
+
+1.  **Timestamp Duplicates:** For a given subject and preprocessing description, if multiple files
+    have different timestamps, only the file with the earliest timestamp is kept.
+2.  **Preprocessing Duplicates:** After resolving timestamp duplicates, if both `_Scaled` and
+    `_Scaled_2` versions of a file exist for the same subject, the `_Scaled_2` version is
+    prioritized and kept, while the `_Scaled` version is removed.
+
+Finally, the script cleans up by removing any directories that become empty after duplicate
+files are deleted.
+"""
 
 import os
 import re
@@ -120,7 +133,7 @@ class DuplicateRemover:
         """Collect and parse all files in the input directory."""
         for root, _, files in os.walk(self.input_dir):
             for file in files:
-                if file.endswith('.nii'):
+                if file.endswith('.nii') or file.endswith('.nii.gz'):
                     filepath = os.path.join(root, file)
                     try:
                         parser = ADNIFileParser(filepath)
@@ -240,11 +253,120 @@ class DuplicateRemover:
                     "This is more than expected. Please verify manually."
                 )
 
+            # New logic: Remove SURVEY folders
+            files_to_keep_after_survey = []
+            for file in files:
+                if "SURVEY" in file.preprocess_desc:
+                    logger.warning(f"Removing SURVEY file: {file.filepath}")
+                    try:
+                        os.remove(file.filepath)
+                        self.removed_files.add(file.filepath)
+                    except OSError as e:
+                        logger.error(f"Failed to remove file {file.filepath}: {e}")
+                else:
+                    files_to_keep_after_survey.append(file)
+
+            files = files_to_keep_after_survey
+
+            # New logic: Remove Axial_Field_Mapping folders (including those with suffixes)
+            files_to_keep_after_axial_field = []
+            for file in files:
+                if file.preprocess_desc.startswith("Axial_Field_Mapping"):
+                    logger.warning(f"Removing Axial_Field_Mapping file: {file.filepath}")
+                    try:
+                        os.remove(file.filepath)
+                        self.removed_files.add(file.filepath)
+                    except OSError as e:
+                        logger.error(f"Failed to remove file {file.filepath}: {e}")
+                else:
+                    files_to_keep_after_axial_field.append(file)
+
+            files = files_to_keep_after_axial_field
+
+            # New logic: Remove subfolders containing "AAHead_"
+            files_to_keep_after_aahead = []
+            for file in files:
+                if "AAHead_" in file.preprocess_desc:
+                    logger.warning(f"Removing file containing AAHead_ in path: {file.filepath}")
+                    try:
+                        os.remove(file.filepath)
+                        self.removed_files.add(file.filepath)
+                    except OSError as e:
+                        logger.error(f"Failed to remove file {file.filepath}: {e}")
+                else:
+                    files_to_keep_after_aahead.append(file)
+
+            files = files_to_keep_after_aahead
+
+            # New logic: Remove Calibration_Scan and Cal_8HRBRAIN if other subfolders exist
+            other_files_exist = any(file.preprocess_desc not in ["Calibration_Scan", "Cal_8HRBRAIN"] for file in files)
+            files_to_keep_after_cal = []
+            if other_files_exist:
+                for file in files:
+                    if file.preprocess_desc in ["Calibration_Scan", "Cal_8HRBRAIN"]:
+                        logger.warning(f"Removing {file.preprocess_desc} file because other subfolders exist: {file.filepath}")
+                        try:
+                            os.remove(file.filepath)
+                            self.removed_files.add(file.filepath)
+                        except OSError as e:
+                            logger.error(f"Failed to remove file {file.filepath}: {e}")
+                    else:
+                        files_to_keep_after_cal.append(file)
+                files = files_to_keep_after_cal
+
+            # New logic: Remove Accelerated_Sagittal_MPRAGE_ND if Accelerated_Sagittal_MPRAGE exists
+            accelerated_sagittal_mprage_exists = any(
+                file.preprocess_desc == "Accelerated_Sagittal_MPRAGE" for file in files
+            )
+            files_to_keep_after_nd = []
+            if accelerated_sagittal_mprage_exists:
+                for file in files:
+                    if file.preprocess_desc == "Accelerated_Sagittal_MPRAGE_ND":
+                        logger.warning(f"Removing Accelerated_Sagittal_MPRAGE_ND file because Accelerated_Sagittal_MPRAGE exists: {file.filepath}")
+                        try:
+                            os.remove(file.filepath)
+                            self.removed_files.add(file.filepath)
+                        except OSError as e:
+                            logger.error(f"Failed to remove file {file.filepath}: {e}")
+                    else:
+                        files_to_keep_after_nd.append(file)
+                files = files_to_keep_after_nd
+
+            # Existing logic: Prioritize Accelerated_Sagittal_MPRAGE over REPE/SENS
+            # This logic was already there, but we might need to re-evaluate if accelerated_sagittal_mprage_exists variable name is clear enough now.
+            # Keeping it as is for now, as it checks for the presence of the desired type among the current set of files.
+            accelerated_sagittal_mprage_exists_for_mprage_prioritization = any(
+                file.preprocess_desc == "Accelerated_Sagittal_MPRAGE" for file in files
+            )
+
+            files_to_keep_after_prioritization = []
+            if accelerated_sagittal_mprage_exists_for_mprage_prioritization:
+                for file in files:
+                    if file.preprocess_desc in ["MPRAGE_REPE", "MPRAGE_SENS"]:
+                        logger.warning(f"Removing {file.preprocess_desc} file due to Accelerated_Sagittal_MPRAGE priority: {file.filepath}")
+                        try:
+                            os.remove(file.filepath)
+                            self.removed_files.add(file.filepath)
+                        except OSError as e:
+                            logger.error(f"Failed to remove file {file.filepath}: {e}")
+                    else:
+                        files_to_keep_after_prioritization.append(file)
+                files = files_to_keep_after_prioritization
+
             # First handle timestamp duplicates
             files = self._handle_timestamp_duplicates(files)
 
             # Then handle preprocessing description duplicates
             files = self._handle_preprocess_duplicates(files)
+
+            # Check if only one subfolder remains after processing
+            if files:
+                remaining_parent_dirs = set(file.parent_dir for file in files)
+                if len(remaining_parent_dirs) > 1:
+                    logger.warning(
+                        f"Subject {subject_id} still contains {len(remaining_parent_dirs)} subfolders after processing: {list(remaining_parent_dirs)}. "
+                        "Please verify manually."
+                    )
 
             if len(files) > 1:
                 logger.warning(
