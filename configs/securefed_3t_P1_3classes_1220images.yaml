@@ -1,7 +1,7 @@
 data:
-  train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv"
-  val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_val_119images.csv"
-  img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
+  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_MCI_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
   resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
@@ -24,7 +24,7 @@ training:
   learning_rate: 0.0001
   weight_decay: 0.0001
   num_workers: 4
-  seed: 42  # Random seed for reproducibility
+  seed: 42
   output_dir: "/scratch/th01167/fl-adni/checkpoints/securefed_cnn"
   mixed_precision: false
   visualize: false
@@ -43,6 +43,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["securefed-cnn", "1.5T_bl_scaled_594images_skullstripped"]
+  tags: ["securefed-cnn", "3T_bl_org_P1_1220images"]
   notes: "Using the SecureFedCNN model for ADNI classification"
-  run_name: "securefed-cnn-training-1.5T_bl_scaled_594images_skullstripped"
+  run_name: "securefed-cnn-training-3T_bl_org_P1_1220images"

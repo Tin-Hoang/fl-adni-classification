@@ -1,0 +1,50 @@
+data:
+  train_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_1_train_236images.csv"
+  val_csv_path: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_1_val_59images.csv"
+  img_dir: "data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping"
+  dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
+  classification_mode: "CN_MCI_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
+  use_spacing: false  # Disable spacing transform since images are already preprocessed
+  spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
+  cache_rate: 0.0  # No cache for FL setting to save memory
+  cache_num_workers: 1  # Workers for creating the cache (separate from DataLoader workers)
+  transform_device: "cpu"  # Device to use for transforms (e.g., "cuda" or "cpu")
+  multiprocessing_context: "fork"  # Options: "spawn", "fork", "forkserver"
+
+model:
+  name: "securefed_cnn"  # Using our secure federated CNN model
+  num_classes: 3  # CN, MCI, AD - will be automatically adjusted based on classification_mode
+  pretrained_checkpoint: null
+
+training:
+  batch_size: 2
+  learning_rate: 0.0001
+  weight_decay: 0.01  # 1e-2
+  num_workers: 2
+  seed: 42  # Random seed for reproducibility
+  output_dir: "/scratch/th01167/fl-adni/checkpoints/client1"
+  mixed_precision: false
+  visualize: false
+  use_class_weights: true
+  class_weight_type: "manual"
+  manual_class_weights: [5.1741293532338308, 0.7283950617283951, 5.289617486338798]
+  gradient_accumulation_steps: 1
+  num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
+  lr_scheduler: "cosine"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
+
+# Wandb logging configuration
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["federated-learning", "adni", "securefed-cnn"]
+  notes: "Federated Learning for ADNI Classification"
+  run_name: "fl-adni-securefed-cnn"
+
+# FL-specific settings
+fl:
+  client_id: 1
+  local_epochs: 1  # Number of local epochs per round
+  evaluate_frequency: 10  # Evaluate every 10 rounds (can be overridden by server config)
