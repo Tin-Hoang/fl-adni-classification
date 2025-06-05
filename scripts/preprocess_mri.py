@@ -51,6 +51,8 @@ def parse_arguments() -> argparse.Namespace:
                         help="Template for registration")
     parser.add_argument("--no-progress", action="store_true",
                         help="Disable progress bars")
+    parser.add_argument("--include-dirs-regex", type=str, default=None,
+                        help="Comma-separated list of regex patterns to include specific first-level subdirectories. Example: '34.*,94*'")
 
     args = parser.parse_args()
 
@@ -63,20 +65,56 @@ def parse_arguments() -> argparse.Namespace:
     return args
 
 
-def find_nifti_files(input_dir: str) -> List[str]:
+def find_nifti_files(input_dir: str, include_dirs_regex: Optional[List[str]] = None) -> List[str]:
     """
-    Find all NIFTI files (.nii or .nii.gz) in the input directory and subdirectories.
+    Find all NIFTI files (.nii or .nii.gz) in the input directory and subdirectories,
+    optionally filtering first-level subdirectories by regex patterns.
 
     Args:
         input_dir: Directory to search for NIFTI files
+        include_dirs_regex: Optional list of regex patterns to filter first-level directories
 
     Returns:
         List of paths to NIFTI files
     """
-    # Use glob with recursive=True to find all .nii and .nii.gz files in all subdirectories
-    nii_files = glob.glob(os.path.join(input_dir, "**", "*.nii"), recursive=True)
-    nii_gz_files = glob.glob(os.path.join(input_dir, "**", "*.nii.gz"), recursive=True)
-    return nii_files + nii_gz_files
+    all_nifti_files: List[str] = []
+
+    # List first-level directories
+    try:
+        first_level_dirs = [d for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))]
+    except FileNotFoundError:
+        logging.error(f"Input directory not found: {input_dir}")
+        return []
+
+    # Filter directories based on regex if provided
+    filtered_dirs = []
+    if include_dirs_regex:
+        logging.info(f"Filtering first-level directories using patterns: {include_dirs_regex}")
+        import re
+        for dir_name in first_level_dirs:
+            if any(re.fullmatch(pattern.strip(), dir_name) for pattern in include_dirs_regex):
+                filtered_dirs.append(dir_name)
+                logging.debug(f"Matched directory: {dir_name}")
+            else:
+                logging.debug(f"Skipping directory (no match): {dir_name}")
+        if not filtered_dirs:
+             logging.warning(f"No directories matched the provided regex patterns: {include_dirs_regex}")
+             return []
+    else:
+        filtered_dirs = first_level_dirs
+        logging.info("No directory regex patterns provided. Including all first-level directories.")
+
+
+    # Search for NIFTI files within the filtered directories
+    for dir_name in filtered_dirs:
+        subdir_path = os.path.join(input_dir, dir_name)
+        # Use glob with recursive=True to find all .nii and .nii.gz files in all subdirectories
+        nii_files = glob.glob(os.path.join(subdir_path, "**", "*.nii"), recursive=True)
+        nii_gz_files = glob.glob(os.path.join(subdir_path, "**", "*.nii.gz"), recursive=True)
+        all_nifti_files.extend(nii_files)
+        all_nifti_files.extend(nii_gz_files)
+
+    return all_nifti_files
 
 
 def check_dependencies() -> None:
@@ -387,7 +425,7 @@ def get_last_processed_file(output_dir: str) -> Optional[str]:
     return skull_stripped_files[-1][0]
 
 
-def process_directory(input_dir: str, output_dir: str, template_file: str, show_progress: bool = True) -> None:
+def process_directory(input_dir: str, output_dir: str, template_file: str, show_progress: bool = True, include_dirs_regex: Optional[List[str]] = None) -> None:
     """
     Process all NIFTI files in the input directory.
 
@@ -396,12 +434,13 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
         output_dir: Base directory to save output files
         template_file: Path to template image for registration
         show_progress: Whether to show progress bars
+        include_dirs_regex: Optional list of regex patterns to filter first-level directories
 
     Raises:
         PreprocessingError: If processing fails
     """
     # Find all NIFTI files in the input directory and subdirectories
-    nifti_files = find_nifti_files(input_dir)
+    nifti_files = find_nifti_files(input_dir, include_dirs_regex)
 
     if not nifti_files:
         raise PreprocessingError(f"No NIFTI files (.nii or .nii.gz) found in {input_dir}")
@@ -470,12 +509,18 @@ def main() -> None:
         # Check if dependencies are installed
         check_dependencies()
 
+        # Prepare include_dirs_regex list
+        include_dirs_regex_list = None
+        if args.include_dirs_regex:
+            include_dirs_regex_list = [pattern.strip() for pattern in args.include_dirs_regex.split(',')]
+
         # Process all files in the input directory
         process_directory(
             input_dir=args.input,
             output_dir=args.output,
             template_file=args.template,
-            show_progress=not args.no_progress
+            show_progress=not args.no_progress,
+            include_dirs_regex=include_dirs_regex_list
         )
 
         sys.exit(0)
