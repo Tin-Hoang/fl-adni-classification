@@ -52,8 +52,43 @@ def load_model(config: Config) -> nn.Module:
             "classification_mode": config.data.classification_mode
         }
 
+    print(f"Creating model '{config.model.name}' with kwargs: {model_kwargs}")
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
+
+    # Debug the model architecture
+    debug_model_architecture(model, f"{config.model.name} Model")
+
     return model
+
+
+def safe_parameters_to_ndarrays(parameters) -> List[np.ndarray]:
+    """Safely convert various parameter types to list of numpy arrays.
+
+    Args:
+        parameters: Can be Parameters object, list of numpy arrays, or other types
+
+    Returns:
+        List of numpy arrays
+
+    Raises:
+        ValueError: If the parameter type is not supported
+    """
+    if hasattr(parameters, 'tensors'):
+        # It's a Parameters object, convert it
+        from flwr.common import parameters_to_ndarrays
+        param_arrays = parameters_to_ndarrays(parameters)
+        print(f"Converted Parameters object to {len(param_arrays)} numpy arrays")
+        return param_arrays
+    elif isinstance(parameters, list):
+        # Check if it's a list of numpy arrays
+        if all(isinstance(p, np.ndarray) for p in parameters):
+            print(f"Using provided list of {len(parameters)} numpy arrays")
+            return parameters
+        else:
+            raise ValueError("List contains non-numpy array elements")
+    else:
+        raise ValueError(f"Unsupported parameter type: {type(parameters)}. "
+                       f"Expected Parameters object or list of numpy arrays.")
 
 
 def get_params(model: nn.Module) -> List[np.ndarray]:
@@ -65,7 +100,19 @@ def get_params(model: nn.Module) -> List[np.ndarray]:
     Returns:
         List of NumPy arrays representing the model parameters
     """
-    return [val.cpu().numpy() for _, val in model.state_dict().items()]
+    model_state = model.state_dict()
+    param_keys = list(model_state.keys())
+
+    # Debug information (reduced verbosity)
+    print(f"Extracting {len(param_keys)} parameters from model")
+
+    # Extract parameters
+    params = []
+    for key, val in model_state.items():
+        param_array = val.cpu().numpy()
+        params.append(param_array)
+
+    return params
 
 
 def set_params(model: nn.Module, params: List[np.ndarray]) -> None:
@@ -75,9 +122,48 @@ def set_params(model: nn.Module, params: List[np.ndarray]) -> None:
         model: The model
         params: List of NumPy arrays representing the model parameters
     """
-    params_dict = zip(model.state_dict().keys(), params)
+    # Get current model state dict keys
+    model_keys = list(model.state_dict().keys())
+
+    # Debug information
+    print(f"Setting {len(params)} parameters to model (model expects {len(model_keys)})")
+
+    # Check if the number of parameters matches
+    if len(model_keys) != len(params):
+        print(f"WARNING: Parameter count mismatch! Model expects {len(model_keys)} but received {len(params)}")
+
+        # If we have fewer params than expected, something is wrong
+        if len(params) < len(model_keys):
+            print("ERROR: Insufficient parameters provided!")
+            print(f"Model keys: {model_keys[:10]}...")  # Show first 10 keys
+            raise ValueError(f"Cannot set parameters: received {len(params)} parameters but model expects {len(model_keys)}")
+
+    # Try to create state dict with available parameters
+    params_dict = zip(model_keys, params)
     state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-    model.load_state_dict(state_dict, strict=True)
+
+    # Try strict loading first, fall back to non-strict if it fails
+    try:
+        model.load_state_dict(state_dict, strict=True)
+        print("✅ Successfully loaded parameters")
+    except RuntimeError as e:
+        print(f"❌ Strict loading failed: {e}")
+        print("Attempting to load with strict=False...")
+
+        # Try non-strict loading
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+
+        if missing_keys:
+            print(f"Missing keys: {missing_keys[:5]}...")  # Show first 5
+        if unexpected_keys:
+            print(f"Unexpected keys: {unexpected_keys[:5]}...")  # Show first 5
+
+        # If there are critical missing keys, this might still fail
+        if missing_keys:
+            print("⚠️  WARNING: Some model parameters were not loaded!")
+            print("This might cause training issues. Check model architecture consistency.")
+        else:
+            print("✅ Successfully loaded parameters with strict=False")
 
 
 def train(
@@ -506,3 +592,187 @@ def create_criterion(
         return nn.CrossEntropyLoss(weight=weights)
     else:
         return nn.CrossEntropyLoss()
+
+
+def is_fl_client_checkpoint(checkpoint_path: str) -> bool:
+    """Check if a checkpoint file is an FL client checkpoint.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+
+    Returns:
+        True if it's an FL client checkpoint, False if it's a regular model checkpoint
+    """
+    try:
+        if not os.path.exists(checkpoint_path):
+            return False
+
+        checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+
+        # FL client checkpoints have these specific keys
+        fl_checkpoint_keys = ['client_id', 'round', 'training_history']
+
+        # Check if it has FL-specific keys
+        has_fl_keys = any(key in checkpoint for key in fl_checkpoint_keys)
+
+        return has_fl_keys
+
+    except Exception as e:
+        print(f"Error checking checkpoint type: {e}")
+        return False
+
+
+def load_fl_client_checkpoint_to_model(checkpoint_path: str, model: torch.nn.Module, device: torch.device) -> dict:
+    """Load an FL client checkpoint and extract model state dict.
+
+    Args:
+        checkpoint_path: Path to the FL client checkpoint
+        model: Model to load the state into
+        device: Device for loading
+
+    Returns:
+        Dictionary containing checkpoint metadata (round, client_id, etc.)
+    """
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+
+        # Load model state dict
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Loaded FL client model state from {checkpoint_path}")
+        else:
+            print(f"Warning: No model_state_dict found in FL checkpoint {checkpoint_path}")
+
+        # Return metadata for potential use
+        metadata = {
+            'round': checkpoint.get('round', 0),
+            'client_id': checkpoint.get('client_id', 'unknown'),
+            'train_accuracy': checkpoint.get('train_accuracy', 0.0),
+            'best_val_accuracy': checkpoint.get('best_val_accuracy', 0.0),
+            'strategy_name': checkpoint.get('strategy_name', 'unknown'),
+        }
+
+        print(f"FL checkpoint metadata: round={metadata['round']}, "
+              f"client_id={metadata['client_id']}, "
+              f"strategy={metadata['strategy_name']}, "
+              f"accuracy={metadata['train_accuracy']:.2f}%")
+
+        return metadata
+
+    except Exception as e:
+        print(f"Error loading FL client checkpoint: {e}")
+        return {}
+
+
+def handle_pretrained_checkpoint(config: Config, model: torch.nn.Module, device: torch.device) -> dict:
+    """Handle loading of pretrained checkpoint (either regular model or FL client checkpoint).
+
+    Args:
+        config: Configuration object
+        model: Model to load checkpoint into
+        device: Device for loading
+
+    Returns:
+        Dictionary containing checkpoint metadata (empty for regular checkpoints)
+    """
+    if not config.model.pretrained_checkpoint:
+        return {}
+
+    checkpoint_path = config.model.pretrained_checkpoint
+
+    if not os.path.exists(checkpoint_path):
+        print(f"Checkpoint file not found: {checkpoint_path}")
+        return {}
+
+    # Detect checkpoint type
+    if is_fl_client_checkpoint(checkpoint_path):
+        print(f"Detected FL client checkpoint: {checkpoint_path}")
+        return load_fl_client_checkpoint_to_model(checkpoint_path, model, device)
+    else:
+        print(f"Detected regular model checkpoint: {checkpoint_path}")
+        # Load as regular model state dict
+        try:
+            state_dict = torch.load(checkpoint_path, map_location=device)
+
+            # Handle different checkpoint formats
+            if isinstance(state_dict, dict) and 'model_state_dict' in state_dict:
+                # Training checkpoint format
+                model.load_state_dict(state_dict['model_state_dict'])
+                print(f"Loaded model state dict from training checkpoint: {checkpoint_path}")
+            else:
+                # Direct state dict format
+                model.load_state_dict(state_dict)
+                print(f"Loaded model state dict: {checkpoint_path}")
+
+        except Exception as e:
+            print(f"Error loading regular checkpoint: {e}")
+
+        return {}  # No metadata for regular checkpoints
+
+
+def debug_model_architecture(model: nn.Module, model_name: str = "Model") -> None:
+    """Debug model architecture by printing layer structure.
+
+    Args:
+        model: The model to debug
+        model_name: Name for debugging output
+    """
+    print(f"\n=== {model_name} Architecture ===")
+    print(f"Model type: {type(model).__name__}")
+
+    # Print state dict summary
+    state_dict = model.state_dict()
+    print(f"Total parameters: {len(state_dict)}")
+    print(f"Parameter keys: {list(state_dict.keys())[:5]}..." if len(state_dict) > 5 else f"Parameter keys: {list(state_dict.keys())}")
+    print("=" * 40)
+
+
+def verify_model_consistency(model1: nn.Module, model2: nn.Module,
+                           name1: str = "Model1", name2: str = "Model2") -> bool:
+    """Verify that two models have consistent architectures.
+
+    Args:
+        model1: First model
+        model2: Second model
+        name1: Name of first model
+        name2: Name of second model
+
+    Returns:
+        True if models are consistent, False otherwise
+    """
+    print(f"\n=== Model Consistency Check: {name1} vs {name2} ===")
+
+    state_dict1 = model1.state_dict()
+    state_dict2 = model2.state_dict()
+
+    keys1 = set(state_dict1.keys())
+    keys2 = set(state_dict2.keys())
+
+    # Check if keys match
+    if keys1 != keys2:
+        print("❌ Models have different parameter keys!")
+
+        only_in_1 = keys1 - keys2
+        only_in_2 = keys2 - keys1
+
+        if only_in_1:
+            print(f"Keys only in {name1}: {sorted(only_in_1)}")
+        if only_in_2:
+            print(f"Keys only in {name2}: {sorted(only_in_2)}")
+
+        return False
+
+    # Check if shapes match
+    shape_mismatch = False
+    for key in keys1:
+        shape1 = state_dict1[key].shape
+        shape2 = state_dict2[key].shape
+        if shape1 != shape2:
+            print(f"❌ Shape mismatch for {key}: {shape1} vs {shape2}")
+            shape_mismatch = True
+
+    if shape_mismatch:
+        return False
+
+    print("✅ Models have consistent architectures!")
+    return True

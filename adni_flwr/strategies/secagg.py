@@ -1,112 +1,77 @@
-"""Server application for ADNI Federated Learning."""
+"""Secure Aggregation (SecAgg) strategy implementation."""
 
 import os
+import hashlib
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import List, Tuple, Dict, Optional
+from typing import Dict, Any, List, Tuple, Optional, Union
 import torch
-import wandb
-from collections.abc import Mapping
-
-from flwr.common import Metrics, Context, ndarrays_to_parameters, Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, EvaluateIns, FitIns
-from flwr.server import ServerApp, ServerAppComponents, ServerConfig
-from flwr.server.strategy import FedAvg, Strategy
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from flwr.common import Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, ndarrays_to_parameters, FitIns, EvaluateIns
+from flwr.server.strategy import FedAvg
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 
-from adni_flwr.task import load_config_from_yaml, load_model, get_params, load_data, test_with_predictions, create_criterion, debug_model_architecture
+from .base import FLStrategyBase, ClientStrategyBase
 from adni_classification.config.config import Config
+from adni_flwr.task import set_params, get_params, safe_parameters_to_ndarrays, load_data, test_with_predictions, create_criterion
 from adni_classification.utils.visualization import plot_confusion_matrix
-from adni_flwr.server_fn import safe_weighted_average
-from adni_flwr.strategies import StrategyFactory
+
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
 
 
-class FLWandbLogger:
-    """Wandb logger for Federated Learning metrics."""
-
-    def __init__(self, config: Config):
-        """Initialize the Wandb logger.
-
-        Args:
-            config: The standardized Config object
-        """
-        self.config = config
-        self.initialized = False
-
-    def init_wandb(self):
-        """Initialize Wandb if enabled in the configuration."""
-        if not self.initialized and hasattr(self.config, 'wandb') and self.config.wandb.use_wandb:
-            wandb_config = self.config.wandb
-            try:
-                wandb.init(
-                    project=getattr(wandb_config, 'project', 'fl-adni-classification'),
-                    entity=getattr(wandb_config, 'entity', None),
-                    tags=getattr(wandb_config, 'tags', ['federated-learning', 'adni']),
-                    notes=getattr(wandb_config, 'notes', 'Federated Learning for ADNI Classification'),
-                    name=getattr(wandb_config, 'run_name', 'fl-adni-run'),
-                    config=self.config.to_dict()
-                )
-                self.initialized = True
-                print('WandB initialized for server')
-            except Exception as e:
-                print(f'Error initializing wandb: {e}')
-                print('Continuing without wandb logging...')
-
-    def log_metrics(self, metrics: Dict[str, float], prefix: str = "", step: Optional[int] = None):
-        """Log metrics to Wandb.
-
-        Args:
-            metrics: Dictionary of metrics to log
-            prefix: Prefix to add to metric names
-            step: Current step/round number
-        """
-        if not self.initialized:
-            return
-
-        try:
-            if prefix:
-                wandb_metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
-            else:
-                wandb_metrics = metrics
-
-            wandb.log(wandb_metrics, step=step)
-        except Exception as e:
-            print(f"Error logging to wandb: {e}")
-
-    def finish(self):
-        """Finish the Wandb run."""
-        if self.initialized:
-            try:
-                wandb.finish()
-            except Exception as e:
-                print(f"Error closing wandb run: {e}")
-
-
-class FedADNI(FedAvg):
-    """Federated Learning strategy for ADNI classification with customized aggregation."""
+class SecAggStrategy(FLStrategyBase):
+    """Server-side Secure Aggregation strategy with comprehensive WandB logging."""
 
     def __init__(
         self,
-        wandb_logger: FLWandbLogger,
-        model: torch.nn.Module,
         config: Config,
-        *args,
+        model: nn.Module,
+        wandb_logger: Optional[Any] = None,
+        noise_multiplier: float = 0.1,
+        dropout_rate: float = 0.0,
         **kwargs
     ):
-        """Initialize the FedADNI strategy.
+        """Initialize SecAgg strategy.
 
         Args:
+            config: Configuration object
+            model: PyTorch model
             wandb_logger: Wandb logger instance
-            model: The PyTorch model instance used by the server
-            config: The standardized Config object
-            *args: Additional arguments for FedAvg
-            **kwargs: Additional keyword arguments for FedAvg
+            noise_multiplier: Multiplier for noise addition
+            dropout_rate: Dropout rate for parameter masking
+            **kwargs: Additional SecAgg parameters
         """
-        super().__init__(*args, **kwargs)
-        self.wandb_logger = wandb_logger
-        self.model = model
-        self.config = config
+        super().__init__(config, model, wandb_logger, **kwargs)
+
+        self.noise_multiplier = noise_multiplier
+        self.dropout_rate = dropout_rate
+        self.client_masks = {}  # Store client masks for secure aggregation
+
+        # Extract specific parameters for FedAvg
+        fedavg_params = {
+            'fraction_fit': getattr(config.fl, 'fraction_fit', 1.0),
+            'fraction_evaluate': getattr(config.fl, 'fraction_evaluate', 1.0),
+            'min_fit_clients': getattr(config.fl, 'min_fit_clients', 2),
+            'min_evaluate_clients': getattr(config.fl, 'min_evaluate_clients', 2),
+            'min_available_clients': getattr(config.fl, 'min_available_clients', 2),
+        }
+
+        # Add aggregation functions if provided
+        if 'evaluate_metrics_aggregation_fn' in kwargs:
+            fedavg_params['evaluate_metrics_aggregation_fn'] = kwargs['evaluate_metrics_aggregation_fn']
+        if 'fit_metrics_aggregation_fn' in kwargs:
+            fedavg_params['fit_metrics_aggregation_fn'] = kwargs['fit_metrics_aggregation_fn']
+
+        # Initialize standard FedAvg strategy for basic aggregation
+        self.fedavg_strategy = FedAvg(**fedavg_params)
+
+        # Initialize additional components for enhanced functionality
         self.current_round = 0
         self.checkpoint_dir = config.checkpoint_dir
         self.best_metric = None
@@ -130,7 +95,7 @@ class FedADNI(FedAvg):
             )
 
             # Create criterion for evaluation
-            self.criterion = create_criterion(self.config, device=self.device)
+            self.criterion = create_criterion(self.config, train_dataset=None, device=self.device)
 
             print(f"Server validation dataset loaded with {len(self.server_val_loader)} batches")
         except Exception as e:
@@ -184,42 +149,113 @@ class FedADNI(FedAvg):
             torch.save(model_state_dict, best_checkpoint_path)
             print(f"Saved new best model checkpoint with {self.metric_name} {metric:.4f} to {best_checkpoint_path}")
 
-    def configure_fit(
-        self,
-        server_round: int,
-        parameters: Parameters,
-        client_manager: ClientManager,
-    ) -> List[Tuple[ClientProxy, FitIns]]:
-        """Configure the next round of training.
+    def get_strategy_name(self) -> str:
+        """Return the strategy name."""
+        return "secagg"
+
+    def get_strategy_params(self) -> Dict[str, Any]:
+        """Return strategy-specific parameters."""
+        return {
+            "noise_multiplier": self.noise_multiplier,
+            "dropout_rate": self.dropout_rate,
+            "fraction_fit": self.fedavg_strategy.fraction_fit,
+            "fraction_evaluate": self.fedavg_strategy.fraction_evaluate,
+            "min_fit_clients": self.fedavg_strategy.min_fit_clients,
+            "min_evaluate_clients": self.fedavg_strategy.min_evaluate_clients,
+            "min_available_clients": self.fedavg_strategy.min_available_clients,
+        }
+
+    def generate_client_mask(self, client_id: str, round_num: int) -> np.ndarray:
+        """Generate a deterministic mask for a client.
 
         Args:
-            server_round: Current round number
-            parameters: Current global model parameters
-            client_manager: Client manager
+            client_id: Client identifier
+            round_num: Current round number
 
         Returns:
-            List of tuples (client_proxy, fit_ins)
+            Numpy array mask
         """
-        # Get the base configuration from the parent class
-        client_instructions = super().configure_fit(
-            server_round, parameters, client_manager
-        )
+        # Create deterministic seed from client_id and round
+        seed_str = f"{client_id}_{round_num}_{self.noise_multiplier}"
+        seed = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2**32)
 
-        # Add server_round to the config for each client
-        updated_instructions = []
-        for client_proxy, fit_ins in client_instructions:
-            # Add server_round to the existing config
-            config = fit_ins.config.copy() if fit_ins.config else {}
-            config["server_round"] = server_round
+        # Set numpy random seed for reproducibility
+        np.random.seed(seed)
 
-            # Create new FitIns with updated config
-            updated_fit_ins = FitIns(
-                parameters=fit_ins.parameters,
-                config=config
-            )
-            updated_instructions.append((client_proxy, updated_fit_ins))
+        # Generate mask with same shape as model parameters
+        model_params = get_params(self.model)
+        mask = []
 
-        return updated_instructions
+        for param_array in model_params:
+            # Generate random mask for each parameter array
+            param_mask = np.random.uniform(-1, 1, param_array.shape)
+            mask.append(param_mask)
+
+        return mask
+
+    def secure_aggregate(
+        self,
+        results: List[Tuple[ClientProxy, FitRes]],
+        round_num: int
+    ) -> Optional[Parameters]:
+        """Perform secure aggregation of client updates.
+
+        Args:
+            results: List of client results
+            round_num: Current round number
+
+        Returns:
+            Aggregated parameters
+        """
+        if not results:
+            return None
+
+        print(f"Performing secure aggregation for {len(results)} clients")
+
+        # Collect masked parameters and weights
+        masked_params_list = []
+        weights = []
+        client_masks = []
+
+        for client_proxy, fit_res in results:
+            client_id = str(client_proxy.cid)
+
+            # Generate mask for this client
+            client_mask = self.generate_client_mask(client_id, round_num)
+            client_masks.append(client_mask)
+
+            # Get client parameters
+            client_params = parameters_to_ndarrays(fit_res.parameters)
+
+            # Apply mask to parameters (remove the mask that was added by client)
+            unmasked_params = []
+            for param, mask in zip(client_params, client_mask):
+                unmasked_param = param - mask
+                unmasked_params.append(unmasked_param)
+
+            masked_params_list.append(unmasked_params)
+            weights.append(fit_res.num_examples)
+
+        # Perform weighted average
+        total_examples = sum(weights)
+        if total_examples == 0:
+            return None
+
+        # Initialize aggregated parameters
+        aggregated_params = []
+
+        for i in range(len(masked_params_list[0])):
+            # Weighted sum for each parameter
+            weighted_sum = np.zeros_like(masked_params_list[0][i])
+
+            for j, (params, weight) in enumerate(zip(masked_params_list, weights)):
+                weighted_sum += params[i] * (weight / total_examples)
+
+            aggregated_params.append(weighted_sum)
+
+        print(f"Secure aggregation completed with {len(results)} clients")
+
+        return ndarrays_to_parameters(aggregated_params)
 
     def aggregate_fit(
         self,
@@ -227,16 +263,7 @@ class FedADNI(FedAvg):
         results: List[Tuple[ClientProxy, FitRes]],
         failures: List[BaseException],
     ) -> Tuple[Optional[Parameters], Dict[str, float]]:
-        """Aggregate model updates from clients.
-
-        Args:
-            server_round: Current round number
-            results: List of tuples of (client_proxy, fit_res)
-            failures: List of client failures
-
-        Returns:
-            Tuple of (aggregated_parameters, metrics)
-        """
+        """Aggregate fit results using secure aggregation with enhanced logging."""
         self.current_round = server_round
 
         # Log client training metrics
@@ -252,62 +279,88 @@ class FedADNI(FedAvg):
                         step=server_round
                     )
 
-        # Aggregate parameters and metrics (let the parent class handle this)
-        aggregated_params, aggregated_metrics = super().aggregate_fit(
-            server_round, results, failures
-        )
+        # Perform secure aggregation
+        aggregated_parameters = self.secure_aggregate(results, server_round)
 
-        # Load aggregated parameters into the server model instance
-        if aggregated_params is not None:
-            aggregated_ndarrays = parameters_to_ndarrays(aggregated_params)
-            model_state_dict = self.model.state_dict()
-            keys = list(model_state_dict.keys())
-            if len(keys) == len(aggregated_ndarrays):
-                new_state_dict = {keys[i]: torch.tensor(aggregated_ndarrays[i]) for i in range(len(keys))}
-                self.model.load_state_dict(new_state_dict)
-                print(f"Server model updated with aggregated parameters for round {server_round}")
-            else:
-                print(f"Warning: Number of aggregated parameters ({len(aggregated_ndarrays)}) does not match model state_dict keys ({len(keys)}). Cannot load parameters.")
+        if aggregated_parameters is None:
+            return None, {}
 
-        # Log aggregated fit metrics
-        if self.wandb_logger and aggregated_metrics:
-            # Remove client_id from aggregated metrics
-            aggregated_metrics.pop("client_id", None)
+        # Update server model with aggregated parameters
+        param_arrays = safe_parameters_to_ndarrays(aggregated_parameters)
+        set_params(self.model, param_arrays)
+
+        # Collect metrics with SecAgg-specific information
+        metrics = {
+            "num_clients": len(results),
+            "num_failures": len(failures),
+            "noise_multiplier": self.noise_multiplier,
+            "dropout_rate": self.dropout_rate,
+        }
+
+        # Log aggregated fit metrics with SecAgg-specific information
+        if self.wandb_logger and metrics:
+            metrics_with_secagg = metrics.copy()
             self.wandb_logger.log_metrics(
-                aggregated_metrics,
+                metrics_with_secagg,
                 prefix="server",
                 step=server_round
             )
-        # Print server model's current loss and accuracy
-        if aggregated_metrics:
-            print(f"Server model metrics after round {server_round}:")
-            for metric_name, metric_value in aggregated_metrics.items():
-                print(f"  {metric_name}: {metric_value:.4f}")
+
+        # Print server model's current metrics
+        print(f"Server model metrics after round {server_round} (SecAgg noise={self.noise_multiplier}, dropout={self.dropout_rate}):")
+        for metric_name, metric_value in metrics.items():
+            print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
         if server_round % self.config.training.checkpoint.save_frequency == 0:
             self._save_checkpoint(self.model.state_dict(), server_round)
 
-        return aggregated_params, aggregated_metrics
+        return aggregated_parameters, metrics
 
-    def configure_evaluate(
-        self,
-        server_round: int,
-        parameters: Parameters,
-        client_manager: ClientManager,
-    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
-        """Configure the next round of evaluation.
+    # Implement required Strategy abstract methods
+    def initialize_parameters(self, client_manager):
+        """Initialize global model parameters."""
+        # Instead of delegating to fedavg_strategy (which returns None),
+        # provide initial parameters from our server model
+        from adni_flwr.task import get_params
+        from flwr.common import ndarrays_to_parameters
 
-        Args:
-            server_round: Current round number
-            parameters: Current global model parameters
-            client_manager: Client manager
+        print("SecAggStrategy: Initializing parameters from server model")
+        ndarrays = get_params(self.model)
+        print(f"SecAggStrategy: Sending {len(ndarrays)} parameter arrays to clients")
+        print(f"SecAggStrategy: First few parameter shapes: {[arr.shape for arr in ndarrays[:5]]}")
 
-        Returns:
-            List of tuples (client_proxy, evaluate_ins)
-        """
+        return ndarrays_to_parameters(ndarrays)
+
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, FitIns]]:
+        """Configure the next round of training."""
         # Get the base configuration from the parent class
-        client_instructions = super().configure_evaluate(
+        client_instructions = self.fedavg_strategy.configure_fit(
+            server_round, parameters, client_manager
+        )
+
+        # Add server_round and SecAgg parameters to the config for each client
+        updated_instructions = []
+        for client_proxy, fit_ins in client_instructions:
+            # Add server_round and SecAgg parameters to the existing config
+            config = fit_ins.config.copy() if fit_ins.config else {}
+            config["server_round"] = server_round
+            config["noise_multiplier"] = self.noise_multiplier
+            config["dropout_rate"] = self.dropout_rate
+
+            # Create new FitIns with updated config
+            updated_fit_ins = FitIns(
+                parameters=fit_ins.parameters,
+                config=config
+            )
+            updated_instructions.append((client_proxy, updated_fit_ins))
+
+        return updated_instructions
+
+    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
+        """Configure the next round of evaluation."""
+        # Get the base configuration from the parent class
+        client_instructions = self.fedavg_strategy.configure_evaluate(
             server_round, parameters, client_manager
         )
 
@@ -333,16 +386,7 @@ class FedADNI(FedAvg):
         results: List[Tuple[ClientProxy, EvaluateRes]],
         failures: List[BaseException],
     ) -> Tuple[Optional[float], Dict[str, float]]:
-        """Aggregate evaluation results from clients.
-
-        Args:
-            server_round: Current round number
-            results: List of tuples of (client_proxy, evaluate_res)
-            failures: List of client failures
-
-        Returns:
-            Tuple of (aggregated_loss, metrics)
-        """
+        """Aggregate evaluation results with enhanced logging."""
         # Print information about results and failures
         print(f"aggregate_evaluate: received {len(results)} results and {len(failures)} failures")
 
@@ -395,7 +439,9 @@ class FedADNI(FedAvg):
                     self.wandb_logger.log_metrics(
                         {
                             "global_accuracy": server_val_accuracy,
-                            "global_loss": server_val_loss
+                            "global_loss": server_val_loss,
+                            "noise_multiplier": self.noise_multiplier,
+                            "dropout_rate": self.dropout_rate
                         },
                         prefix="server",
                         step=server_round
@@ -407,12 +453,14 @@ class FedADNI(FedAvg):
             return None, {
                 "no_client_evaluation": True,
                 "server_val_accuracy": server_val_accuracy or 0.0,
-                "server_evaluation_skipped": not should_evaluate_server
+                "server_evaluation_skipped": not should_evaluate_server,
+                "noise_multiplier": self.noise_multiplier,
+                "dropout_rate": self.dropout_rate
             }
 
         try:
             # Log client evaluation metrics for clients that actually evaluated
-            if self.wandb_logger:
+            if self.wandb_logger and WANDB_AVAILABLE:
                 for client_proxy, eval_res in actual_results:
                     try:
                         client_metrics = eval_res.metrics
@@ -455,7 +503,7 @@ class FedADNI(FedAvg):
                                     client_cm = confusion_matrix(labels, predictions, labels=list(range(num_classes)))
 
                                     # Create a figure for the confusion matrix
-                                    client_title = f'Confusion Matrix - Client {client_id} - Round {server_round}'
+                                    client_title = f'Confusion Matrix - Client {client_id} - Round {server_round} (SecAgg)'
                                     if sample_info != "full_dataset":
                                         client_title += f" ({sample_info})"
 
@@ -510,7 +558,7 @@ class FedADNI(FedAvg):
                     global_cm = confusion_matrix(server_labels, server_predictions, labels=list(range(num_classes)))
 
                     # Plot the global confusion matrix
-                    global_title = f'Global Confusion Matrix (Server Evaluation) - Round {server_round}'
+                    global_title = f'Global Confusion Matrix (Server Evaluation) - Round {server_round} (SecAgg)'
                     global_fig = plot_confusion_matrix(
                         y_true=np.array(server_labels),
                         y_pred=np.array(server_predictions),
@@ -520,12 +568,14 @@ class FedADNI(FedAvg):
                     )
 
                     # Log to wandb
-                    if self.wandb_logger:
+                    if self.wandb_logger and WANDB_AVAILABLE:
                         self.wandb_logger.log_metrics(
                             {
                                 "global_confusion_matrix": wandb.Image(global_fig),
                                 "global_accuracy": server_val_accuracy,
-                                "global_loss": server_val_loss
+                                "global_loss": server_val_loss,
+                                "noise_multiplier": self.noise_multiplier,
+                                "dropout_rate": self.dropout_rate
                             },
                             prefix="server",
                             step=server_round
@@ -537,8 +587,8 @@ class FedADNI(FedAvg):
                 except Exception as e:
                     print(f"Error creating global confusion matrix from server evaluation: {e}")
 
-            # Aggregate metrics from clients that actually evaluated (let the parent class handle this)
-            aggregated_loss, aggregated_metrics = super().aggregate_evaluate(
+            # Aggregate metrics from clients that actually evaluated using base FedAvg
+            aggregated_loss, aggregated_metrics = self.fedavg_strategy.aggregate_evaluate(
                 server_round, actual_results, failures
             )
 
@@ -549,7 +599,11 @@ class FedADNI(FedAvg):
                 try:
                     if aggregated_loss is not None:
                         self.wandb_logger.log_metrics(
-                            {"val_aggregated_loss": aggregated_loss},
+                            {
+                                "val_aggregated_loss": aggregated_loss,
+                                "noise_multiplier": self.noise_multiplier,
+                                "dropout_rate": self.dropout_rate
+                            },
                             prefix="server",
                             step=server_round
                         )
@@ -560,6 +614,9 @@ class FedADNI(FedAvg):
                             if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"]
                             and isinstance(v, (int, float))
                         }
+                        # Add SecAgg-specific information
+                        filtered_metrics["noise_multiplier"] = self.noise_multiplier
+                        filtered_metrics["dropout_rate"] = self.dropout_rate
 
                         if filtered_metrics:  # Only log if there are metrics left
                             self.wandb_logger.log_metrics(
@@ -573,7 +630,9 @@ class FedADNI(FedAvg):
                         self.wandb_logger.log_metrics(
                             {
                                 "global_accuracy": server_val_accuracy,
-                                "global_loss": server_val_loss
+                                "global_loss": server_val_loss,
+                                "noise_multiplier": self.noise_multiplier,
+                                "dropout_rate": self.dropout_rate
                             },
                             prefix="server",
                             step=server_round
@@ -585,7 +644,7 @@ class FedADNI(FedAvg):
             if aggregated_loss is not None:
                 print(f"Server model evaluation loss after round {server_round}: {aggregated_loss:.4f}")
             if aggregated_metrics:
-                print(f"Server model evaluation metrics after round {server_round}:")
+                print(f"Server model evaluation metrics after round {server_round} (SecAgg noise={self.noise_multiplier}, dropout={self.dropout_rate}):")
                 for metric_name, metric_value in aggregated_metrics.items():
                     if metric_name not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"] and isinstance(metric_value, (int, float)):
                         print(f"  {metric_name}: {metric_value:.4f}")
@@ -621,6 +680,8 @@ class FedADNI(FedAvg):
                 aggregated_metrics = {}
 
             aggregated_metrics["server_evaluation_performed"] = should_evaluate_server
+            aggregated_metrics["noise_multiplier"] = self.noise_multiplier
+            aggregated_metrics["dropout_rate"] = self.dropout_rate
             if should_evaluate_server and server_val_accuracy is not None:
                 aggregated_metrics["server_val_accuracy"] = server_val_accuracy
 
@@ -630,169 +691,256 @@ class FedADNI(FedAvg):
             import traceback
             print(f"Error in aggregate_evaluate: {e}")
             print(traceback.format_exc())
-            return None, {"server_evaluation_performed": should_evaluate_server}
+            return None, {
+                "server_evaluation_performed": should_evaluate_server,
+                "noise_multiplier": self.noise_multiplier,
+                "dropout_rate": self.dropout_rate
+            }
+
+    def evaluate(self, server_round, parameters):
+        """Evaluate model parameters."""
+        return self.fedavg_strategy.evaluate(server_round, parameters)
+
+    # Delegate other attributes to FedAvg
+    def __getattr__(self, name):
+        """Delegate unknown attributes to the underlying FedAvg strategy."""
+        return getattr(self.fedavg_strategy, name)
 
 
-# Define metric aggregation function
-def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
-    """Compute weighted average of metrics.
+class SecAggClient(ClientStrategyBase):
+    """Client-side Secure Aggregation strategy."""
 
-    Only processes scalar metrics (int, float) and passes through string metrics.
-    JSON-encoded lists will be passed through for later decoding.
-    """
-    try:
-        if not metrics:
-            print("WARNING: weighted_average received empty metrics list")
-            return {}
+    def __init__(
+        self,
+        config: Config,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        criterion: nn.Module,
+        device: torch.device,
+        noise_multiplier: float = 0.1,
+        dropout_rate: float = 0.0,
+        **kwargs
+    ):
+        """Initialize SecAgg client strategy.
 
-        print(f"Weighted average received {len(metrics)} metrics")
+        Args:
+            config: Configuration object
+            model: PyTorch model
+            optimizer: Optimizer instance
+            criterion: Loss function
+            device: Device to use for computation
+            noise_multiplier: Multiplier for noise addition
+            dropout_rate: Dropout rate for parameter masking
+            **kwargs: Additional strategy parameters
+        """
+        super().__init__(config, model, optimizer, criterion, device, **kwargs)
 
-        filtered_metrics = [(num_examples, dict(m)) for num_examples, m in metrics if isinstance(m, (dict, Mapping)) and m]
-        if not filtered_metrics:
-            print("WARNING: weighted_average filtered metrics list is empty after filtering")
-            return {}
+        self.noise_multiplier = noise_multiplier
+        self.dropout_rate = dropout_rate
+        self.client_id = getattr(config.fl, 'client_id', 'unknown')
+        self.current_round = 0
 
-        # Get all metric names that are present in at least one client
-        all_metric_names = set()
-        for _, m in filtered_metrics:
-            all_metric_names.update(name for name in m.keys() if isinstance(name, str))
+        # SecAgg-specific parameters
+        self.mixed_precision = config.training.mixed_precision
+        self.gradient_accumulation_steps = config.training.gradient_accumulation_steps
 
-        print(f"Metric names present: {all_metric_names}")
+        # Initialize mixed precision scaler
+        self.scaler = torch.cuda.amp.GradScaler() if self.mixed_precision else None
 
-        acc_metrics = {}
-        for name in all_metric_names:
-            # Get all clients that reported this metric
-            client_data = [(num_examples, m.get(name)) for num_examples, m in filtered_metrics if name in m]
+    def get_strategy_name(self) -> str:
+        """Return the strategy name."""
+        return "secagg"
 
-            # Skip empty data
-            if not client_data:
-                continue
+    def generate_client_mask(self, round_num: int) -> List[np.ndarray]:
+        """Generate a deterministic mask for this client.
 
-            # Sample value to determine type
-            sample_value = client_data[0][1]
+        Args:
+            round_num: Current round number
 
-            # Handle scalar metrics (compute weighted average)
-            if all(isinstance(value, (int, float)) for _, value in client_data):
-                try:
-                    weighted_values = [float(value) * num_examples for num_examples, value in client_data]
-                    total_examples = sum(num_examples for num_examples, _ in client_data)
-                    if total_examples > 0:
-                        acc_metrics[name] = sum(weighted_values) / total_examples
-                except Exception as e:
-                    print(f"Error processing scalar metric '{name}': {e}")
+        Returns:
+            List of numpy array masks
+        """
+        # Create deterministic seed from client_id and round
+        seed_str = f"{self.client_id}_{round_num}_{self.noise_multiplier}"
+        seed = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2**32)
 
-            # Pass through string metrics (like JSON-encoded lists)
-            elif name in ["predictions_json", "labels_json", "sample_info", "client_id"] and isinstance(sample_value, str):
-                # Use the first client's value (arbitrary choice)
-                acc_metrics[name] = sample_value
-                print(f"Passing through string metric '{name}' with length {len(sample_value)}")
+        # Set numpy random seed for reproducibility
+        np.random.seed(seed)
 
-            # Other scalar values (like num_classes)
-            elif name == "num_classes" and isinstance(sample_value, (int, float)):
-                # Use the first client's value
-                acc_metrics[name] = sample_value
+        # Generate mask with same shape as model parameters
+        model_params = get_params(self.model)
+        mask = []
 
-            # Error for other types that shouldn't be here
+        for param_array in model_params:
+            # Generate random mask for each parameter array
+            param_mask = np.random.uniform(-1, 1, param_array.shape)
+            mask.append(param_mask)
+
+        return mask
+
+    def add_noise_to_parameters(self, params: List[np.ndarray]) -> List[np.ndarray]:
+        """Add noise to parameters for privacy.
+
+        Args:
+            params: List of parameter arrays
+
+        Returns:
+            List of noisy parameter arrays
+        """
+        noisy_params = []
+
+        for param_array in params:
+            # Add Gaussian noise
+            noise = np.random.normal(0, self.noise_multiplier, param_array.shape)
+            noisy_param = param_array + noise
+            noisy_params.append(noisy_param)
+
+        return noisy_params
+
+    def apply_dropout_mask(self, params: List[np.ndarray]) -> List[np.ndarray]:
+        """Apply dropout mask to parameters.
+
+        Args:
+            params: List of parameter arrays
+
+        Returns:
+            List of masked parameter arrays
+        """
+        if self.dropout_rate == 0.0:
+            return params
+
+        masked_params = []
+
+        for param_array in params:
+            # Create dropout mask
+            mask = np.random.binomial(1, 1-self.dropout_rate, param_array.shape)
+            masked_param = param_array * mask
+            masked_params.append(masked_param)
+
+        return masked_params
+
+    def prepare_for_round(self, server_params: Parameters, round_config: Dict[str, Any]):
+        """Prepare the client for a new training round.
+
+        Args:
+            server_params: Parameters from server
+            round_config: Configuration for this round
+        """
+        # Convert parameters to numpy arrays safely
+        param_arrays = safe_parameters_to_ndarrays(server_params)
+
+        # Update model with server parameters
+        set_params(self.model, param_arrays)
+
+        # Update round number
+        self.current_round = round_config.get("server_round", self.current_round + 1)
+
+        # Reset optimizer state
+        self.optimizer.zero_grad()
+
+        # Update parameters if specified in round config
+        if "noise_multiplier" in round_config:
+            self.noise_multiplier = round_config["noise_multiplier"]
+        if "dropout_rate" in round_config:
+            self.dropout_rate = round_config["dropout_rate"]
+
+    def train_epoch(
+        self,
+        train_loader: DataLoader,
+        epoch: int,
+        total_epochs: int,
+        **kwargs
+    ) -> Tuple[float, float]:
+        """Train the model for one epoch using SecAgg.
+
+        Args:
+            train_loader: Training data loader
+            epoch: Current epoch number
+            total_epochs: Total number of epochs
+            **kwargs: Additional training parameters
+
+        Returns:
+            Tuple of (loss, accuracy)
+        """
+        self.model.train()
+        total_loss = 0.0
+        total_correct = 0
+        total_samples = 0
+
+        for batch_idx, batch in enumerate(train_loader):
+            images = batch["image"].to(self.device)
+            labels = batch["label"].to(self.device)
+
+            # Mixed precision training
+            if self.mixed_precision and self.scaler is not None:
+                with torch.cuda.amp.autocast():
+                    outputs = self.model(images)
+                    loss = self.criterion(outputs, labels)
+                    loss = loss / self.gradient_accumulation_steps
+
+                self.scaler.scale(loss).backward()
+
+                if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or batch_idx == len(train_loader) - 1:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
             else:
-                print(f"Skipping metric '{name}' with type {type(sample_value).__name__} - not supported for aggregation")
+                outputs = self.model(images)
+                loss = self.criterion(outputs, labels)
+                loss = loss / self.gradient_accumulation_steps
+                loss.backward()
 
-        print(f"Aggregated metrics keys: {list(acc_metrics.keys())}")
-        return acc_metrics
-    except Exception as e:
-        import traceback
-        print(f"Error in weighted_average: {e}")
-        print(traceback.format_exc())
-        return {}
+                if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or batch_idx == len(train_loader) - 1:
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
 
+            # Track metrics
+            total_loss += loss.item() * self.gradient_accumulation_steps
+            _, predicted = torch.max(outputs.data, 1)
+            total_samples += labels.size(0)
+            total_correct += (predicted == labels).sum().item()
 
-def server_fn(context: Context):
-    """Server factory function.
+        avg_loss = total_loss / len(train_loader)
+        avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
 
-    Args:
-        context: Context containing server configuration
+        return avg_loss, avg_accuracy
 
-    Returns:
-        Server components for the FL application
-    """
-    try:
-        # Get server config file from app config
-        server_config_file = context.run_config.get("server-config-file")
-        if not server_config_file or not os.path.exists(server_config_file):
-            raise ValueError(f"Server config file not found: {server_config_file}")
+    def get_secure_parameters(self) -> List[np.ndarray]:
+        """Get model parameters with secure masking applied.
 
-        # Load the standardized Config object
-        config = Config.from_yaml(server_config_file)
+        Returns:
+            List of masked parameter arrays
+        """
+        # Get current model parameters
+        params = get_params(self.model)
 
-        # Create WandB logger with the Config object
-        wandb_logger = FLWandbLogger(config)
-        wandb_logger.init_wandb()
+        # Apply dropout mask
+        params = self.apply_dropout_mask(params)
 
-        # Initialize model using the Config object
-        model = load_model(config)  # Assuming load_model can accept the Config object
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+        # Add noise for privacy
+        params = self.add_noise_to_parameters(params)
 
-        # Debug server model after loading
-        debug_model_architecture(model, "Server Model (after initialization)")
+        # Generate and apply client mask
+        client_mask = self.generate_client_mask(self.current_round)
+        masked_params = []
 
-        # Convert initial model parameters to flwr.common.Parameters
-        ndarrays = get_params(model)
-        initial_parameters = ndarrays_to_parameters(ndarrays)
+        for param, mask in zip(params, client_mask):
+            masked_param = param + mask
+            masked_params.append(masked_param)
 
-        # Get FL-specific parameters from config
-        fl_config = config.fl  # Access FLConfig
-        num_rounds = fl_config.num_rounds
-        fraction_fit = fl_config.fraction_fit
-        fraction_evaluate = fl_config.fraction_evaluate
-        min_fit_clients = fl_config.min_fit_clients
-        min_evaluate_clients = fl_config.min_evaluate_clients
-        min_available_clients = fl_config.min_available_clients
+        return masked_params
 
-        # Determine which strategy to use from config
-        strategy_name = getattr(fl_config, 'strategy', 'fedavg')
-        print(f"Using FL strategy: {strategy_name}")
+    def get_custom_metrics(self) -> Dict[str, Any]:
+        """Return custom SecAgg-specific metrics.
 
-        # Validate strategy configuration
-        StrategyFactory.validate_strategy_config(strategy_name, config)
-
-        # Create strategy using factory
-        try:
-            # Create strategy with weighted_average function
-            strategy = StrategyFactory.create_server_strategy(
-                strategy_name=strategy_name,
-                config=config,
-                model=model,
-                wandb_logger=wandb_logger,
-                evaluate_metrics_aggregation_fn=weighted_average,
-                fit_metrics_aggregation_fn=weighted_average
-            )
-        except Exception as e:
-            print(f"Error creating strategy with original weighted_average: {e}")
-            print("Falling back to safe_weighted_average...")
-
-            # If that fails, try with our safe implementation
-            strategy = StrategyFactory.create_server_strategy(
-                strategy_name=strategy_name,
-                config=config,
-                model=model,
-                wandb_logger=wandb_logger,
-                evaluate_metrics_aggregation_fn=safe_weighted_average,
-                fit_metrics_aggregation_fn=safe_weighted_average
-            )
-
-        # Create server configuration
-        server_config = ServerConfig(num_rounds=num_rounds)
-
-        # Return server components
-        return ServerAppComponents(strategy=strategy, config=server_config)
-
-    except Exception as e:
-        import traceback
-        print(f"Error in server_fn: {e}")
-        print(traceback.format_exc())
-        # Still need to return a ServerAppComponents object
-        raise
-
-
-# Create the server app
-app = ServerApp(server_fn=server_fn)
+        Returns:
+            Dictionary of custom metrics
+        """
+        return {
+            "noise_multiplier": self.noise_multiplier,
+            "dropout_rate": self.dropout_rate,
+            "client_id": self.client_id,
+            "current_round": self.current_round,
+            "mixed_precision": self.mixed_precision,
+            "gradient_accumulation_steps": self.gradient_accumulation_steps,
+        }

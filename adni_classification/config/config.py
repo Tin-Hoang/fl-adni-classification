@@ -158,11 +158,12 @@ class Config:
             # If output directory is specified but doesn't match run_name, append run_name
             self.training.output_dir = os.path.join(self.training.output_dir, f"{self.wandb.run_name}")
 
-        if self.fl.checkpoint_dir == "checkpoints" or not self.fl.checkpoint_dir:
-            self.fl.checkpoint_dir = os.path.join("checkpoints", f"{self.wandb.run_name}")
-        elif os.path.basename(self.fl.checkpoint_dir) != self.wandb.run_name:
-            # If checkpoint directory is specified but doesn't match run_name, append run_name
-            self.fl.checkpoint_dir = os.path.join(self.fl.checkpoint_dir, f"{self.wandb.run_name}")
+        # Note: FL checkpoints will be stored in {training.output_dir}/checkpoints/
+
+    @property
+    def checkpoint_dir(self) -> str:
+        """Get the checkpoint directory derived from training.output_dir."""
+        return os.path.join(self.training.output_dir, "checkpoints")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Config object to a dictionary."""
@@ -225,8 +226,12 @@ class Config:
                 "min_available_clients": self.fl.min_available_clients,
                 "local_epochs": self.fl.local_epochs,
                 "client_config_files": self.fl.client_config_files,
-                "checkpoint_dir": self.fl.checkpoint_dir,
                 "evaluate_frequency": self.fl.evaluate_frequency,
+                "use_strategy_system": self.fl.use_strategy_system,
+                "fedprox_mu": self.fl.fedprox_mu,
+                "secagg_noise_multiplier": self.fl.secagg_noise_multiplier,
+                "secagg_dropout_rate": self.fl.secagg_dropout_rate,
+                "client_id": self.fl.client_id,
             },
             "wandb": {
                 "use_wandb": self.wandb.use_wandb,
