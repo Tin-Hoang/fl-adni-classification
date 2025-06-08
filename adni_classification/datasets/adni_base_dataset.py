@@ -70,10 +70,10 @@ class ADNIBaseDataset:
 
         # Map diagnosis groups to numeric labels based on detected format and classification mode
         if self.classification_mode == "CN_AD":
-            # Binary classification - CN=0, AD=1, MCI->CN=0
-            self.label_map = {"CN": 0, "MCI": 0, "AD": 1, "Dementia": 1}
+            # Binary classification - CN=0, AD=1, MCI->AD=1
+            self.label_map = {"CN": 0, "MCI": 1, "AD": 1, "Dementia": 1}
             if self.verbose:
-                print(f"Using binary classification mode (CN_AD): CN=0, MCI->CN=0, AD/Dementia=1")
+                print(f"Using binary classification mode (CN_AD): CN=0, MCI->AD=1, AD/Dementia=1")
         else:  # Default: "CN_MCI_AD"
             # 3-class classification - CN=0, MCI=1, AD=2
             self.label_map = {"CN": 0, "MCI": 1, "AD": 2, "Dementia": 2}
