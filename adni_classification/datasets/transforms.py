@@ -19,6 +19,11 @@ from monai.transforms import (
     RandFlipd,
     RandRotated,
     RandZoomd,
+    RandShiftIntensityd,
+    RandScaleIntensityd,
+    RandBiasFieldd,
+    RandGibbsNoised,
+    RandRicianNoised,
 )
 
 
@@ -27,7 +32,8 @@ def get_transforms(mode: str = "train",
                   resize_mode: str = "trilinear",
                   use_spacing: bool = True,
                   spacing_size: Tuple[float, float, float] = (1.5, 1.5, 1.5),
-                  device: Optional[Union[str, torch.device]] = None) -> monai.transforms.Compose:
+                  device: Optional[Union[str, torch.device]] = None,
+                  augmentation_strength: str = "moderate") -> monai.transforms.Compose:
     """Get transforms for training or validation.
 
     Args:
@@ -37,6 +43,7 @@ def get_transforms(mode: str = "train",
         use_spacing: Whether to include the Spacing transform (default: True)
         spacing_size: Tuple of (x, y, z) spacing in mm (default: (1.5, 1.5, 1.5))
         device: Device to use for transforms (default: None, will use CPU)
+        augmentation_strength: "mild", "moderate", or "strong" augmentation (default: "strong")
 
     Returns:
         A Compose transform
@@ -82,48 +89,126 @@ def get_transforms(mode: str = "train",
     ])
 
     if mode == "train":
+        # Define augmentation parameters based on strength
+        if augmentation_strength == "mild":
+            flip_prob = 0.3
+            affine_prob = 0.3
+            elastic_prob = 0.2
+            noise_std = 0.01
+            contrast_gamma = (0.95, 1.05)
+            rotation_range = 0.087  # ±5 degrees
+            scale_range = 0.05  # ±5%
+            translate_range = 3
+        elif augmentation_strength == "moderate":
+            flip_prob = 0.5
+            affine_prob = 0.4
+            elastic_prob = 0.3
+            noise_std = 0.02
+            contrast_gamma = (0.9, 1.1)
+            rotation_range = 0.17  # ±10 degrees
+            scale_range = 0.1  # ±10%
+            translate_range = 5
+        else:  # strong
+            flip_prob = 0.7
+            affine_prob = 0.6
+            elastic_prob = 0.5
+            noise_std = 0.05
+            contrast_gamma = (0.8, 1.2)
+            rotation_range = 0.26  # ±15 degrees
+            scale_range = 0.15  # ±15%
+            translate_range = 8
+
         train_transforms = [
-            # Flip along the left-right axis (x-axis) with 50% probability
+            # 1. Flip along the left-right axis (x-axis) - More aggressive probability
             RandFlipd(
                 keys=["image"],
                 spatial_axis=0,
-                prob=0.2
+                prob=flip_prob
             ),
-            # Apply affine transformation
+
+            # 2. Enhanced affine transformation with more variation
             RandAffined(
                 keys=["image"],
-                rotate_range=(0.17, 0.17, 0.17),  # ±10 degrees
-                scale_range=(0.1, 0.1, 0.1),      # ±10% scaling
-                translate_range=5,                # ±5 voxels
-                prob=0.2,
+                rotate_range=(rotation_range, rotation_range, rotation_range),
+                scale_range=(scale_range, scale_range, scale_range),
+                translate_range=translate_range,
+                prob=affine_prob,
                 mode="bilinear",
-                padding_mode="border",
+                padding_mode="constant",
                 spatial_size=resize_size,
                 device=device
             ),
-            # Apply elastic deformation
+
+            # 3. More aggressive elastic deformation
             Rand3DElasticd(
                 keys=["image"],
-                sigma_range=(5, 8),
-                magnitude_range=(5, 15),
+                sigma_range=(3, 10),  # Increased range
+                magnitude_range=(3, 20),  # Increased magnitude
                 spatial_size=resize_size,
-                padding_mode="border",
-                prob=0.2,
+                padding_mode="constant",
+                prob=elastic_prob,
                 mode="bilinear",
                 device=device
             ),
 
-            # Add Gaussian noise
+            # 4. Enhanced Gaussian noise - more realistic for MRI
             RandGaussianNoised(
                 keys=["image"],
-                prob=0.2,
-                std=0.01
+                prob=0.6,
+                std=noise_std
             ),
-            # Adjust contrast
+
+            # 5. More aggressive contrast adjustment
             RandAdjustContrastd(
                 keys=["image"],
+                prob=0.6,
+                gamma=contrast_gamma
+            ),
+
+            # 6. NEW: Intensity shifting (simulates scanner differences)
+            RandShiftIntensityd(
+                keys=["image"],
+                prob=0.5,
+                offsets=(-0.1, 0.1)
+            ),
+
+            # 7. NEW: Intensity scaling (simulates acquisition variations)
+            RandScaleIntensityd(
+                keys=["image"],
+                prob=0.5,
+                factors=(-0.2, 0.2)
+            ),
+
+            # 8. NEW: Simulated bias field (common MRI artifact)
+            RandBiasFieldd(
+                keys=["image"],
+                prob=0.3,
+                coeff_range=(0.0, 0.1),
+                degree=3
+            ),
+
+            # 9. NEW: Random zoom (different from scaling in affine)
+            RandZoomd(
+                keys=["image"],
+                prob=0.4,
+                min_zoom=0.8,
+                max_zoom=1.2,
+                mode="bilinear",
+                padding_mode="constant"
+            ),
+
+            # 10. NEW: Gibbs noise (simulates k-space artifacts)
+            RandGibbsNoised(
+                keys=["image"],
                 prob=0.2,
-                gamma=(0.9, 1.1)
+                alpha=(0.0, 1.0)
+            ),
+
+            # 11. NEW: Rician noise (more appropriate for MRI than Gaussian)
+            RandRicianNoised(
+                keys=["image"],
+                prob=0.3,
+                std=0.02  # Single value instead of tuple
             ),
 
             # Convert to tensor
@@ -345,3 +430,133 @@ def test_transforms():
 # Allow direct execution of this module
 if __name__ == "__main__":
     test_transforms()
+
+
+def get_adni_augmentation_config(overfitting_level: str = "high") -> dict:
+    """Get recommended augmentation configuration for ADNI dataset based on overfitting level.
+
+    Args:
+        overfitting_level: "low", "medium", "high", or "severe" - based on train/val accuracy gap
+
+    Returns:
+        Dictionary with augmentation parameters
+
+    Examples:
+        For 97% train / 72% val accuracy (25% gap = severe overfitting):
+        config = get_adni_augmentation_config("severe")
+
+        For 90% train / 80% val accuracy (10% gap = medium overfitting):
+        config = get_adni_augmentation_config("medium")
+    """
+    configs = {
+        "low": {  # <5% gap
+            "augmentation_strength": "mild",
+            "description": "Light augmentation for well-balanced models"
+        },
+        "medium": {  # 5-15% gap
+            "augmentation_strength": "moderate",
+            "description": "Moderate augmentation for some overfitting"
+        },
+        "high": {  # 15-25% gap
+            "augmentation_strength": "strong",
+            "description": "Strong augmentation for significant overfitting"
+        },
+        "severe": {  # >25% gap
+            "augmentation_strength": "strong",
+            "additional_transforms": [
+                "test_time_augmentation",
+                "mixup",
+                "cutmix"
+            ],
+            "description": "Maximum augmentation for severe overfitting (like your 97%/72% case)"
+        }
+    }
+
+    return configs.get(overfitting_level, configs["high"])
+
+
+def get_brain_mri_specific_transforms(augmentation_strength: str = "strong") -> list:
+    """Get brain MRI-specific augmentation transforms that preserve anatomical validity.
+
+    These transforms are specifically designed for brain MRI data and are based on:
+    - BraTS 2018 challenge best practices
+    - Research from Nalepa et al. 2019 on brain tumor segmentation
+    - MONAI brain MRI transformation guidelines
+
+    Args:
+        augmentation_strength: "mild", "moderate", or "strong"
+
+    Returns:
+        List of MONAI transforms for brain MRI
+    """
+    from monai.transforms import (
+        RandFlipd, RandAffined, Rand3DElasticd, RandGaussianNoised,
+        RandAdjustContrastd, RandShiftIntensityd, RandScaleIntensityd,
+        RandBiasFieldd, RandZoomd, RandGibbsNoised, RandRicianNoised
+    )
+
+    # Configure parameters based on strength
+    if augmentation_strength == "mild":
+        params = {
+            "flip_prob": 0.3, "affine_prob": 0.3, "elastic_prob": 0.2,
+            "noise_std": 0.01, "contrast_gamma": (0.95, 1.05),
+            "rotation_range": 0.087, "scale_range": 0.05, "translate_range": 3
+        }
+    elif augmentation_strength == "moderate":
+        params = {
+            "flip_prob": 0.5, "affine_prob": 0.4, "elastic_prob": 0.3,
+            "noise_std": 0.02, "contrast_gamma": (0.9, 1.1),
+            "rotation_range": 0.17, "scale_range": 0.1, "translate_range": 5
+        }
+    else:  # strong - recommended for severe overfitting
+        params = {
+            "flip_prob": 0.7, "affine_prob": 0.6, "elastic_prob": 0.5,
+            "noise_std": 0.05, "contrast_gamma": (0.8, 1.2),
+            "rotation_range": 0.26, "scale_range": 0.15, "translate_range": 8
+        }
+
+    transforms = [
+        # Core geometric augmentations (anatomically valid for brain)
+        RandFlipd(keys=["image"], spatial_axis=0, prob=params["flip_prob"]),
+
+        RandAffined(
+            keys=["image"],
+            rotate_range=(params["rotation_range"],) * 3,
+            scale_range=(params["scale_range"],) * 3,
+            translate_range=params["translate_range"],
+            prob=params["affine_prob"],
+            mode="bilinear",
+            padding_mode="constant"
+        ),
+
+        # Elastic deformation (preserves topology)
+        Rand3DElasticd(
+            keys=["image"],
+            sigma_range=(3, 10),
+            magnitude_range=(3, 20),
+            prob=params["elastic_prob"],
+            mode="bilinear",
+            padding_mode="constant"
+        ),
+
+        # MRI-specific intensity augmentations
+        RandGaussianNoised(keys=["image"], prob=0.6, std=params["noise_std"]),
+        RandAdjustContrastd(keys=["image"], prob=0.6, gamma=params["contrast_gamma"]),
+
+        # Scanner variation simulation
+        RandShiftIntensityd(keys=["image"], prob=0.5, offsets=(-0.1, 0.1)),
+        RandScaleIntensityd(keys=["image"], prob=0.5, factors=(-0.2, 0.2)),
+
+        # MRI artifact simulation
+        RandBiasFieldd(keys=["image"], prob=0.3, coeff_range=(0.0, 0.1), degree=3),
+        RandGibbsNoised(keys=["image"], prob=0.2, alpha=(0.0, 1.0)),
+        RandRicianNoised(keys=["image"], prob=0.3, std=0.02),
+
+        # Additional geometric variation
+        RandZoomd(
+            keys=["image"], prob=0.4, min_zoom=0.8, max_zoom=1.2,
+            mode="bilinear", padding_mode="constant"
+        ),
+    ]
+
+    return transforms
