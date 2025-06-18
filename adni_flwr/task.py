@@ -486,6 +486,7 @@ def load_data(
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
         classification_mode=config.data.classification_mode,
+        mci_subtype_filter=config.data.mci_subtype_filter,
     )
 
     val_dataset = create_adni_dataset(
@@ -497,6 +498,7 @@ def load_data(
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
         classification_mode=config.data.classification_mode,
+        mci_subtype_filter=config.data.mci_subtype_filter,
     )
 
     # Create data loaders with optimized multiprocessing settings

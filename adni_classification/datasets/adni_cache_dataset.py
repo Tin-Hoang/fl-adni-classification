@@ -2,7 +2,7 @@
 
 import monai
 from monai.data import CacheDataset
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from adni_classification.datasets.adni_base_dataset import ADNIBaseDataset
 
@@ -25,6 +25,7 @@ class ADNICacheDataset(CacheDataset):
         num_workers: int = 0,
         cache_num: Optional[int] = None,
         classification_mode: str = "CN_MCI_AD",
+        mci_subtype_filter: Optional[Union[str, List[str]]] = None,
     ):
         """Initialize the dataset.
 
@@ -36,12 +37,17 @@ class ADNICacheDataset(CacheDataset):
             num_workers: Number of subprocesses to use for data loading (default: 0)
             cache_num: Number of items to cache. Default: None (cache_rate * len(data))
             classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
+            mci_subtype_filter: Optional filter for MCI subtypes in CN_AD mode.
+                               Can be a single subtype (str) or list of subtypes (List[str]).
+                               Valid subtypes: "SMC", "EMCI", "LMCI". Use None to include all MCI.
+                               Examples: "EMCI", ["EMCI", "LMCI"], or None
         """
         # Initialize the base class to handle common functionality
         self.base = ADNIBaseDataset(
             csv_path=csv_path,
             img_dir=img_dir,
             classification_mode=classification_mode,
+            mci_subtype_filter=mci_subtype_filter,
             verbose=True
         )
 

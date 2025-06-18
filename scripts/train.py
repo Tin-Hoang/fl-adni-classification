@@ -549,6 +549,7 @@ def main():
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
         classification_mode=config.data.classification_mode,
+        mci_subtype_filter=config.data.mci_subtype_filter,
     )
     val_dataset = create_adni_dataset(
         dataset_type=dataset_type,
@@ -559,6 +560,7 @@ def main():
         num_workers=config.data.cache_num_workers,
         cache_dir=config.data.cache_dir,
         classification_mode=config.data.classification_mode,
+        mci_subtype_filter=config.data.mci_subtype_filter,
     )
 
     # Add this code to examine class distribution

@@ -27,6 +27,7 @@ class DataConfig:
     transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
     multiprocessing_context: str = "spawn"  # Options: "spawn", "fork", "forkserver"
     classification_mode: str = "CN_MCI_AD"  # Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
+    mci_subtype_filter: Optional[Union[str, List[str]]] = None  # Optional filter for MCI subtypes in CN_AD mode. Can be a single subtype (str) or list of subtypes (List[str]). Valid subtypes: "SMC", "EMCI", "LMCI"
 
 
 @dataclass
@@ -184,6 +185,7 @@ class Config:
                 "transform_device": self.data.transform_device,
                 "multiprocessing_context": self.data.multiprocessing_context,
                 "classification_mode": self.data.classification_mode,
+                "mci_subtype_filter": self.data.mci_subtype_filter,
             },
             "model": {
                 "name": self.model.name,

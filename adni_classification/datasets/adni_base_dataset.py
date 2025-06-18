@@ -5,7 +5,7 @@ This module provides a base class with common functionality for all ADNI dataset
 
 import os
 import pandas as pd
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import torch
 
 
@@ -35,7 +35,9 @@ class ADNIBaseDataset:
 
     Classification modes:
     - CN_MCI_AD: 3-class classification (CN=0, MCI=1, AD/Dementia=2)
-    - CN_AD: 2-class classification (CN=0, AD/Dementia=1), where MCI samples are converted to CN
+    - CN_AD: 2-class classification (CN=0, AD/Dementia=1), where MCI samples are converted to AD
+      In CN_AD mode, users can optionally filter MCI samples further by DX_bl column to include
+      only specific MCI subtypes: SMC (Significant Memory Concern), EMCI (Early MCI), or LMCI (Late MCI)
     """
 
     def __init__(
@@ -43,6 +45,7 @@ class ADNIBaseDataset:
         csv_path: str,
         img_dir: str,
         classification_mode: str = "CN_MCI_AD",
+        mci_subtype_filter: Optional[Union[str, List[str]]] = None,
         verbose: bool = True
     ):
         """Initialize the base dataset.
@@ -51,16 +54,45 @@ class ADNIBaseDataset:
             csv_path: Path to the CSV file containing image metadata and labels
             img_dir: Path to the directory containing the image files
             classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
+            mci_subtype_filter: Optional filter for MCI subtypes in CN_AD mode.
+                               Can be a single subtype (str) or list of subtypes (List[str]).
+                               Valid subtypes: "SMC", "EMCI", "LMCI". Use None to include all MCI.
+                               Examples: "EMCI", ["EMCI", "LMCI"], or None
             verbose: Whether to print detailed information during initialization
         """
         self.csv_path = csv_path
         self.img_dir = img_dir
         self.classification_mode = classification_mode
+        self.mci_subtype_filter = mci_subtype_filter
         self.verbose = verbose
+
+        # Validate mci_subtype_filter parameter
+        valid_mci_subtypes = ["CN", "SMC", "EMCI", "LMCI", "AD"]
+        if self.mci_subtype_filter is not None:
+            # Normalize to list format for easier processing
+            if isinstance(self.mci_subtype_filter, str):
+                self.mci_subtype_filter = [self.mci_subtype_filter]
+            elif isinstance(self.mci_subtype_filter, list):
+                if len(self.mci_subtype_filter) == 0:
+                    raise ValueError("mci_subtype_filter list cannot be empty")
+            else:
+                raise ValueError("mci_subtype_filter must be a single subtype (str) or a list of subtypes (List[str])")
+
+            # Validate all subtypes
+            for subtype in self.mci_subtype_filter:
+                if subtype not in valid_mci_subtypes:
+                    raise ValueError(f"Invalid subtype: {subtype}. Valid subtypes are: {valid_mci_subtypes}")
+
+            # Check classification mode
+            if self.classification_mode != "CN_AD":
+                raise ValueError("mci_subtype_filter can only be used with classification_mode='CN_AD'")
 
         if self.verbose:
             print("="*80)
             print(f"Initializing dataset with CSV path: {csv_path} and image directory: {img_dir}")
+            if self.mci_subtype_filter is not None:
+                subtypes_str = ", ".join(self.mci_subtype_filter)
+                print(f"MCI subtype filter enabled: Only including [{subtypes_str}] samples from MCI group")
 
         # Load the CSV file
         self.data = pd.read_csv(csv_path)
@@ -170,12 +202,72 @@ class ADNIBaseDataset:
         if self.csv_format == "original":
             # Filter out rows with missing labels
             self.data = self.data[self.data["Group"].isin(["AD", "MCI", "CN"])]
+
+            # Store original Group distribution for verbose output
+            if self.verbose:
+                original_group_counts = self.data["Group"].value_counts().sort_index()
+
+            # Apply MCI subtype filtering for CN_AD mode if specified
+            if self.classification_mode == "CN_AD" and self.mci_subtype_filter is not None:
+                if "DX_bl" not in self.data.columns:
+                    raise ValueError("DX_bl column is required for MCI subtype filtering but not found in the CSV file")
+
+                # Keep all non-MCI samples and only MCI samples with the specified DX_bl values
+                mci_mask = self.data["Group"] == "MCI"
+                non_mci_data = self.data[~mci_mask]
+                mci_data = self.data[mci_mask]
+
+                # Filter MCI data by DX_bl column - support multiple subtypes
+                filtered_mci_data = mci_data[mci_data["DX_bl"].isin(self.mci_subtype_filter)]
+
+                # Combine filtered data
+                self.data = pd.concat([non_mci_data, filtered_mci_data], ignore_index=True)
+
+                if self.verbose:
+                    # Show DX_bl distribution of all MCI samples before filtering
+                    print("DX_bl distribution of MCI samples (before subtype filtering):")
+                    mci_dx_bl_counts = mci_data["DX_bl"].value_counts().sort_index()
+                    for dx_bl, count in mci_dx_bl_counts.items():
+                        print(f"  {dx_bl}: {count}")
+
+                    subtypes_str = ", ".join(self.mci_subtype_filter)
+                    print(f"Applied MCI subtype filtering: {len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples")
         else:  # alternative format
             # Map DX column values to standard Group values
             dx_to_group = {"Dementia": "AD", "MCI": "MCI", "CN": "CN"}
 
             # Filter out rows with missing or invalid labels
             self.data = self.data[self.data["DX"].isin(list(dx_to_group.keys()))]
+
+            # Store original DX distribution for verbose output
+            if self.verbose:
+                original_dx_counts = self.data["DX"].value_counts().sort_index()
+
+            # Apply MCI subtype filtering for CN_AD mode if specified
+            if self.classification_mode == "CN_AD" and self.mci_subtype_filter is not None:
+                if "DX_bl" not in self.data.columns:
+                    raise ValueError("DX_bl column is required for MCI subtype filtering but not found in the CSV file")
+
+                # Keep all non-MCI samples and only MCI samples with the specified DX_bl values
+                mci_mask = self.data["DX"] == "MCI"
+                non_mci_data = self.data[~mci_mask]
+                mci_data = self.data[mci_mask]
+
+                # Filter MCI data by DX_bl column - support multiple subtypes
+                filtered_mci_data = mci_data[mci_data["DX_bl"].isin(self.mci_subtype_filter)]
+
+                # Combine filtered data
+                self.data = pd.concat([non_mci_data, filtered_mci_data], ignore_index=True)
+
+                if self.verbose:
+                    # Show DX_bl distribution of all MCI samples before filtering
+                    print("DX_bl distribution of MCI samples (before subtype filtering):")
+                    mci_dx_bl_counts = mci_data["DX_bl"].value_counts().sort_index()
+                    for dx_bl, count in mci_dx_bl_counts.items():
+                        print(f"  {dx_bl}: {count}")
+
+                    subtypes_str = ", ".join(self.mci_subtype_filter)
+                    print(f"Applied MCI subtype filtering: {len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples")
 
             # Create standardized columns
             self.data["Group"] = self.data["DX"].map(dx_to_group)
@@ -197,7 +289,18 @@ class ADNIBaseDataset:
         if self.verbose:
             # Print summary of the standardized data
             print(f"Total samples after standardization: {len(self.data)}")
-            print("Group distribution:")
+
+            # Show original data distribution before filtering
+            if self.csv_format == "original":
+                print("Original Group distribution (before filtering):")
+                for group, count in original_group_counts.items():
+                    print(f"  {group}: {count}")
+            else:  # alternative format
+                print("Original DX distribution (before filtering):")
+                for dx, count in original_dx_counts.items():
+                    print(f"  {dx}: {count}")
+
+            print("Final Group distribution (after filtering):")
             for group, count in self.data["Group"].value_counts().items():
                 print(f"  {group}: {count}")
 
@@ -207,6 +310,9 @@ class ADNIBaseDataset:
             for label, count in class_counts.items():
                 class_name = "CN" if label == 0 else "AD" if (label == 1 and self.classification_mode == "CN_AD") else "MCI" if (label == 1 and self.classification_mode == "CN_MCI_AD") else "AD"
                 print(f"  Class {label} ({class_name}): {count}")
+                if self.classification_mode == "CN_AD" and label == 1 and self.mci_subtype_filter is not None:
+                    subtypes_str = ", ".join(self.mci_subtype_filter)
+                    print(f"    (AD samples include [{subtypes_str}] MCI subtypes)")
 
     def _find_image_files(self, root_dir: str) -> Dict[str, str]:
         """Find all .nii and .nii.gz files in the root directory and map them to Image IDs.

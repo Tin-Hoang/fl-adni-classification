@@ -32,6 +32,7 @@ class ADNISmartCacheDataset(SmartCacheDataset):
         copy_cache: bool = True,
         cache_num: Optional[int] = None,
         classification_mode: str = "CN_MCI_AD",
+        mci_subtype_filter: Optional[Union[str, List[str]]] = None,
     ):
         """Initialize the dataset.
 
@@ -45,6 +46,10 @@ class ADNISmartCacheDataset(SmartCacheDataset):
             copy_cache: Whether to copy cached data when retrieving or use a reference (default: True)
             cache_num: Number of items to cache. If specified, overrides `cache_rate` (default: None)
             classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
+            mci_subtype_filter: Optional filter for MCI subtypes in CN_AD mode.
+                               Can be a single subtype (str) or list of subtypes (List[str]).
+                               Valid subtypes: "SMC", "EMCI", "LMCI". Use None to include all MCI.
+                               Examples: "EMCI", ["EMCI", "LMCI"], or None
         """
         print("="*80)
         print(f"Initializing ADNISmartCacheDataset")
@@ -56,6 +61,7 @@ class ADNISmartCacheDataset(SmartCacheDataset):
             csv_path=csv_path,
             img_dir=img_dir,
             classification_mode=classification_mode,
+            mci_subtype_filter=mci_subtype_filter,
             verbose=True
         )
 
