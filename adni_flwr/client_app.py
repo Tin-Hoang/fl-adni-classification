@@ -1,6 +1,7 @@
 """Client application for ADNI Federated Learning."""
 
 import os
+import time
 import torch
 import numpy as np
 import json
@@ -36,7 +37,6 @@ class ADNIClient(NumPyClient):
         """
         self.config = config
         self.device = device
-        self.client_id = self.config.fl.client_id if hasattr(self.config.fl, 'client_id') else 'unknown'
 
         # Load the model
         self.model = load_model(self.config)
@@ -51,6 +51,15 @@ class ADNIClient(NumPyClient):
         self.local_epochs = self.config.fl.local_epochs
 
         # Get evaluation frequency (default to 1 if not specified)
+        # Client ID must be explicitly set - FAIL FAST if not specified
+        if not hasattr(self.config.fl, 'client_id') or self.config.fl.client_id is None:
+            raise ValueError(
+                "ERROR: 'client_id' not specified in client config. "
+                "You must explicitly set 'client_id' in the FL config section. "
+                "This prevents client identification issues in federated learning."
+            )
+        self.client_id = self.config.fl.client_id
+
         self.evaluate_frequency = getattr(self.config.fl, 'evaluate_frequency', 1)
 
         # Create optimizer
@@ -249,6 +258,7 @@ class ADNIClient(NumPyClient):
         local_epochs = config.get("local_epochs", self.local_epochs)
 
         # Train the model
+        start_time = time.time()
         train_loss, train_acc, current_lr = train(
             model=self.model,
             train_loader=self.train_loader,
@@ -260,6 +270,8 @@ class ADNIClient(NumPyClient):
             gradient_accumulation_steps=self.config.training.gradient_accumulation_steps,
             scheduler=self.scheduler
         )
+        end_time = time.time()
+        training_time = end_time - start_time
 
         # Update training history
         self.training_history['train_losses'].append(train_loss)
@@ -275,7 +287,7 @@ class ADNIClient(NumPyClient):
         self._save_client_checkpoint(current_round, train_loss, train_acc, is_best)
 
         # Log training metrics
-        print(f"Client {self.client_id} training round {current_round}: loss={train_loss:.4f}, accuracy={train_acc:.2f}%")
+        print(f"Client {self.client_id} training round {current_round}: loss={train_loss:.4f}, accuracy={train_acc:.2f}%, training time={training_time:.2f} seconds")
 
         # Return updated model parameters and metrics
         return get_params(self.model), len(self.train_loader.dataset), {
@@ -284,6 +296,7 @@ class ADNIClient(NumPyClient):
             "train_lr": float(current_lr),
             "client_id": self.client_id,
             "round": current_round,
+            "training_time": training_time,
         }
 
     def test_serialization(self, metrics: Dict) -> bool:
@@ -483,12 +496,27 @@ def client_fn(context: Context):
     config_path = client_config_files[partition_id]
     config = Config.from_yaml(config_path)
 
-    # Determine which strategy to use
-    strategy_name = getattr(config.fl, 'strategy', 'fedavg')
+    # Determine which strategy to use - FAIL FAST if not specified
+    if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+        raise ValueError(
+            f"ERROR: 'strategy' not specified in client config {config_path}. "
+            f"You must explicitly set 'strategy' in the FL config section. "
+            f"Available strategies: fedavg, fedprox, secagg. "
+            f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
+        )
+
+    strategy_name = config.fl.strategy
     print(f'Initializing client {partition_id} with {strategy_name} strategy, config: {config_path} on device: {device}')
 
-    # Check if we should use the new strategy system or fall back to legacy
-    if hasattr(config.fl, 'use_strategy_system') and config.fl.use_strategy_system:
+    # Check if we should use the new strategy system - FAIL FAST if not specified
+    if not hasattr(config.fl, 'use_strategy_system'):
+        raise ValueError(
+            f"ERROR: 'use_strategy_system' not specified in client config {config_path}. "
+            f"You must explicitly set 'use_strategy_system: true' or 'use_strategy_system: false' "
+            f"in the FL config section to choose between new strategy system or legacy client."
+        )
+
+    if config.fl.use_strategy_system:
         # New strategy system path
         print(f"Using new strategy system with {strategy_name} strategy")
 

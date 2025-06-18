@@ -239,6 +239,19 @@ class FedADNI(FedAvg):
         """
         self.current_round = server_round
 
+        # Collect training time metrics from clients
+        training_times = []
+        for client_proxy, fit_res in results:
+            client_metrics = fit_res.metrics
+            if client_metrics and "training_time" in client_metrics:
+                training_times.append(client_metrics["training_time"])
+
+        # Calculate training time statistics
+        total_training_time = sum(training_times) if training_times else 0.0
+        avg_training_time = total_training_time / len(training_times) if training_times else 0.0
+        max_training_time = max(training_times) if training_times else 0.0
+        min_training_time = min(training_times) if training_times else 0.0
+
         # Log client training metrics
         if self.wandb_logger:
             for client_proxy, fit_res in results:
@@ -269,6 +282,18 @@ class FedADNI(FedAvg):
             else:
                 print(f"Warning: Number of aggregated parameters ({len(aggregated_ndarrays)}) does not match model state_dict keys ({len(keys)}). Cannot load parameters.")
 
+        # Add training time statistics to aggregated metrics
+        if aggregated_metrics is None:
+            aggregated_metrics = {}
+
+        aggregated_metrics.update({
+            "total_training_time": float(total_training_time),
+            "avg_training_time": float(avg_training_time),
+            "max_training_time": float(max_training_time),
+            "min_training_time": float(min_training_time),
+            "num_training_clients": len(training_times)
+        })
+
         # Log aggregated fit metrics
         if self.wandb_logger and aggregated_metrics:
             # Remove client_id from aggregated metrics
@@ -278,11 +303,21 @@ class FedADNI(FedAvg):
                 prefix="server",
                 step=server_round
             )
+
         # Print server model's current loss and accuracy
         if aggregated_metrics:
             print(f"Server model metrics after round {server_round}:")
             for metric_name, metric_value in aggregated_metrics.items():
                 print(f"  {metric_name}: {metric_value:.4f}")
+
+        # Print training time statistics
+        if training_times:
+            print(f"Training time statistics for round {server_round}:")
+            print(f"  Total training time: {total_training_time:.2f} seconds")
+            print(f"  Average training time: {avg_training_time:.2f} seconds")
+            print(f"  Max training time: {max_training_time:.2f} seconds")
+            print(f"  Min training time: {min_training_time:.2f} seconds")
+            print(f"  Number of clients: {len(training_times)}")
 
         # Save frequency checkpoint
         if server_round % self.config.training.checkpoint.save_frequency == 0:
@@ -674,10 +709,15 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
             # Handle scalar metrics (compute weighted average)
             if all(isinstance(value, (int, float)) for _, value in client_data):
                 try:
-                    weighted_values = [float(value) * num_examples for num_examples, value in client_data]
-                    total_examples = sum(num_examples for num_examples, _ in client_data)
-                    if total_examples > 0:
-                        acc_metrics[name] = sum(weighted_values) / total_examples
+                    # For training_time, use simple average instead of weighted average
+                    if name == "training_time":
+                        values = [float(value) for _, value in client_data]
+                        acc_metrics[name] = sum(values) / len(values) if values else 0.0
+                    else:
+                        weighted_values = [float(value) * num_examples for num_examples, value in client_data]
+                        total_examples = sum(num_examples for num_examples, _ in client_data)
+                        if total_examples > 0:
+                            acc_metrics[name] = sum(weighted_values) / total_examples
                 except Exception as e:
                     print(f"Error processing scalar metric '{name}': {e}")
 
@@ -748,8 +788,16 @@ def server_fn(context: Context):
         min_evaluate_clients = fl_config.min_evaluate_clients
         min_available_clients = fl_config.min_available_clients
 
-        # Determine which strategy to use from config
-        strategy_name = getattr(fl_config, 'strategy', 'fedavg')
+        # Determine which strategy to use from config - FAIL FAST if not specified
+        if not hasattr(fl_config, 'strategy') or not fl_config.strategy:
+            raise ValueError(
+                f"ERROR: 'strategy' not specified in server config {server_config_file}. "
+                f"You must explicitly set 'strategy' in the FL config section. "
+                f"Available strategies: fedavg, fedprox, secagg. "
+                f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
+            )
+
+        strategy_name = fl_config.strategy
         print(f"Using FL strategy: {strategy_name}")
 
         # Validate strategy configuration

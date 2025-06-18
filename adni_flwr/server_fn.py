@@ -93,8 +93,13 @@ def safe_weighted_average(metrics: List[Tuple[int, Dict]], verbose: bool = True)
             values_array = np.array(values)
             weights_array = np.array(weights)
 
+            # For training_time, use simple average instead of weighted average
+            if key == "training_time":
+                result[key] = float(np.mean(values_array))
+                if verbose:
+                    print(f"Computed simple average for training time: {result[key]:.4f} seconds")
             # If all weights are zero, use simple average
-            if np.sum(weights_array) == 0:
+            elif np.sum(weights_array) == 0:
                 result[key] = float(np.mean(values_array))
             else:
                 # Compute weighted average

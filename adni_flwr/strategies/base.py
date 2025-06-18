@@ -9,8 +9,20 @@ from flwr.common import Parameters, FitRes, EvaluateRes
 from flwr.server.strategy import Strategy
 from flwr.client import NumPyClient
 import os
+import time
+import numpy as np
 
 from adni_classification.config.config import Config
+from adni_classification.utils.torch_utils import set_seed
+from adni_classification.utils.training_utils import get_scheduler
+from adni_flwr.task import (
+    load_model,
+    load_data,
+    create_criterion,
+    safe_parameters_to_ndarrays,
+    debug_model_architecture,
+    set_params
+)
 
 
 class FLStrategyBase(Strategy, ABC):
@@ -189,7 +201,14 @@ class StrategyAwareClient(NumPyClient):
         self.config = config
         self.device = device
         self.client_strategy = client_strategy
-        self.client_id = getattr(config.fl, 'client_id', 'unknown')
+        # Client ID must be explicitly set - FAIL FAST if not specified
+        if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
+            raise ValueError(
+                "ERROR: 'client_id' not specified in client config. "
+                "You must explicitly set 'client_id' in the FL config section. "
+                "This prevents client identification issues in federated learning."
+            )
+        self.client_id = config.fl.client_id
 
         # Load data
         from adni_flwr.task import load_data
@@ -375,6 +394,7 @@ class StrategyAwareClient(NumPyClient):
         total_loss = 0.0
         total_acc = 0.0
 
+        start_time = time.time()
         for epoch in range(local_epochs):
             loss, acc = self.client_strategy.train_epoch(
                 self.train_loader, epoch, local_epochs
@@ -407,8 +427,11 @@ class StrategyAwareClient(NumPyClient):
             from adni_flwr.task import get_params
             updated_params = get_params(self.client_strategy.model)
 
+        end_time = time.time()
+        training_time = end_time - start_time
+
         # Log training metrics
-        print(f"Client {self.client_id} training round {current_round}: loss={avg_loss:.4f}, accuracy={avg_acc:.2f}%")
+        print(f"Client {self.client_id} training round {current_round}: loss={avg_loss:.4f}, accuracy={avg_acc:.2f}%, training_time={training_time:.2f} seconds")
 
         # Get current learning rate (if available)
         current_lr = self.client_strategy.optimizer.param_groups[0]['lr'] if hasattr(self.client_strategy, 'optimizer') else 0.0
@@ -420,6 +443,7 @@ class StrategyAwareClient(NumPyClient):
             "train_lr": float(current_lr),
             "client_id": self.client_id,
             "round": current_round,
+            "training_time": float(training_time),
             **self.client_strategy.get_strategy_metrics()
         }
 
