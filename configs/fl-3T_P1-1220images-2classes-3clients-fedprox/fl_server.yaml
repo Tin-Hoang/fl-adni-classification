@@ -3,8 +3,8 @@
 # Use the same data configuration as clients for consistency
 # (though server typically doesn't load data)
 data:
-  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
-  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_181images.csv"
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"
   classification_mode: "CN_AD"
@@ -37,15 +37,12 @@ fl:
   num_rounds: 200              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
-  min_fit_clients: 2           # Minimum number of clients for training
-  min_evaluate_clients: 2      # Minimum number of clients for evaluation
-  min_available_clients: 2     # Minimum number of total clients
+  min_fit_clients: 3           # Minimum number of clients for training
+  min_evaluate_clients: 3      # Minimum number of clients for evaluation
+  min_available_clients: 3     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
   evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
-
-  # FedProx-specific parameters
-  fedprox_mu: 0.01             # Proximal term coefficient (controls client regularization strength)
 
 # Wandb logging configuration
 wandb:
@@ -53,5 +50,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn", "fedprox"]
-  notes: "fl-securefed-fedprox-2clients-1220images-2classes-LMCI-moderate"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox-LMCI"
+  notes: "fl-securefed-fedprox-3clients-1220images-2classes-LMCI-moderate"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedprox-LMCI"

@@ -42,7 +42,7 @@ fl:
   min_available_clients: 3     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
   strategy: "secagg"           # FL aggregation strategy (options: "fedavg", "fedprox", "secagg")
-  evaluate_frequency: 10       # Clients will evaluate every 10 rounds instead of every round
+  evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
 
   # SecAgg-specific parameters
   secagg_noise_multiplier: 0.1  # Noise multiplier for privacy (default: 0.1)
