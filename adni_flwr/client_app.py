@@ -74,15 +74,23 @@ def client_fn(context: Context):
         weight_decay=config.training.weight_decay,
     )
 
-    # Create learning rate scheduler
+    # Get total FL rounds from run_config (set in pyproject.toml or via flwr run)
+    total_fl_rounds = context.run_config.get("num-server-rounds")
+    if total_fl_rounds is None:
+        print("WARNING: 'num-server-rounds' not found in run_config, using default from FL config")
+        total_fl_rounds = getattr(config.fl, 'num_rounds', 100)  # fallback
+
+    print(f"Total FL rounds: {total_fl_rounds}")
+
+    # Create learning rate scheduler with total FL rounds
     scheduler = get_scheduler(
         scheduler_type=config.training.lr_scheduler,
         optimizer=optimizer,
-        num_epochs=config.fl.local_epochs  # Use local epochs for FL
+        num_epochs=total_fl_rounds  # Use total FL rounds for proper decay
     )
 
     if scheduler is not None:
-        print(f"Created learning rate scheduler: {config.training.lr_scheduler}")
+        print(f"Created learning rate scheduler '{config.training.lr_scheduler}' for {total_fl_rounds} FL rounds")
     else:
         print("No learning rate scheduler specified or created")
 
@@ -90,7 +98,7 @@ def client_fn(context: Context):
     train_loader, _ = load_data(config, batch_size=config.training.batch_size)
     criterion = create_criterion(config, train_loader.dataset, device)
 
-    # Create client strategy
+    # Create client strategy with scheduler
     client_strategy = StrategyFactory.create_client_strategy(
         strategy_name=strategy_name,
         config=config,
@@ -98,7 +106,7 @@ def client_fn(context: Context):
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        scheduler=scheduler  # Pass scheduler to strategy
+        scheduler=scheduler  # Pass the properly created scheduler
     )
 
     # Create strategy-aware client

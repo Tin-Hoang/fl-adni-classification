@@ -659,6 +659,9 @@ class FedProxClient(ClientStrategyBase):
         for name, param in self.model.named_parameters():
             self.global_params[name] = param.clone().detach()
 
+        # Store current FL round information
+        self.current_fl_round = round_config.get("server_round", 1)
+
         # Reset optimizer state
         self.optimizer.zero_grad()
 
@@ -748,8 +751,8 @@ class FedProxClient(ClientStrategyBase):
         avg_proximal_loss = total_proximal_loss / len(train_loader)
         avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
 
-        # Step the scheduler after each epoch
-        if self.scheduler is not None:
+        # Step the scheduler only once per FL round (after the last local epoch)
+        if self.scheduler is not None and epoch == total_epochs - 1:  # Only on last local epoch
             current_lr_before = self.optimizer.param_groups[0]['lr']
 
             # Handle ReduceLROnPlateau scheduler which requires validation loss
@@ -760,7 +763,7 @@ class FedProxClient(ClientStrategyBase):
 
             current_lr_after = self.optimizer.param_groups[0]['lr']
             if current_lr_before != current_lr_after:
-                print(f"Learning rate changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
+                print(f"FL Round {getattr(self, 'current_fl_round', '?')}: LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
 
         print(f"  Epoch {epoch+1}/{total_epochs}: "
               f"classification_loss={avg_loss:.4f}, "
