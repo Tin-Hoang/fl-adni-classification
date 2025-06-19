@@ -339,12 +339,14 @@ class SecAggStrategy(FLStrategyBase):
             server_round, parameters, client_manager
         )
 
-        # Add server_round and SecAgg parameters to the config for each client
+        # Add server_round, scheduler information, and SecAgg parameters to the config for each client
         updated_instructions = []
         for client_proxy, fit_ins in client_instructions:
-            # Add server_round and SecAgg parameters to the existing config
+            # Add server_round, scheduler step info, and SecAgg parameters to the existing config
             config = fit_ins.config.copy() if fit_ins.config else {}
             config["server_round"] = server_round
+            # For scheduler continuity: send the step count (server_round - 1 since we start from 0)
+            config["scheduler_step"] = server_round - 1
             config["noise_multiplier"] = self.noise_multiplier
             config["dropout_rate"] = self.dropout_rate
 
@@ -846,6 +848,16 @@ class SecAggClient(ClientStrategyBase):
 
         # Store current FL round information
         self.current_fl_round = round_config.get("server_round", 1)
+
+        # Update scheduler state based on server-provided step information
+        scheduler_step = round_config.get("scheduler_step", 0)
+        if self.scheduler is not None and scheduler_step > 0:
+            # Fast-forward the scheduler to the correct step
+            current_lr_before = self.optimizer.param_groups[0]['lr']
+            for _ in range(scheduler_step):
+                self.scheduler.step()
+            current_lr_after = self.optimizer.param_groups[0]['lr']
+            print(f"SecAggClient: Scheduler fast-forwarded to step {scheduler_step}, LR: {current_lr_before:.8f} -> {current_lr_after:.8f}")
 
         # Reset optimizer state
         self.optimizer.zero_grad()

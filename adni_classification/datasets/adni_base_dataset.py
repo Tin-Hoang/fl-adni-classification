@@ -149,9 +149,9 @@ class ADNIBaseDataset:
             print(f"Found {len(self.image_paths)} image files in {img_dir}")
             print(f"Final dataset size: {len(self.data)} samples")
 
-            # Print first 5 images with their label groups
-            print("First 5 images with label groups:")
-            for i, (idx, row) in enumerate(self.data.head(5).iterrows()):
+            # Print first 3 images with their label groups
+            print("First 3 images with label groups:")
+            for i, (idx, row) in enumerate(self.data.head(3).iterrows()):
                 image_id = row["Image Data ID"]
                 group = row["Group"]
                 label = self.label_map[group]

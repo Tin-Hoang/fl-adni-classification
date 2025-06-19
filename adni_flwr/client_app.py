@@ -124,6 +124,10 @@ def client_fn(context: Context):
         else:
             print(f"Strategy-aware client {partition_id}: pretrained_checkpoint is a regular model checkpoint, not resuming FL state")
 
+    # Note: Scheduler state will be managed by server-side configure_fit() passing scheduler_step
+    # This eliminates the need for checkpoint-based scheduler state restoration every round
+    print(f"Client {partition_id} initialized with scheduler '{config.training.lr_scheduler}' - state will be synchronized via server")
+
     return client.to_client()
 
 
