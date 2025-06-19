@@ -729,7 +729,5 @@ class FedAvgClient(ClientStrategyBase):
         Returns:
             Dictionary of custom metrics
         """
-        return {
-            "mixed_precision": self.mixed_precision,
-            "gradient_accumulation_steps": self.gradient_accumulation_steps,
-        }
+        # Return empty dict to avoid logging non-essential configuration metrics to WandB
+        return {}

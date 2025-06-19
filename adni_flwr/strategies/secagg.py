@@ -737,7 +737,14 @@ class SecAggClient(ClientStrategyBase):
 
         self.noise_multiplier = noise_multiplier
         self.dropout_rate = dropout_rate
-        self.client_id = getattr(config.fl, 'client_id', 'unknown')
+        # Client ID must be explicitly set - FAIL FAST if not specified
+        if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
+            raise ValueError(
+                "ERROR: 'client_id' not specified in client config. "
+                "You must explicitly set 'client_id' in the FL config section. "
+                "This prevents client identification issues in federated learning."
+            )
+        self.client_id = config.fl.client_id
         self.current_round = 0
 
         # SecAgg-specific parameters
@@ -936,11 +943,5 @@ class SecAggClient(ClientStrategyBase):
         Returns:
             Dictionary of custom metrics
         """
-        return {
-            "noise_multiplier": self.noise_multiplier,
-            "dropout_rate": self.dropout_rate,
-            "client_id": self.client_id,
-            "current_round": self.current_round,
-            "mixed_precision": self.mixed_precision,
-            "gradient_accumulation_steps": self.gradient_accumulation_steps,
-        }
+        # Return empty dict to avoid logging non-essential configuration metrics to WandB
+        return {}

@@ -16,7 +16,6 @@ class FLConfig:
     client_config_files: List[str] = None
     # checkpoint_dir: str = "checkpoints"  # Removed: using training.output_dir instead
     evaluate_frequency: int = 1  # Run evaluation every N rounds (1 means every round)
-    use_strategy_system: bool = True
     # FedProx specific parameters
     fedprox_mu: float = 0.01
     # SecAgg specific parameters

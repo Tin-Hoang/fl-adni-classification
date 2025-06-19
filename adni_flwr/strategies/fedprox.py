@@ -757,11 +757,8 @@ class FedProxClient(ClientStrategyBase):
         Returns:
             Dictionary of custom metrics
         """
-        return {
-            "mu": self.mu,
-            "mixed_precision": self.mixed_precision,
-            "gradient_accumulation_steps": self.gradient_accumulation_steps,
-        }
+        # Return empty dict to avoid logging non-essential configuration metrics to WandB
+        return {}
 
     def get_checkpoint_data(self) -> Dict[str, Any]:
         """Return FedProx-specific checkpoint data.

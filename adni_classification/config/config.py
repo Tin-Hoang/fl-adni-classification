@@ -229,7 +229,6 @@ class Config:
                 "local_epochs": self.fl.local_epochs,
                 "client_config_files": self.fl.client_config_files,
                 "evaluate_frequency": self.fl.evaluate_frequency,
-                "use_strategy_system": self.fl.use_strategy_system,
                 "fedprox_mu": self.fl.fedprox_mu,
                 "secagg_noise_multiplier": self.fl.secagg_noise_multiplier,
                 "secagg_dropout_rate": self.fl.secagg_dropout_rate,
