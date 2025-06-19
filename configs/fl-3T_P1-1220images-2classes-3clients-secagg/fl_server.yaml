@@ -8,6 +8,7 @@ data:
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"
   classification_mode: "CN_AD"
+  mci_subtype_filter: ["LMCI", "AD"]
   resize_size: [182, 218, 182]
   resize_mode: "trilinear"
   use_spacing: false
@@ -23,11 +24,11 @@ model:
 training:
   batch_size: 4
   learning_rate: 0.0001
-  weight_decay: 0.0001
+  weight_decay: 0.01
   seed: 42
   num_workers: 4
   num_epochs: 2
-  output_dir: "/scratch/th01167/fl-adni/outputs/fl"  # Checkpoints will be saved in {output_dir}/checkpoints/
+  output_dir: "outputs/fl_server"  # Checkpoints will be saved in {output_dir}/checkpoints/
   checkpoint:
     save_frequency: 10
 
@@ -40,7 +41,6 @@ fl:
   min_evaluate_clients: 3      # Minimum number of clients for evaluation
   min_available_clients: 3     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
-  use_strategy_system: true    # Enable new strategy system
   strategy: "secagg"           # FL aggregation strategy (options: "fedavg", "fedprox", "secagg")
   evaluate_frequency: 10       # Clients will evaluate every 10 rounds instead of every round
 
@@ -53,6 +53,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["federated-learning", "adni", "securefed-cnn"]
-  notes: "Federated Learning for ADNI Classification"
-  run_name: "fl-secagg-3T_P1-1220images-2classes-3clients"
+  tags: ["federated-learning", "adni", "securefed-cnn", "secagg"]
+  notes: "fl-securefed-secagg-3clients-1220images-2classes-LMCI-moderate"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-secagg-LMCI"

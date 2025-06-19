@@ -1,9 +1,10 @@
 data:
-  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
-  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
-  img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
+  train_csv_path: "/nobackup/babbage/users/th01167/fl-adni/data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "/nobackup/babbage/users/th01167/fl-adni/data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  img_dir: "/nobackup/babbage/users/th01167/fl-adni/data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
-  classification_mode: "CN_MCI_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  mci_subtype_filter: ["LMCI"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
   resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
@@ -15,13 +16,13 @@ data:
 
 model:
   name: "securefed_cnn"  # Using our secure federated CNN model
-  num_classes: 3  # CN, MCI, AD - will be automatically adjusted based on classification_mode
+  num_classes: 2  # CN, MCI, AD - will be automatically adjusted based on classification_mode
   pretrained_checkpoint: null
 
 training:
   batch_size: 4
   num_epochs: 500
-  learning_rate: 0.001
+  learning_rate: 0.0001
   weight_decay: 0.01
   num_workers: 4
   seed: 42
@@ -43,6 +44,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["securefed-cnn", "3T_bl_org_P1_1220images"]
-  notes: "Using the SecureFedCNN model for ADNI classification"
-  run_name: "securefed-cnn-training-3T_bl_org_P1_1220images"
+  tags: ["securefed-cnn", "3T_bl_org_P1_2classes_1220images"]
+  notes: "data_aug_moderate_LMCI"
+  run_name: "securefed-3T_bl_org_P1_2classes_1220images"

@@ -4,6 +4,7 @@ data:
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
   resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
@@ -24,7 +25,7 @@ training:
   weight_decay: 0.01  # 1e-2
   num_workers: 2
   seed: 42  # Random seed for reproducibility
-  output_dir: "/scratch/th01167/fl-adni/checkpoints/client3"
+  output_dir: "checkpoints/client3"
   mixed_precision: false
   visualize: false
   use_class_weights: true
@@ -40,11 +41,12 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn"]
-  notes: "Federated Learning for ADNI Classification"
-  run_name: "fl-adni-securefed-cnn"
+  notes: "fl-securefed-fedavg-3clients-1220images-2classes-LMCI-Client3"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedavg-LMCI-Client3"
 
 # FL-specific settings
 fl:
   client_id: 3
   local_epochs: 1  # Number of local epochs per round
   evaluate_frequency: 10  # Evaluate every 10 rounds (can be overridden by server config)
+  strategy: "fedavg"           # FL aggregation strategy (options: "fedavg", "fedprox")
