@@ -89,6 +89,7 @@ def get_transforms(mode: str = "train",
     ])
 
     if mode == "train":
+        print(f"Using augmentation strength: {augmentation_strength}")
         # Define augmentation parameters based on strength
         if augmentation_strength == "mild":
             flip_prob = 0.3

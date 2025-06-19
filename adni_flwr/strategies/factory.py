@@ -79,6 +79,7 @@ class StrategyFactory:
         optimizer: torch.optim.Optimizer,
         criterion: nn.Module,
         device: torch.device,
+        scheduler: torch.optim.lr_scheduler._LRScheduler = None,
         **kwargs
     ) -> ClientStrategyBase:
         """Create a client-side FL strategy.
@@ -90,6 +91,7 @@ class StrategyFactory:
             optimizer: Optimizer instance
             criterion: Loss function
             device: Device to use for computation
+            scheduler: Learning rate scheduler (optional)
             **kwargs: Additional strategy-specific parameters
 
         Returns:
@@ -116,6 +118,7 @@ class StrategyFactory:
             optimizer=optimizer,
             criterion=criterion,
             device=device,
+            scheduler=scheduler,
             **strategy_params
         )
 

@@ -717,6 +717,7 @@ class SecAggClient(ClientStrategyBase):
         optimizer: torch.optim.Optimizer,
         criterion: nn.Module,
         device: torch.device,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         noise_multiplier: float = 0.1,
         dropout_rate: float = 0.0,
         **kwargs
@@ -729,11 +730,12 @@ class SecAggClient(ClientStrategyBase):
             optimizer: Optimizer instance
             criterion: Loss function
             device: Device to use for computation
+            scheduler: Learning rate scheduler (optional)
             noise_multiplier: Multiplier for noise addition
             dropout_rate: Dropout rate for parameter masking
             **kwargs: Additional strategy parameters
         """
-        super().__init__(config, model, optimizer, criterion, device, **kwargs)
+        super().__init__(config, model, optimizer, criterion, device, scheduler, **kwargs)
 
         self.noise_multiplier = noise_multiplier
         self.dropout_rate = dropout_rate
@@ -909,6 +911,20 @@ class SecAggClient(ClientStrategyBase):
 
         avg_loss = total_loss / len(train_loader)
         avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
+
+        # Step the scheduler after each epoch
+        if self.scheduler is not None:
+            current_lr_before = self.optimizer.param_groups[0]['lr']
+
+            # Handle ReduceLROnPlateau scheduler which requires validation loss
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(avg_loss)  # Use training loss as proxy
+            else:
+                self.scheduler.step()
+
+            current_lr_after = self.optimizer.param_groups[0]['lr']
+            if current_lr_before != current_lr_after:
+                print(f"Learning rate changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
 
         return avg_loss, avg_accuracy
 

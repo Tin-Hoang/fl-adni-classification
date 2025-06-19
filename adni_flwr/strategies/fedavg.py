@@ -592,6 +592,7 @@ class FedAvgClient(ClientStrategyBase):
         optimizer: torch.optim.Optimizer,
         criterion: nn.Module,
         device: torch.device,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         **kwargs
     ):
         """Initialize FedAvg client strategy.
@@ -602,9 +603,10 @@ class FedAvgClient(ClientStrategyBase):
             optimizer: Optimizer instance
             criterion: Loss function
             device: Device to use for computation
+            scheduler: Learning rate scheduler (optional)
             **kwargs: Additional strategy parameters
         """
-        super().__init__(config, model, optimizer, criterion, device, **kwargs)
+        super().__init__(config, model, optimizer, criterion, device, scheduler, **kwargs)
 
         # FedAvg-specific parameters
         self.mixed_precision = config.training.mixed_precision
@@ -720,6 +722,20 @@ class FedAvgClient(ClientStrategyBase):
 
         avg_loss = total_loss / len(train_loader)
         avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
+
+        # Step the scheduler after each epoch
+        if self.scheduler is not None:
+            current_lr_before = self.optimizer.param_groups[0]['lr']
+
+            # Handle ReduceLROnPlateau scheduler which requires validation loss
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(avg_loss)  # Use training loss as proxy
+            else:
+                self.scheduler.step()
+
+            current_lr_after = self.optimizer.param_groups[0]['lr']
+            if current_lr_before != current_lr_after:
+                print(f"Learning rate changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
 
         return avg_loss, avg_accuracy
 

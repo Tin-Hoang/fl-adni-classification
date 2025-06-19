@@ -84,6 +84,7 @@ class ClientStrategyBase(ABC):
         optimizer: torch.optim.Optimizer,
         criterion: nn.Module,
         device: torch.device,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         **kwargs
     ):
         """Initialize the client strategy.
@@ -94,6 +95,7 @@ class ClientStrategyBase(ABC):
             optimizer: Optimizer instance
             criterion: Loss function
             device: Device to use for computation
+            scheduler: Learning rate scheduler (optional)
             **kwargs: Additional strategy-specific parameters
         """
         self.config = config
@@ -101,6 +103,7 @@ class ClientStrategyBase(ABC):
         self.optimizer = optimizer
         self.criterion = criterion
         self.device = device
+        self.scheduler = scheduler
         self.strategy_config = kwargs
 
     @abstractmethod
@@ -277,6 +280,10 @@ class StrategyAwareClient(NumPyClient):
                 }
             }
 
+            # Add scheduler state if available
+            if hasattr(self.client_strategy, 'scheduler') and self.client_strategy.scheduler is not None:
+                checkpoint['scheduler_state_dict'] = self.client_strategy.scheduler.state_dict()
+
             # Add strategy-specific checkpoint data
             if hasattr(self.client_strategy, 'get_checkpoint_data'):
                 checkpoint['strategy_data'] = self.client_strategy.get_checkpoint_data()
@@ -329,6 +336,13 @@ class StrategyAwareClient(NumPyClient):
             # Load optimizer state
             if 'optimizer_state_dict' in checkpoint:
                 self.client_strategy.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+            # Load scheduler state if available
+            if ('scheduler_state_dict' in checkpoint and
+                hasattr(self.client_strategy, 'scheduler') and
+                self.client_strategy.scheduler is not None):
+                self.client_strategy.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                print(f"Client {self.client_id}: Restored scheduler state")
 
             # Restore training state
             self.current_round = checkpoint.get('round', 0)

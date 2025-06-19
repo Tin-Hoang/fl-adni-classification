@@ -607,6 +607,7 @@ class FedProxClient(ClientStrategyBase):
         optimizer: torch.optim.Optimizer,
         criterion: nn.Module,
         device: torch.device,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         mu: float = 0.01,
         **kwargs
     ):
@@ -618,13 +619,14 @@ class FedProxClient(ClientStrategyBase):
             optimizer: Optimizer instance
             criterion: Loss function
             device: Device to use for computation
-            mu: Proximal term coefficient
+            scheduler: Learning rate scheduler (optional)
+            mu: FedProx regularization parameter
             **kwargs: Additional strategy parameters
         """
-        super().__init__(config, model, optimizer, criterion, device, **kwargs)
+        super().__init__(config, model, optimizer, criterion, device, scheduler, **kwargs)
 
         self.mu = mu
-        self.global_model_params = None
+        self.global_params = None  # Store global model parameters for proximal term
 
         # FedProx-specific parameters
         self.mixed_precision = config.training.mixed_precision
@@ -632,6 +634,8 @@ class FedProxClient(ClientStrategyBase):
 
         # Initialize mixed precision scaler
         self.scaler = torch.cuda.amp.GradScaler() if self.mixed_precision else None
+
+        print(f"FedProxClient initialized with mu={self.mu}")
 
     def get_strategy_name(self) -> str:
         """Return the strategy name."""
@@ -651,9 +655,9 @@ class FedProxClient(ClientStrategyBase):
         set_params(self.model, param_arrays)
 
         # Store global model parameters for proximal term
-        self.global_model_params = {}
+        self.global_params = {}
         for name, param in self.model.named_parameters():
-            self.global_model_params[name] = param.clone().detach()
+            self.global_params[name] = param.clone().detach()
 
         # Reset optimizer state
         self.optimizer.zero_grad()
@@ -672,8 +676,8 @@ class FedProxClient(ClientStrategyBase):
         proximal_loss = torch.tensor(0.0, device=self.device)
 
         for name, param in self.model.named_parameters():
-            if name in self.global_model_params:
-                global_param = self.global_model_params[name].to(self.device)
+            if name in self.global_params:
+                global_param = self.global_params[name].to(self.device)
                 proximal_loss = proximal_loss + torch.norm(param - global_param) ** 2
 
         return (self.mu / 2.0) * proximal_loss
@@ -744,6 +748,20 @@ class FedProxClient(ClientStrategyBase):
         avg_proximal_loss = total_proximal_loss / len(train_loader)
         avg_accuracy = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
 
+        # Step the scheduler after each epoch
+        if self.scheduler is not None:
+            current_lr_before = self.optimizer.param_groups[0]['lr']
+
+            # Handle ReduceLROnPlateau scheduler which requires validation loss
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(avg_loss)  # Use training loss as proxy
+            else:
+                self.scheduler.step()
+
+            current_lr_after = self.optimizer.param_groups[0]['lr']
+            if current_lr_before != current_lr_after:
+                print(f"Learning rate changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
+
         print(f"  Epoch {epoch+1}/{total_epochs}: "
               f"classification_loss={avg_loss:.4f}, "
               f"proximal_loss={avg_proximal_loss:.4f}, "
@@ -768,7 +786,7 @@ class FedProxClient(ClientStrategyBase):
         """
         return {
             "mu": self.mu,
-            "global_model_params": self.global_model_params
+            "global_model_params": self.global_params
         }
 
     def load_checkpoint_data(self, checkpoint_data: Dict[str, Any]):
@@ -782,8 +800,8 @@ class FedProxClient(ClientStrategyBase):
             print(f"Restored FedProx mu parameter: {self.mu}")
 
         if "global_model_params" in checkpoint_data:
-            self.global_model_params = checkpoint_data["global_model_params"]
-            if self.global_model_params:
-                print(f"Restored FedProx global model parameters for {len(self.global_model_params)} layers")
+            self.global_params = checkpoint_data["global_model_params"]
+            if self.global_params:
+                print(f"Restored FedProx global model parameters for {len(self.global_params)} layers")
             else:
                 print("Restored FedProx global model parameters: None")

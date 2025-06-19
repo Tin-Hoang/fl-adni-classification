@@ -33,7 +33,7 @@ training:
   # manual_class_weights: [5.1741293532338308, 0.7283950617283951, 5.289617486338798]
   gradient_accumulation_steps: 1
   num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
-  lr_scheduler: "plateau"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
+  lr_scheduler: "cosine"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
 
 # Wandb logging configuration
 wandb:

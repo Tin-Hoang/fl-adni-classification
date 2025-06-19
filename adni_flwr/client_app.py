@@ -5,6 +5,7 @@ import torch
 from flwr.common import Context
 from flwr.client import ClientApp
 from adni_classification.config.config import Config
+from adni_classification.utils.training_utils import get_scheduler
 from adni_flwr.task import (
     load_model,
     load_data,
@@ -73,6 +74,18 @@ def client_fn(context: Context):
         weight_decay=config.training.weight_decay,
     )
 
+    # Create learning rate scheduler
+    scheduler = get_scheduler(
+        scheduler_type=config.training.lr_scheduler,
+        optimizer=optimizer,
+        num_epochs=config.fl.local_epochs  # Use local epochs for FL
+    )
+
+    if scheduler is not None:
+        print(f"Created learning rate scheduler: {config.training.lr_scheduler}")
+    else:
+        print("No learning rate scheduler specified or created")
+
     # Load data to create criterion
     train_loader, _ = load_data(config, batch_size=config.training.batch_size)
     criterion = create_criterion(config, train_loader.dataset, device)
@@ -84,7 +97,8 @@ def client_fn(context: Context):
         model=model,
         optimizer=optimizer,
         criterion=criterion,
-        device=device
+        device=device,
+        scheduler=scheduler  # Pass scheduler to strategy
     )
 
     # Create strategy-aware client
