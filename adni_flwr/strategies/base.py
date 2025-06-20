@@ -294,22 +294,59 @@ class StrategyAwareClient(NumPyClient):
         else:
             # Restore scheduler from context state
             print(f"Restoring scheduler from context state")
-            scheduler = pickle.loads(scheduler_state["scheduler"])
             current_step = scheduler_state.get("current_step", 0)
 
-            # Update scheduler with current optimizer (which may be recreated)
-            scheduler.optimizer = self.client_strategy.optimizer
+            # Create a fresh scheduler with the same configuration
+            scheduler = get_scheduler(
+                scheduler_type=self.config.training.lr_scheduler,
+                optimizer=self.client_strategy.optimizer,
+                num_epochs=self.total_fl_rounds
+            )
+
+            if scheduler is not None and current_step > 0:
+                # Restore the scheduler to the correct step by setting last_epoch
+                # For most schedulers, last_epoch represents the number of times step() has been called
+                scheduler.last_epoch = current_step
+
+                # Recompute the current learning rate based on the restored step
+                # This ensures the learning rate is calculated correctly based on scheduler's formula
+                for param_group in scheduler.optimizer.param_groups:
+                    if hasattr(scheduler, 'get_lr'):
+                        # For newer PyTorch versions, use get_last_lr if available to avoid warnings
+                        if hasattr(scheduler, 'get_last_lr'):
+                            # Need to call get_lr first to populate _last_lr
+                            _ = scheduler.get_lr()
+                            lrs = scheduler.get_last_lr()
+                            param_group['lr'] = lrs[0] if lrs else param_group['lr']
+                        else:
+                            # Fallback for older versions
+                            lrs = scheduler.get_lr()
+                            param_group['lr'] = lrs[0] if lrs else param_group['lr']
+
+                print(f"Scheduler state synchronized: restored to step {current_step} (last_epoch={scheduler.last_epoch})")
+
             self.client_strategy.scheduler = scheduler
 
-            print(f"Scheduler restored at step {current_step}, current LR: {self.client_strategy.optimizer.param_groups[0]['lr']:.8f}")
+            # Get the current learning rate after restoration
+            current_lr = self.client_strategy.optimizer.param_groups[0]['lr']
+            print(f"Scheduler restored at step {current_step}, current LR: {current_lr:.8f}")
 
     def _update_context_scheduler(self):
         """Update scheduler state in context after training."""
         if self.context is not None and self.client_strategy.scheduler is not None:
             scheduler_state = self.context.state.config_records["scheduler_state"]
             scheduler_state["scheduler"] = pickle.dumps(self.client_strategy.scheduler)
-            current_step = getattr(self.client_strategy.scheduler, '_step_count', 0)
+
+            # Update current step based on scheduler's internal state
+            if hasattr(self.client_strategy.scheduler, 'last_epoch'):
+                # For most schedulers, last_epoch represents the number of times step() has been called
+                current_step = self.client_strategy.scheduler.last_epoch
+            else:
+                # Fallback to _step_count if available
+                current_step = getattr(self.client_strategy.scheduler, '_step_count', 0)
+
             scheduler_state["current_step"] = current_step
+            print(f"Updated scheduler state: current_step = {current_step}, last_epoch = {getattr(self.client_strategy.scheduler, 'last_epoch', 'N/A')}")
 
     def _save_client_checkpoint(self, round_num: int, train_loss: float, train_acc: float, is_best: bool = False):
         """Save client checkpoint after local training.
