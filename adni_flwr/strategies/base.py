@@ -2,26 +2,30 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple, Optional, Union
+import json
+import os
+import pickle
+import random
+import time
+import traceback
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from flwr.common import Parameters, FitRes, EvaluateRes
+from sklearn.metrics import confusion_matrix
+from flwr.common import Parameters, FitRes, EvaluateRes, ConfigRecord
 from flwr.server.strategy import Strategy
 from flwr.client import NumPyClient
-import os
-import time
-import numpy as np
 
 from adni_classification.config.config import Config
-from adni_classification.utils.torch_utils import set_seed
 from adni_classification.utils.training_utils import get_scheduler
 from adni_flwr.task import (
-    load_model,
     load_data,
-    create_criterion,
     safe_parameters_to_ndarrays,
-    debug_model_architecture,
-    set_params
+    set_params,
+    test_with_predictions,
+    is_fl_client_checkpoint
 )
 
 
@@ -192,7 +196,9 @@ class StrategyAwareClient(NumPyClient):
         self,
         config: Config,
         device: torch.device,
-        client_strategy: ClientStrategyBase
+        client_strategy: ClientStrategyBase,
+        context=None,
+        total_fl_rounds: int = None
     ):
         """Initialize strategy-aware client.
 
@@ -200,10 +206,14 @@ class StrategyAwareClient(NumPyClient):
             config: Configuration object
             device: Device to use for computation
             client_strategy: Client-side strategy implementation
+            context: Flower Context for stateful client management (optional)
+            total_fl_rounds: Total number of FL rounds for scheduler initialization
         """
         self.config = config
         self.device = device
         self.client_strategy = client_strategy
+        self.context = context
+        self.total_fl_rounds = total_fl_rounds
         # Client ID must be explicitly set - FAIL FAST if not specified
         if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
             raise ValueError(
@@ -214,7 +224,6 @@ class StrategyAwareClient(NumPyClient):
         self.client_id = config.fl.client_id
 
         # Load data
-        from adni_flwr.task import load_data
         self.train_loader, self.val_loader = load_data(
             config, batch_size=config.training.batch_size
         )
@@ -234,6 +243,11 @@ class StrategyAwareClient(NumPyClient):
         # Track training state
         self.current_round = 0
         self.best_val_accuracy = 0.0
+
+        # Initialize Context-based scheduler management if context provided
+        if self.context is not None and self.total_fl_rounds is not None:
+            self._initialize_context_scheduler()
+
         self.training_history = {
             'train_losses': [],
             'train_accuracies': [],
@@ -248,6 +262,54 @@ class StrategyAwareClient(NumPyClient):
         print(f"Evaluation frequency: every {self.evaluate_frequency} round(s)")
         print(f"Client checkpoint directory: {self.client_checkpoint_dir}")
         print(f"Client checkpoint saving: {'enabled' if self.save_client_checkpoints else 'disabled'} (frequency: {self.checkpoint_save_frequency})")
+
+    def _initialize_context_scheduler(self):
+        """Initialize or restore scheduler from context state."""
+        # Initialize context state for scheduler management
+        if "scheduler_state" not in self.context.state.config_records:
+            self.context.state.config_records["scheduler_state"] = ConfigRecord()
+
+        scheduler_state = self.context.state.config_records["scheduler_state"]
+
+        if "scheduler" not in scheduler_state:
+            # First time - create fresh scheduler
+            print(f"Creating new scheduler '{self.config.training.lr_scheduler}' for {self.total_fl_rounds} FL rounds")
+            scheduler = get_scheduler(
+                scheduler_type=self.config.training.lr_scheduler,
+                optimizer=self.client_strategy.optimizer,
+                num_epochs=self.total_fl_rounds
+            )
+
+            if scheduler is not None:
+                # Store scheduler in context state using pickle
+                scheduler_state["scheduler"] = pickle.dumps(scheduler)
+                scheduler_state["scheduler_type"] = self.config.training.lr_scheduler
+                scheduler_state["total_rounds"] = self.total_fl_rounds
+                scheduler_state["current_step"] = 0
+                self.client_strategy.scheduler = scheduler
+                print(f"Scheduler created and stored in context")
+            else:
+                print("No scheduler specified")
+                self.client_strategy.scheduler = None
+        else:
+            # Restore scheduler from context state
+            print(f"Restoring scheduler from context state")
+            scheduler = pickle.loads(scheduler_state["scheduler"])
+            current_step = scheduler_state.get("current_step", 0)
+
+            # Update scheduler with current optimizer (which may be recreated)
+            scheduler.optimizer = self.client_strategy.optimizer
+            self.client_strategy.scheduler = scheduler
+
+            print(f"Scheduler restored at step {current_step}, current LR: {self.client_strategy.optimizer.param_groups[0]['lr']:.8f}")
+
+    def _update_context_scheduler(self):
+        """Update scheduler state in context after training."""
+        if self.context is not None and self.client_strategy.scheduler is not None:
+            scheduler_state = self.context.state.config_records["scheduler_state"]
+            scheduler_state["scheduler"] = pickle.dumps(self.client_strategy.scheduler)
+            current_step = getattr(self.client_strategy.scheduler, '_step_count', 0)
+            scheduler_state["current_step"] = current_step
 
     def _save_client_checkpoint(self, round_num: int, train_loss: float, train_acc: float, is_best: bool = False):
         """Save client checkpoint after local training.
@@ -375,7 +437,6 @@ class StrategyAwareClient(NumPyClient):
         """
         # If model.pretrained_checkpoint is specified and is an FL checkpoint, use it
         if self.config.model.pretrained_checkpoint:
-            from adni_flwr.task import is_fl_client_checkpoint
             if is_fl_client_checkpoint(self.config.model.pretrained_checkpoint):
                 print(f"Resuming from specified FL checkpoint: {self.config.model.pretrained_checkpoint}")
                 return self._load_client_checkpoint(self.config.model.pretrained_checkpoint)
@@ -432,6 +493,10 @@ class StrategyAwareClient(NumPyClient):
         # Save client checkpoint
         self._save_client_checkpoint(current_round, avg_loss, avg_acc, is_best)
 
+        # Update Context scheduler state if using Context-based management
+        if self.context is not None:
+            self._update_context_scheduler()
+
         # Get updated parameters (strategy-specific for SecAgg)
         if hasattr(self.client_strategy, 'get_secure_parameters'):
             # For SecAgg, get masked parameters
@@ -473,7 +538,6 @@ class StrategyAwareClient(NumPyClient):
             True if serialization is successful, False otherwise
         """
         try:
-            import json
             json_str = json.dumps(metrics)
             # Reconstruct to verify
             json.loads(json_str)
@@ -485,7 +549,6 @@ class StrategyAwareClient(NumPyClient):
             # Try to identify problematic keys
             for k, v in metrics.items():
                 try:
-                    import json
                     json.dumps({k: v})
                 except Exception as sub_e:
                     print(f"  Problem with key '{k}': {sub_e}")
@@ -503,11 +566,6 @@ class StrategyAwareClient(NumPyClient):
         Returns:
             Loss, number of evaluation examples, metrics
         """
-        import json
-        import os
-        import numpy as np
-        from sklearn.metrics import confusion_matrix
-
         # Get the current round number from the config
         current_round = config.get("server_round", 1)
 
@@ -526,9 +584,6 @@ class StrategyAwareClient(NumPyClient):
         print(f"Client {self.client_id}: Performing evaluation for round {current_round}")
 
         try:
-            # Update model with server parameters
-            from adni_flwr.task import set_params, test_with_predictions, safe_parameters_to_ndarrays
-
             # Convert parameters to numpy arrays safely
             param_arrays = safe_parameters_to_ndarrays(parameters)
 
@@ -562,7 +617,6 @@ class StrategyAwareClient(NumPyClient):
             max_samples = 500  # Limit to stay within message size constraints
             if len(predictions_list) > max_samples:
                 # Random sample for large datasets
-                import random
                 indices = sorted(random.sample(range(len(predictions_list)), max_samples))
                 predictions_sample = [predictions_list[i] for i in indices]
                 labels_sample = [labels_list[i] for i in indices]
@@ -624,7 +678,6 @@ class StrategyAwareClient(NumPyClient):
             return float(val_loss), len(self.val_loader.dataset), result
 
         except Exception as e:
-            import traceback
             print(f"Client {self.client_id}: Error in evaluate method: {e}")
             print(traceback.format_exc())
             # Return minimal results to avoid failure

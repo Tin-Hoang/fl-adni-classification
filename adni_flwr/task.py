@@ -54,10 +54,6 @@ def load_model(config: Config) -> nn.Module:
 
     print(f"Creating model '{config.model.name}' with kwargs: {model_kwargs}")
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
-
-    # Debug the model architecture
-    debug_model_architecture(model, f"{config.model.name} Model")
-
     return model
 
 
@@ -471,10 +467,6 @@ def load_data(
 
     # Get dataset type from config (default to normal for FL)
     dataset_type = config.data.dataset_type
-
-    # Print transform processes
-    print(f"Train transform: {train_transform}")
-    print(f"Val transform: {val_transform}")
 
     # Create datasets
     train_dataset = create_adni_dataset(
