@@ -28,7 +28,7 @@ training:
   seed: 42
   num_workers: 4
   num_epochs: 2
-  output_dir: "outputs/fl_server"  # Checkpoints will be saved in {output_dir}/checkpoints/
+  output_dir: "outputs  "  # Checkpoints will be saved in {output_dir}/checkpoints/
   checkpoint:
     save_frequency: 10
 

@@ -25,7 +25,7 @@ training:
   weight_decay: 0.01  # 1e-2
   num_workers: 2
   seed: 42  # Random seed for reproducibility
-  output_dir: "checkpoints/client3"
+  output_dir: "outputs"
   mixed_precision: false
   visualize: false
   use_class_weights: true
@@ -41,8 +41,8 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn"]
-  notes: "fl-securefed-fedprox-3clients-1220images-2classes-LMCI-Client3"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedprox-LMCI-Client3"
+  notes: "fl-securefed-fedprox-3clients-1220images-2classes-LMCI"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedprox-LMCI"
 
 # FL-specific settings
 fl:
