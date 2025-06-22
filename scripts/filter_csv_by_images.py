@@ -331,7 +331,7 @@ def main():
     parser.add_argument(
         "csv_file",
         type=str,
-        default="data/ADNI/All_Subjects_MRI_Images_and_ADNIMERGE_merged_truncated.csv",
+        default="data/ADNI/All_Subjects_MRI_Images_11Apr2025_ADNIMERGE_11Apr2025_merged.csv",
         help="Path to the CSV file to filter"
     )
 
