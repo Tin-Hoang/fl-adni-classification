@@ -36,20 +36,14 @@ class FLWandbLogger:
         if not self.wandb_enabled:
             return
 
-        # Initialize wandb
+        # Initialize wandb with full configuration
         wandb.init(
             project=self.config.wandb.project,
             entity=self.config.wandb.entity,
             name=self.config.wandb.run_name,
             tags=self.config.wandb.tags,
             notes=self.config.wandb.notes,
-            config={
-                "model": self.config.model.name,
-                "num_classes": self.config.model.num_classes,
-                "batch_size": self.config.training.batch_size,
-                "learning_rate": self.config.training.learning_rate,
-                "weight_decay": self.config.training.weight_decay,
-            }
+            config=self.config.to_dict()
         )
 
     def log_metrics(self, metrics: Dict[str, float], prefix: str = "", step: Optional[int] = None):
