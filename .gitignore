@@ -179,3 +179,4 @@ data_old/
 *.csv
 wandb/
 outputs/
+visualization/
