@@ -54,7 +54,7 @@ def create_rosanna_model(num_classes: int = 2) -> RosannaCNN:
     """
     model = RosannaCNN(
         num_classes=num_classes,
-        pretrained_weights_path=None,
+        pretrained_checkpoint=None,
         freeze_encoder=False,
         dropout=0.0,
         input_channels=1
@@ -226,7 +226,7 @@ def verify_checkpoint_loading(checkpoint_path: str, num_classes: int = 2) -> boo
         # Create model
         model = RosannaCNN(
             num_classes=num_classes,
-            pretrained_weights_path=None,
+            pretrained_checkpoint=None,
             freeze_encoder=False,
             dropout=0.0
         )
@@ -307,15 +307,16 @@ def main():
 
             # Usage instructions
             print("\nUsage Instructions:")
-            print("1. To load in training script:")
+            print("1. To create model with pretrained weights:")
+            print("   model = RosannaCNN(num_classes=2, pretrained_checkpoint='path/to/checkpoint.pth')")
+            print("\n2. To load in training script for resuming:")
             print("   model, optimizer, scheduler, scaler, start_epoch, ...")
             print("   = load_checkpoint(checkpoint_path, model, optimizer, scheduler, scaler)")
-            print("\n2. To load just the model weights:")
+            print("\n3. To load just the model weights manually:")
             print("   checkpoint = torch.load(checkpoint_path)")
             print("   model.load_state_dict(checkpoint['model_state_dict'])")
-            print("\n3. For inference or fine-tuning:")
-            print("   model = RosannaCNN(num_classes=2)")
-            print("   model.load_pretrained_weights(checkpoint_path)")
+            print("\n4. For ModelFactory usage:")
+            print("   model = ModelFactory.create_model('rosanna_cnn', config)")
 
         else:
             print("\n" + "=" * 70)

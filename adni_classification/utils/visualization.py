@@ -250,3 +250,111 @@ def plot_confusion_matrix(
     plt.close()
 
     return fig
+
+
+def log_sample_images_to_wandb(
+    model: torch.nn.Module,
+    dataset: Any,
+    device: torch.device,
+    wandb_run: Any,
+    num_samples: int = 4,
+    classification_mode: str = "CN_MCI_AD"
+) -> None:
+    """Log sample images with predictions to WandB.
+
+    Args:
+        model: Trained model
+        dataset: Dataset to get images from
+        device: Device to run the model on
+        wandb_run: WandB run object
+        num_samples: Number of samples to log
+        classification_mode: Classification mode to determine class names
+    """
+    if wandb_run is None:
+        return
+
+    model.eval()
+
+    # Create a simple DataLoader without multiprocessing to avoid conflicts
+    from torch.utils.data import DataLoader
+    simple_loader = DataLoader(
+        dataset,
+        batch_size=num_samples,
+        shuffle=True,
+        num_workers=0,  # No multiprocessing to avoid conflicts
+        pin_memory=False
+    )
+
+    # Get a batch of data
+    batch = next(iter(simple_loader))
+    images = batch["image"].to(device)
+    labels = batch["label"].to(device)
+
+    # Get predictions
+    with torch.no_grad():
+        outputs = model(images)
+        probabilities = torch.softmax(outputs, dim=1)
+        _, predicted = torch.max(outputs, 1)
+
+    # Map label indices to class names based on classification mode
+    if classification_mode == "CN_AD":
+        label_names = {0: "CN", 1: "AD"}
+    else:
+        label_names = {0: "CN", 1: "MCI", 2: "AD"}
+
+    # Prepare images for WandB logging
+    wandb_images = []
+
+    for i in range(min(num_samples, len(images))):
+        # Get the image, true label, and predicted label
+        img = images[i, 0].cpu().numpy()  # Remove channel dimension
+        true_label_idx = labels[i].item()
+        pred_label_idx = predicted[i].item()
+        pred_prob = probabilities[i, pred_label_idx].item()
+
+        true_label_name = label_names.get(true_label_idx, f"Unknown ({true_label_idx})")
+        pred_label_name = label_names.get(pred_label_idx, f"Unknown ({pred_label_idx})")
+
+        # Get middle slices in each dimension
+        mid_z = img.shape[0] // 2
+        mid_y = img.shape[1] // 2
+        mid_x = img.shape[2] // 2
+
+        # Create a figure with 3 subplots for the 3 different slice views
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+
+        # Plot the slices
+        axes[0].imshow(img[mid_z, :, :], cmap='gray')
+        axes[0].set_title(f'Z-slice {mid_z}')
+        axes[0].axis('off')
+
+        axes[1].imshow(img[:, mid_y, :], cmap='gray')
+        axes[1].set_title(f'Y-slice {mid_y}')
+        axes[1].axis('off')
+
+        axes[2].imshow(img[:, :, mid_x], cmap='gray')
+        axes[2].set_title(f'X-slice {mid_x}')
+        axes[2].axis('off')
+
+        plt.suptitle(f'Sample {i+1} - True: {true_label_name}, Pred: {pred_label_name} ({pred_prob:.3f})',
+                    fontsize=14, y=1.02)
+        plt.tight_layout()
+
+        # Convert figure to image format for WandB
+        import wandb
+        wandb_images.append(wandb.Image(
+            fig,
+            caption=f"Sample {i+1}: True={true_label_name}, Pred={pred_label_name}, Prob={pred_prob:.3f}"
+        ))
+
+        plt.close(fig)
+
+        # Log images to WandB
+    wandb_run.log({
+        "sample_images": wandb_images
+    })
+
+    # Clean up the temporary DataLoader
+    del simple_loader
+
+    print(f"Logged {len(wandb_images)} sample images to WandB")

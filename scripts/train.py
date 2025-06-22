@@ -30,7 +30,8 @@ from adni_classification.utils.visualization import (
     visualize_batch,
     visualize_predictions,
     plot_training_history,
-    plot_confusion_matrix
+    plot_confusion_matrix,
+    log_sample_images_to_wandb
 )
 from adni_classification.config.config import Config
 
@@ -944,6 +945,21 @@ def main():
                     checkpoint_config=config.training.checkpoint,
                     class_weights=class_weights
                 )
+
+                # Log sample images to WandB with predictions (same frequency as validation)
+                if wandb_run is not None:
+                    print("\tLogging sample images to WandB...")
+                    try:
+                        log_sample_images_to_wandb(
+                            model=model,
+                            dataset=val_dataset,
+                            device=device,
+                            wandb_run=wandb_run,
+                            num_samples=4,
+                            classification_mode=config.data.classification_mode
+                        )
+                    except Exception as e:
+                        print(f"Error logging sample images to WandB: {e}")
 
                 # Visualize predictions less frequently to reduce file operations
                 if config.training.visualize and ((epoch + 1) % 10 == 0 or (epoch + 1) == config.training.num_epochs):
