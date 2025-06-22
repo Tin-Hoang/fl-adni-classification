@@ -545,6 +545,14 @@ def create_criterion(
     Returns:
         Loss criterion
     """
+    from adni_classification.utils.losses import create_loss_function
+
+    # Determine number of classes
+    num_classes = config.model.num_classes
+    if config.data.classification_mode == "CN_AD":
+        num_classes = 2
+
+    class_weights = None
     if config.training.use_class_weights and train_dataset is not None:
         # Get labels from the training dataset
         labels = [sample["label"] for sample in train_dataset.base.data_list]
@@ -555,11 +563,6 @@ def create_criterion(
             if label not in class_counts:
                 class_counts[label] = 0
             class_counts[label] += 1
-
-        # Determine number of classes
-        num_classes = config.model.num_classes
-        if config.data.classification_mode == "CN_AD":
-            num_classes = 2
 
         # Calculate weights based on weight_type
         weight_type = config.training.class_weight_type
@@ -581,11 +584,17 @@ def create_criterion(
             class_weights = [1.0] * num_classes
 
         print(f"Class weights ({weight_type}): {class_weights}")
+        class_weights = torch.FloatTensor(class_weights).to(device)
 
-        weights = torch.FloatTensor(class_weights).to(device)
-        return nn.CrossEntropyLoss(weight=weights)
-    else:
-        return nn.CrossEntropyLoss()
+    # Create the appropriate loss function based on configuration
+    return create_loss_function(
+        loss_type=config.training.loss_type,
+        num_classes=num_classes,
+        class_weights=class_weights,
+        focal_alpha=config.training.focal_alpha,
+        focal_gamma=config.training.focal_gamma,
+        device=device
+    )
 
 
 def is_fl_client_checkpoint(checkpoint_path: str) -> bool:
