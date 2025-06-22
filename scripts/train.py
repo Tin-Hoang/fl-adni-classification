@@ -25,6 +25,7 @@ from adni_classification.models.model_factory import ModelFactory
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
 from adni_classification.utils.torch_utils import set_seed
 from adni_classification.utils.training_utils import get_scheduler
+from adni_classification.utils.losses import create_loss_function
 from adni_classification.utils.visualization import (
     visualize_batch,
     visualize_predictions,
@@ -368,22 +369,72 @@ def load_checkpoint(
     Returns:
         Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights)
     """
-    checkpoint = torch.load(checkpoint_path)
+    print(f"Loading checkpoint from: {checkpoint_path}")
 
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Load checkpoint with error handling
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    except Exception as e:
+        raise RuntimeError(f"Failed to load checkpoint from {checkpoint_path}: {e}")
 
+    # Check if this is a proper training checkpoint format
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"Checkpoint is not a dictionary. Got {type(checkpoint)}")
+
+    if 'model_state_dict' not in checkpoint:
+        raise KeyError(f"Checkpoint does not contain 'model_state_dict'. Available keys: {list(checkpoint.keys())}")
+
+    # Load model state dict with shape checking
+    try:
+        model_state_dict = checkpoint['model_state_dict']
+        current_state_dict = model.state_dict()
+
+        # Check for shape mismatches
+        mismatched_keys = []
+        for key, value in model_state_dict.items():
+            if key in current_state_dict:
+                if current_state_dict[key].shape != value.shape:
+                    mismatched_keys.append(f"{key}: expected {current_state_dict[key].shape}, got {value.shape}")
+
+        if mismatched_keys:
+            print("Warning: Found shape mismatches in checkpoint:")
+            for mismatch in mismatched_keys:
+                print(f"  {mismatch}")
+            print("Loading with strict=False to skip mismatched layers")
+            model.load_state_dict(model_state_dict, strict=False)
+        else:
+            model.load_state_dict(model_state_dict)
+
+        print("✓ Model state dict loaded successfully")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model state dict: {e}")
+
+    # Load optimizer state if available
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print("✓ Optimizer state loaded successfully")
+        except Exception as e:
+            print(f"Warning: Failed to load optimizer state: {e}")
 
+    # Load scheduler state if available
     if scheduler is not None and 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        try:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("✓ Scheduler state loaded successfully")
+        except Exception as e:
+            print(f"Warning: Failed to load scheduler state: {e}")
 
+    # Load scaler state if available
     if scaler is not None and 'scaler_state_dict' in checkpoint:
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        try:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            print("✓ Mixed precision scaler state loaded successfully")
+        except Exception as e:
+            print(f"Warning: Failed to load scaler state: {e}")
 
+    # Extract training information
     start_epoch = checkpoint.get('epoch', 0)
-
-    # Initialize history lists if they don't exist in the checkpoint
     train_losses = checkpoint.get('train_losses', [])
     val_losses = checkpoint.get('val_losses', [])
     train_accs = checkpoint.get('train_accs', [])
@@ -396,6 +447,14 @@ def load_checkpoint(
 
     # Get class weights if they exist
     class_weights = checkpoint.get('class_weights', None)
+
+    # Print checkpoint metadata if available
+    if 'pretrained_info' in checkpoint:
+        print("Checkpoint metadata:")
+        for key, value in checkpoint['pretrained_info'].items():
+            print(f"  {key}: {value}")
+
+    print(f"✓ Checkpoint loaded: epoch {start_epoch}, best val acc: {best_val_acc:.2f}%")
 
     return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights
 
@@ -619,6 +678,21 @@ def main():
             "classification_mode": config.data.classification_mode
         }
 
+    # Add model-specific parameters for pretrained CNN
+    elif config.model.name == "rosanna_cnn":
+        # Pass data configuration for classification mode
+        model_kwargs["data"] = {
+            "classification_mode": config.data.classification_mode
+        }
+
+        # Add pretrained CNN specific parameters
+        if hasattr(config.model, 'freeze_encoder'):
+            model_kwargs["freeze_encoder"] = config.model.freeze_encoder
+        if hasattr(config.model, 'dropout'):
+            model_kwargs["dropout"] = config.model.dropout
+        if hasattr(config.model, 'input_channels'):
+            model_kwargs["input_channels"] = config.model.input_channels
+
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     model = model.to(device)
     print("Model created!")
@@ -633,34 +707,55 @@ def main():
     class_weights = None
 
     # Check if we need to resume training from a checkpoint
-    if config.model.pretrained_checkpoint:
-        # Check if the weights path is a checkpoint file
-        if os.path.isfile(config.model.pretrained_checkpoint):
-            print(f"Loading checkpoint from: {config.model.pretrained_checkpoint}")
-            model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, loaded_weights = load_checkpoint(
-                config.model.pretrained_checkpoint, model
-            )
-            # We need to increment the epoch as start_epoch is the last completed epoch
-            start_epoch += 1
-            print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
+    # All models handle pretrained_checkpoint through the model factory during creation
+    # This section is only for resuming training from an existing training checkpoint
+    # We distinguish between pretrained weights and training checkpoints by checking the checkpoint content
+    if hasattr(config.model, 'pretrained_checkpoint') and config.model.pretrained_checkpoint and os.path.isfile(config.model.pretrained_checkpoint):
+        # Load the checkpoint to check if it's a training checkpoint or pretrained weights
+        try:
+            checkpoint_preview = torch.load(config.model.pretrained_checkpoint, map_location='cpu')
 
-            # If class weights were in the checkpoint and we're using class weights, use them only if they match our model's num_classes
-            if loaded_weights is not None and config.training.use_class_weights:
-                if loaded_weights.size(0) == model_kwargs["num_classes"]:
-                    class_weights = loaded_weights.to(device)
-                    print(f"Using class weights from checkpoint: {class_weights}")
-                else:
-                    print(f"Warning: Loaded class weights have shape {loaded_weights.size(0)} but model has {model_kwargs['num_classes']} classes.")
-                    print("Will recompute class weights based on current dataset.")
-                    class_weights = None
-        else:
-            print(f"No checkpoint found at: {config.model.pretrained_checkpoint}")
-            # If it's not a checkpoint file, it might be just a state dict
-            if os.path.isfile(config.model.pretrained_checkpoint):
-                print(f"Loading model state dict from: {config.model.pretrained_checkpoint}")
-                state_dict = torch.load(config.model.pretrained_checkpoint, map_location=device)
-                model.load_state_dict(state_dict)
-                print(f"Loaded model state dict from: {config.model.pretrained_checkpoint}")
+            # Check if this looks like a training checkpoint (has training history)
+            is_training_checkpoint = (
+                isinstance(checkpoint_preview, dict) and
+                'epoch' in checkpoint_preview and
+                checkpoint_preview.get('epoch', 0) > 0 and
+                ('train_losses' in checkpoint_preview or 'val_losses' in checkpoint_preview)
+            )
+
+            if is_training_checkpoint:
+                print(f"Detected training checkpoint, resuming training from: {config.model.pretrained_checkpoint}")
+                try:
+                    model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, loaded_weights = load_checkpoint(
+                        config.model.pretrained_checkpoint, model
+                    )
+                    # We need to increment the epoch as start_epoch is the last completed epoch
+                    start_epoch += 1
+                    print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
+
+                    # If class weights were in the checkpoint and we're using class weights, use them only if they match our model's num_classes
+                    if loaded_weights is not None and config.training.use_class_weights:
+                        if loaded_weights.size(0) == model_kwargs["num_classes"]:
+                            class_weights = loaded_weights.to(device)
+                            print(f"Using class weights from checkpoint: {class_weights}")
+                        else:
+                            print(f"Warning: Loaded class weights have shape {loaded_weights.size(0)} but model has {model_kwargs['num_classes']} classes.")
+                            print("Will recompute class weights based on current dataset.")
+                            class_weights = None
+                except Exception as e:
+                    print(f"Error loading training checkpoint: {e}")
+                    print("Starting training from scratch...")
+                    start_epoch = 0
+            else:
+                print(f"Detected pretrained weights checkpoint (handled during model creation)")
+
+        except Exception as e:
+            print(f"Could not preview checkpoint {config.model.pretrained_checkpoint}: {e}")
+            print("Assuming it's pretrained weights (handled during model creation)")
+
+    # Log pretrained checkpoint usage (all models handle this uniformly now)
+    if hasattr(config.model, 'pretrained_checkpoint') and config.model.pretrained_checkpoint:
+        print(f"Model initialized with checkpoint from: {config.model.pretrained_checkpoint}")
 
     # Create optimizer
     optimizer = torch.optim.Adam(
@@ -685,17 +780,11 @@ def main():
     if gradient_accumulation_steps > 1:
         print(f"Using gradient accumulation with {gradient_accumulation_steps} steps")
 
-    # If we resumed from a checkpoint, update optimizer and scheduler with loaded states
-    if config.model.pretrained_checkpoint and os.path.isfile(config.model.pretrained_checkpoint):
-        _, optimizer, scheduler, scaler, _, _, _, _, _, _, _ = load_checkpoint(
-            config.model.pretrained_checkpoint, model, optimizer, scheduler, scaler
-        )
-
     # Create loss function with class weights if enabled
-    if config.training.use_class_weights:
-        # Determine the actual number of classes based on our model configuration
-        num_classes = model_kwargs["num_classes"]
+    num_classes = model_kwargs["num_classes"]
+    class_weights = None
 
+    if config.training.use_class_weights:
         # Verify if the dataset labels match our expected number of classes
         max_label = max(labels) if labels else 0
         if max_label >= num_classes:
@@ -713,14 +802,28 @@ def main():
 
         class_weights = weights.to(device)
         print(f"Using class weights: {class_weights}")
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         # Log class weights to wandb if enabled
         if wandb_run is not None:
             wandb_run.config.update({"class_weights": class_weights.cpu().numpy().tolist()})
-    else:
-        criterion = nn.CrossEntropyLoss()
-        class_weights = None
+
+    # Create the appropriate loss function based on configuration
+    criterion = create_loss_function(
+        loss_type=config.training.loss_type,
+        num_classes=num_classes,
+        class_weights=class_weights,
+        focal_alpha=config.training.focal_alpha,
+        focal_gamma=config.training.focal_gamma,
+        device=device
+    )
+
+    # Log focal loss parameters to wandb if enabled
+    if wandb_run is not None and config.training.loss_type.lower() == "focal":
+        wandb_run.config.update({
+            "loss_type": config.training.loss_type,
+            "focal_alpha": config.training.focal_alpha,
+            "focal_gamma": config.training.focal_gamma
+        })
 
     # Visualize training samples if requested
     if config.training.visualize:

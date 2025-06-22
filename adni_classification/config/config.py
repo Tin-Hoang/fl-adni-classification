@@ -41,6 +41,10 @@ class ModelConfig:
     # DenseNet specific parameters
     growth_rate: Optional[int] = None
     block_config: Optional[Tuple[int, ...]] = None
+    # Pretrained CNN specific parameters
+    freeze_encoder: Optional[bool] = None
+    dropout: Optional[float] = None
+    input_channels: Optional[int] = None
 
 
 @dataclass
@@ -70,6 +74,10 @@ class TrainingConfig:
     use_class_weights: bool = False
     class_weight_type: str = "inverse"  # Options: "inverse", "sqrt_inverse", "effective", "manual"
     manual_class_weights: Optional[List[float]] = None  # Manual class weights if class_weight_type is "manual"
+    # Focal Loss configuration
+    loss_type: str = "cross_entropy"  # Options: "cross_entropy", "focal"
+    focal_alpha: Optional[float] = None  # Alpha parameter for Focal Loss (typically 0.25-1.0)
+    focal_gamma: float = 2.0  # Gamma parameter for Focal Loss (typically 0.5-5.0)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
 
@@ -194,6 +202,9 @@ class Config:
                 "growth_rate": self.model.growth_rate,
                 "block_config": self.model.block_config,
                 "pretrained_checkpoint": self.model.pretrained_checkpoint,
+                "freeze_encoder": self.model.freeze_encoder,
+                "dropout": self.model.dropout,
+                "input_channels": self.model.input_channels,
             },
             "training": {
                 "batch_size": self.training.batch_size,
@@ -211,6 +222,9 @@ class Config:
                 "use_class_weights": self.training.use_class_weights,
                 "class_weight_type": self.training.class_weight_type,
                 "manual_class_weights": self.training.manual_class_weights,
+                "loss_type": self.training.loss_type,
+                "focal_alpha": self.training.focal_alpha,
+                "focal_gamma": self.training.focal_gamma,
                 "checkpoint": {
                     "save_best": self.training.checkpoint.save_best,
                     "save_latest": self.training.checkpoint.save_latest,
