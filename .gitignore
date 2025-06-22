@@ -178,3 +178,4 @@ data/
 data_old/
 *.csv
 wandb/
+outputs/
