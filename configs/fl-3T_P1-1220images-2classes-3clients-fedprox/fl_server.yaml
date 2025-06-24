@@ -43,12 +43,13 @@ fl:
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
   evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
+  fedprox_mu: 0.1  # FedProx regularization parameter
 
 # Wandb logging configuration
 wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["federated-learning", "adni", "securefed-cnn", "fedprox"]
-  notes: "fl-securefed-fedprox-3clients-1220images-2classes-LMCI-moderate"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedprox-LMCI"
+  tags: ["federated-learning", "securefed-cnn", "fedprox"]
+  notes: "fl-securefed-fedprox-3clients-1220images-2classes-LMCI-fixed_aug-mu0.1"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedprox-mu0.1"

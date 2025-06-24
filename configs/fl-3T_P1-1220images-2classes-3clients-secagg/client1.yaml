@@ -41,8 +41,8 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn"]
-  notes: "fl-securefed-secagg-3clients-1220images-2classes-LMCI-Client1"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-secagg-LMCI"
+  notes: "fl-securefed-secagg-3clients-1220images-2classes-LMCI-fixed_aug-Client1"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-secagg-LMCI-fixed_aug"
 
 # FL-specific settings
 fl:

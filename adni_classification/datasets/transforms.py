@@ -10,6 +10,7 @@ from monai.transforms import (
     Orientationd,
     Spacingd,
     ScaleIntensityRanged,
+    ScaleIntensityRangePercentilesd,
     RandAffined,
     ToTensord,
     Resized,
@@ -71,11 +72,12 @@ def get_transforms(mode: str = "train",
 
     # Add the rest of the transforms
     common_transforms.extend([
-        # More robust intensity scaling using percentiles
-        ScaleIntensityRanged(
+        # Better intensity scaling for MRI data using percentiles
+        # This adapts to each image's actual intensity distribution
+        ScaleIntensityRangePercentilesd(
             keys=["image"],
-            a_min=0.0,
-            a_max=1000.0,
+            lower=1.0,   # 1st percentile as minimum
+            upper=99.0,  # 99th percentile as maximum
             b_min=0.0,
             b_max=1.0,
             clip=True,

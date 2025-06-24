@@ -180,3 +180,5 @@ data_old/
 wandb/
 outputs/
 visualization/
+outputs_centralized/
+outputs  /

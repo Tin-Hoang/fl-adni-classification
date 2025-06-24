@@ -31,9 +31,14 @@ training:
   visualize: false
   lr_scheduler: "plateau"
   val_epoch_freq: 10
-  use_class_weights: true
+  use_class_weights: false
   class_weight_type: "inverse"
   # Optional: manual_class_weights: [1.0, 2.0, 3.0]  # For manual weighting
+  loss_type: "focal"  # Options: "cross_entropy", "focal"
+  focal_alpha: 0.75   # Alpha parameter for Focal Loss (typically 0.25-1.0)
+                      # Set to null to use class_weights as alpha instead
+  focal_gamma: 2.0    # Gamma parameter for Focal Loss (typically 0.5-5.0)
+                      # Higher values focus more on hard examples
   checkpoint:
     save_best: true
     save_latest: true
@@ -44,6 +49,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["securefed-cnn", "3T_bl_org_P1_2classes_1220images"]
-  notes: "moderate_LMCI_fixed_dataaug"
-  run_name: "securefed-3T_bl_org_P1_2classes_1220images"
+  tags: ["securefed-cnn", "3T_P1-1220images-2classes", "focal_loss"]
+  notes: "data_aug_moderate_LMCI"
+  run_name: "securefed-3T_P1-1220images-2classes-LMCI-focal"

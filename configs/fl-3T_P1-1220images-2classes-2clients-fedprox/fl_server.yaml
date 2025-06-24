@@ -53,5 +53,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn", "fedprox"]
-  notes: "fl-securefed-fedprox-2clients-1220images-2classes-LMCI-moderate"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox-LMCI"
+  notes: "fl-securefed-fedprox-2clients-1220images-2classes-LMCI-fixed_dataaug"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox-LMCI-fixed_dataaug"

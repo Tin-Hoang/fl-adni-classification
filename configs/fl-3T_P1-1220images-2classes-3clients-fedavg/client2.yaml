@@ -42,7 +42,7 @@ wandb:
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn"]
   notes: "fl-securefed-fedavg-3clients-1220images-2classes-LMCI"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedavg-LMCI"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-3clients-fedavg-LMCI-fixed_aug"
 
 # FL-specific settings
 fl:

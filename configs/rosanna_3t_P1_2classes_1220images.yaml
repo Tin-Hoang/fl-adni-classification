@@ -1,0 +1,60 @@
+data:
+  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
+  dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
+  classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
+  resize_size: [96, 96, 73]  # Resize to match pretrained model input size
+  resize_mode: "trilinear"  # Default resize mode
+  use_spacing: false  # Disable spacing transform since images are already preprocessed
+  spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
+  cache_rate: 0.5  # Cache 50% of data in memory for faster training
+  cache_num_workers: 8  # Workers for creating the cache (separate from DataLoader workers)
+  cache_dir: "./persistent_cache"  # Directory to store the persistent cache
+  use_multiprocessing_transforms: false  # Whether to use multiprocessing-safe transforms
+  transform_device: "cuda"  # Device to use for transforms (e.g., "cuda" or "cpu")
+  multiprocessing_context: "spawn"  # Options: "spawn", "fork", "forkserver"
+
+model:
+  name: "rosanna_cnn"  # Using the pretrained CNN model (alias for rosanna_cnn)
+  num_classes: 2  # CN, AD - will be automatically adjusted based on classification_mode
+  # The pretrained_checkpoint parameter serves dual purposes:
+  # 1. If it contains pretrained weights (epoch=0 or no training history): Used for transfer learning
+  # 2. If it contains a training checkpoint (epoch>0 with training history): Resumes training
+  pretrained_checkpoint: "checkpoints/RosannaCNN_pretrained_checkpoint.pth" # Path to checkpoint
+  # Pretrained model specific parameters
+  freeze_encoder: false  # Set to true for feature extraction only
+  dropout: 0.1  # Dropout rate for regularization
+  input_channels: 1  # Number of input channels
+
+training:
+  batch_size: 32
+  num_epochs: 100  # Fewer epochs for fine-tuning
+  learning_rate: 0.0001  # Lower learning rate for fine-tuning
+  weight_decay: 0.01
+  num_workers: 4
+  seed: 42
+  output_dir: "outputs_centralized"
+  mixed_precision: false
+  visualize: false
+  lr_scheduler: "plateau"
+  val_epoch_freq: 1
+  use_class_weights: true
+  class_weight_type: "inverse"
+  loss_type: "cross_entropy"  # Options: "cross_entropy", "focal"
+  focal_alpha: null   # Alpha parameter for Focal Loss (typically 0.25-1.0)
+  focal_gamma: null    # Gamma parameter for Focal Loss (typically 0.5-5.0)
+  checkpoint:
+    save_best: true
+    save_latest: true
+    save_regular: false
+    save_frequency: 10
+
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["rosanna", "3T_P1-1220images-2classes", "pretrained"]
+  notes: "rosanna-3T_P1-1220images-2classes-LMCI-pretrained"
+  run_name: "rosanna-3T_P1-1220images-2classes-LMCI-pretrained"
