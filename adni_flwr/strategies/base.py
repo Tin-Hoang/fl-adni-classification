@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix
-from flwr.common import Parameters, FitRes, EvaluateRes, ConfigRecord
+from flwr.common import Parameters, FitRes, EvaluateRes, ConfigRecord, ArrayRecord, Array
 from flwr.server.strategy import Strategy
 from flwr.client import NumPyClient
 
@@ -264,23 +264,20 @@ class StrategyAwareClient(NumPyClient):
         print(f"Client checkpoint saving: {'enabled' if self.save_client_checkpoints else 'disabled'} (frequency: {self.checkpoint_save_frequency})")
 
     def _initialize_context_scheduler(self):
-        """Initialize or restore scheduler and optimizer from context state."""
-        # Initialize context state for scheduler and optimizer management
-        if "scheduler_state" not in self.context.state.config_records:
-            self.context.state.config_records["scheduler_state"] = ConfigRecord()
-        if "optimizer_state" not in self.context.state.config_records:
-            self.context.state.config_records["optimizer_state"] = ConfigRecord()
+        """Initialize or restore scheduler from lightweight context tracking."""
+        # Initialize context state for lightweight scheduler tracking only
+        if "scheduler_tracking" not in self.context.state.config_records:
+            self.context.state.config_records["scheduler_tracking"] = ConfigRecord()
 
-        scheduler_state = self.context.state.config_records["scheduler_state"]
-        optimizer_state = self.context.state.config_records["optimizer_state"]
+        scheduler_tracking = self.context.state.config_records["scheduler_tracking"]
 
-        # First handle optimizer restoration/initialization
-        self._initialize_context_optimizer(optimizer_state)
-
-        # Then handle scheduler (which depends on optimizer)
-        if "scheduler" not in scheduler_state:
-            # First time - create fresh scheduler
+        if "scheduler_type" not in scheduler_tracking:
+            # First time - create fresh scheduler and store lightweight tracking info
             print(f"Creating new scheduler '{self.config.training.lr_scheduler}' for {self.total_fl_rounds} FL rounds")
+
+            # Always recreate optimizer fresh (memory efficient)
+            self._recreate_optimizer()
+
             scheduler = get_scheduler(
                 scheduler_type=self.config.training.lr_scheduler,
                 optimizer=self.client_strategy.optimizer,
@@ -288,188 +285,235 @@ class StrategyAwareClient(NumPyClient):
             )
 
             if scheduler is not None:
-                # Store scheduler in context state using pickle
-                scheduler_state["scheduler"] = pickle.dumps(scheduler)
-                scheduler_state["scheduler_type"] = self.config.training.lr_scheduler
-                scheduler_state["total_rounds"] = self.total_fl_rounds
-                scheduler_state["current_step"] = 0
+                # Store only lightweight scheduler tracking info
+                scheduler_tracking["scheduler_type"] = self.config.training.lr_scheduler
+                scheduler_tracking["total_rounds"] = self.total_fl_rounds
+                scheduler_tracking["last_epoch"] = -1  # Starting position
+                scheduler_tracking["base_lr"] = self.config.training.learning_rate
+
+                # Store scheduler-specific parameters
+                if hasattr(scheduler, 'T_max'):
+                    scheduler_tracking["T_max"] = scheduler.T_max
+                if hasattr(scheduler, 'eta_min'):
+                    scheduler_tracking["eta_min"] = scheduler.eta_min
+                if hasattr(scheduler, 'step_size'):
+                    scheduler_tracking["step_size"] = scheduler.step_size
+                if hasattr(scheduler, 'gamma'):
+                    scheduler_tracking["gamma"] = scheduler.gamma
+
                 self.client_strategy.scheduler = scheduler
-                print(f"Scheduler created and stored in context")
+                print(f"Lightweight scheduler tracking initialized: {dict(scheduler_tracking)}")
             else:
                 print("No scheduler specified")
                 self.client_strategy.scheduler = None
         else:
-            # Restore scheduler from context state
-            print(f"Restoring scheduler from context state")
-            current_step = scheduler_state.get("current_step", 0)
+            # Restore scheduler from lightweight tracking
+            print(f"Restoring scheduler from lightweight tracking")
 
-            try:
-                # Load the pickled scheduler directly instead of recreating it
-                scheduler = pickle.loads(scheduler_state["scheduler"])
+            # Always recreate optimizer fresh (memory efficient)
+            self._recreate_optimizer()
 
-                # Update the scheduler's optimizer reference to the current optimizer
-                # This is necessary because the optimizer might be recreated between client sessions
-                scheduler.optimizer = self.client_strategy.optimizer
+            # Recreate scheduler with tracked state
+            scheduler_type = scheduler_tracking.get("scheduler_type", self.config.training.lr_scheduler)
+            last_epoch = scheduler_tracking.get("last_epoch", -1)
 
+            scheduler = self._recreate_scheduler_from_tracking(scheduler_tracking)
+
+            if scheduler is not None:
                 self.client_strategy.scheduler = scheduler
-
-                # Get the current learning rate after restoration
                 current_lr = self.client_strategy.optimizer.param_groups[0]['lr']
-                print(f"Scheduler ({type(scheduler).__name__}) successfully restored from pickled state")
-                print(f"Restored to step {current_step} (last_epoch={getattr(scheduler, 'last_epoch', 'N/A')})")
-                print(f"Current LR after restoration: {current_lr:.8f}")
+                print(f"Scheduler ({type(scheduler).__name__}) recreated from lightweight tracking")
+                print(f"Restored to last_epoch={last_epoch}, current LR: {current_lr:.8f}")
 
-            except Exception as e:
-                print(f"ERROR: Failed to restore pickled scheduler: {e}")
-                print(f"Falling back to creating fresh scheduler")
+                # Print scheduler diagnostics
+                if hasattr(scheduler, 'get_lr'):
+                    try:
+                        expected_lrs = scheduler.get_lr()
+                        print(f"Scheduler's expected LR: {[f'{lr:.8f}' for lr in expected_lrs]}")
 
-                # Fallback: create fresh scheduler if pickle restoration fails
+                        # CRITICAL FIX: Synchronize optimizer LR with scheduler's expected LR
+                        if last_epoch > -1:
+                            print(f"Synchronizing optimizer LR with scheduler expectation after restoration")
+                            self._synchronize_scheduler_lr(scheduler, last_epoch)
+
+                            # Show final LR after synchronization
+                            final_lr = self.client_strategy.optimizer.param_groups[0]['lr']
+                            print(f"Final synchronized LR: {final_lr:.8f}")
+
+                    except Exception as lr_check_error:
+                        print(f"Could not check scheduler's expected LR: {lr_check_error}")
+            else:
+                print("Failed to recreate scheduler from lightweight tracking")
+                self.client_strategy.scheduler = None
+
+    def _recreate_optimizer(self):
+        """Recreate optimizer fresh for memory efficiency."""
+        current_params = list(self.client_strategy.model.parameters())
+
+        # Create fresh optimizer based on config
+        if hasattr(self.config.training, 'optimizer'):
+            optimizer_type = self.config.training.optimizer.lower()
+        else:
+            optimizer_type = 'adamw'  # default
+
+        lr = self.config.training.learning_rate
+        weight_decay = self.config.training.weight_decay
+
+        if optimizer_type == 'adam':
+            optimizer = torch.optim.Adam(current_params, lr=lr, weight_decay=weight_decay)
+        elif optimizer_type == 'adamw':
+            optimizer = torch.optim.AdamW(current_params, lr=lr, weight_decay=weight_decay)
+        elif optimizer_type == 'sgd':
+            momentum = getattr(self.config.training, 'momentum', 0.9)
+            optimizer = torch.optim.SGD(current_params, lr=lr, weight_decay=weight_decay, momentum=momentum)
+        else:
+            # Default to AdamW
+            optimizer = torch.optim.AdamW(current_params, lr=lr, weight_decay=weight_decay)
+
+        self.client_strategy.optimizer = optimizer
+        print(f"Recreated fresh {type(optimizer).__name__} optimizer with LR={lr:.8f}")
+
+    def _recreate_scheduler_from_tracking(self, scheduler_tracking) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
+        """Recreate scheduler from lightweight tracking information."""
+        try:
+            scheduler_type = scheduler_tracking.get("scheduler_type")
+            last_epoch = scheduler_tracking.get("last_epoch", -1)
+
+            if scheduler_type == "CosineAnnealingLR":
+                T_max = scheduler_tracking.get("T_max", self.total_fl_rounds)
+                eta_min = scheduler_tracking.get("eta_min", 0.0)
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.client_strategy.optimizer,
+                    T_max=T_max,
+                    eta_min=eta_min,
+                    last_epoch=last_epoch
+                )
+            elif scheduler_type == "StepLR":
+                step_size = scheduler_tracking.get("step_size", 30)
+                gamma = scheduler_tracking.get("gamma", 0.1)
+                scheduler = torch.optim.lr_scheduler.StepLR(
+                    self.client_strategy.optimizer,
+                    step_size=step_size,
+                    gamma=gamma,
+                    last_epoch=last_epoch
+                )
+            elif scheduler_type == "MultiStepLR":
+                milestones = scheduler_tracking.get("milestones", [30, 60, 90])
+                gamma = scheduler_tracking.get("gamma", 0.1)
+                scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                    self.client_strategy.optimizer,
+                    milestones=milestones,
+                    gamma=gamma,
+                    last_epoch=last_epoch
+                )
+            elif scheduler_type == "ExponentialLR":
+                gamma = scheduler_tracking.get("gamma", 0.95)
+                scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                    self.client_strategy.optimizer,
+                    gamma=gamma,
+                    last_epoch=last_epoch
+                )
+            else:
+                # Fallback using get_scheduler
                 scheduler = get_scheduler(
-                    scheduler_type=self.config.training.lr_scheduler,
+                    scheduler_type=scheduler_type,
                     optimizer=self.client_strategy.optimizer,
                     num_epochs=self.total_fl_rounds
                 )
+                if scheduler is not None and last_epoch > -1:
+                    # Manually set last_epoch for unknown scheduler types
+                    scheduler.last_epoch = last_epoch
 
-                if scheduler is not None and current_step > 0:
-                    # Apply the old restoration logic as fallback
-                    print(f"Fallback: Restoring {type(scheduler).__name__} scheduler with initial LR: {self.client_strategy.optimizer.param_groups[0]['lr']}")
-                    scheduler.last_epoch = current_step
+            return scheduler
 
-                    if hasattr(scheduler, 'get_lr'):
-                        calculated_lrs = scheduler.get_lr()
-                        for param_group, lr in zip(scheduler.optimizer.param_groups, calculated_lrs):
-                            print(f"Fallback: Updating LR from {param_group['lr']:.8f} to {lr:.8f}")
-                            param_group['lr'] = lr
-
-                        if hasattr(scheduler, '_last_lr'):
-                            scheduler._last_lr = calculated_lrs
-
-                        print(f"Fallback scheduler restoration completed")
-
-                self.client_strategy.scheduler = scheduler
-
-                # Get the current learning rate after fallback restoration
-                current_lr = self.client_strategy.optimizer.param_groups[0]['lr']
-                print(f"Fallback scheduler restored at step {current_step}, current LR: {current_lr:.8f}")
-
-    def _initialize_context_optimizer(self, optimizer_state):
-        """Initialize or restore optimizer from context state."""
-        if "optimizer" not in optimizer_state:
-            # First time - store the current optimizer
-            try:
-                # Store optimizer in context state using pickle
-                optimizer_pickled = pickle.dumps(self.client_strategy.optimizer)
-                optimizer_size = len(optimizer_pickled)
-
-                # Only store if size is reasonable (< 10MB)
-                if optimizer_size < 10 * 1024 * 1024:  # 10MB limit
-                    optimizer_state["optimizer"] = optimizer_pickled
-                    optimizer_state["optimizer_type"] = type(self.client_strategy.optimizer).__name__
-                    optimizer_state["size_bytes"] = optimizer_size
-                    print(f"Optimizer ({type(self.client_strategy.optimizer).__name__}) stored in context ({optimizer_size:,} bytes)")
-                else:
-                    print(f"Optimizer too large ({optimizer_size:,} bytes), skipping context storage")
-                    optimizer_state["use_state_dict"] = True
-
-            except Exception as e:
-                print(f"Failed to pickle optimizer: {e}, falling back to state_dict approach")
-                optimizer_state["use_state_dict"] = True
-        else:
-            # Restore optimizer from context state
-            if optimizer_state.get("use_state_dict", False):
-                print("Using state_dict approach for optimizer (not pickled)")
-                # Keep current optimizer, state will be restored from checkpoints
-            else:
-                try:
-                    # Load the pickled optimizer directly
-                    optimizer = pickle.loads(optimizer_state["optimizer"])
-                    optimizer_size = optimizer_state.get("size_bytes", 0)
-
-                    # Update parameter references to current model while preserving optimizer state
-                    # This is crucial because model parameters might be recreated
-                    current_params = list(self.client_strategy.model.parameters())
-
-                    # Verify parameter count matches
-                    if len(optimizer.param_groups) > 0:
-                        old_param_count = sum(len(group['params']) for group in optimizer.param_groups)
-                        new_param_count = len(current_params)
-
-                        if old_param_count == new_param_count:
-                            # Update parameter references while preserving optimizer state and config
-                            for group in optimizer.param_groups:
-                                group['params'] = current_params
-                            print(f"Updated {new_param_count} parameter references in optimizer")
-                        else:
-                            print(f"Parameter count mismatch (old: {old_param_count}, new: {new_param_count}), recreating optimizer")
-                            raise ValueError("Parameter count mismatch")
-                    else:
-                        # Fallback: recreate param groups if empty
-                        optimizer.param_groups = [{
-                            'params': current_params,
-                            'lr': self.config.training.learning_rate,
-                            'weight_decay': self.config.training.weight_decay,
-                        }]
-
-                    self.client_strategy.optimizer = optimizer
-                    print(f"Optimizer ({type(optimizer).__name__}) successfully restored from pickled state ({optimizer_size:,} bytes)")
-
-                except Exception as e:
-                    print(f"ERROR: Failed to restore pickled optimizer: {e}")
-                    print("Keeping current optimizer, state will be restored from checkpoints")
+        except Exception as e:
+            print(f"Error recreating scheduler from tracking: {e}")
+            return None
 
     def _update_context_scheduler(self):
-        """Update scheduler and optimizer state in context after training."""
-        if self.context is not None:
-            # Update scheduler state
-            if self.client_strategy.scheduler is not None:
-                scheduler_state = self.context.state.config_records["scheduler_state"]
+        """Update lightweight scheduler tracking in context after training."""
+        if self.context is not None and self.client_strategy.scheduler is not None:
+            scheduler_tracking = self.context.state.config_records["scheduler_tracking"]
 
-                try:
-                    # Save the scheduler object using pickle
-                    scheduler_state["scheduler"] = pickle.dumps(self.client_strategy.scheduler)
+            try:
+                # Update only the lightweight tracking information
+                if hasattr(self.client_strategy.scheduler, 'last_epoch'):
+                    current_step = self.client_strategy.scheduler.last_epoch
+                else:
+                    current_step = getattr(self.client_strategy.scheduler, '_step_count', 0)
 
-                    # Update current step based on scheduler's internal state
-                    if hasattr(self.client_strategy.scheduler, 'last_epoch'):
-                        # For most schedulers, last_epoch represents the number of times step() has been called
-                        current_step = self.client_strategy.scheduler.last_epoch
-                    else:
-                        # Fallback to _step_count if available
-                        current_step = getattr(self.client_strategy.scheduler, '_step_count', 0)
+                scheduler_tracking["last_epoch"] = current_step
 
-                    scheduler_state["current_step"] = current_step
-                    print(f"Updated scheduler state: current_step = {current_step}, last_epoch = {getattr(self.client_strategy.scheduler, 'last_epoch', 'N/A')}")
+                print(f"Updated lightweight scheduler tracking: last_epoch = {current_step}")
 
-                except Exception as e:
-                    print(f"ERROR: Failed to pickle scheduler during state update: {e}")
-                    # Continue without updating the scheduler state rather than crashing
+            except Exception as e:
+                print(f"ERROR: Failed to update scheduler tracking: {e}")
 
-            # Update optimizer state
-            if self.client_strategy.optimizer is not None:
-                optimizer_state = self.context.state.config_records["optimizer_state"]
+    def _synchronize_scheduler_lr(self, scheduler, current_step: int):
+        """Synchronize optimizer learning rate with scheduler expectations.
 
-                # Only update if we're using pickle approach (not state_dict fallback)
-                if not optimizer_state.get("use_state_dict", False):
-                    try:
-                        # Save the optimizer object using pickle
-                        optimizer_pickled = pickle.dumps(self.client_strategy.optimizer)
-                        optimizer_size = len(optimizer_pickled)
+        This is crucial when the scheduler is restored from lightweight tracking
+        but the optimizer is fresh, which may cause LR mismatch.
 
-                        # Check size limit again (might have grown due to momentum accumulation)
-                        if optimizer_size < 10 * 1024 * 1024:  # 10MB limit
-                            optimizer_state["optimizer"] = optimizer_pickled
-                            optimizer_state["size_bytes"] = optimizer_size
-                            print(f"Updated optimizer state in context ({optimizer_size:,} bytes)")
-                        else:
-                            print(f"Optimizer became too large ({optimizer_size:,} bytes), switching to state_dict approach")
-                            optimizer_state["use_state_dict"] = True
-                            # Remove the pickled optimizer to save memory
-                            if "optimizer" in optimizer_state:
-                                del optimizer_state["optimizer"]
+        Args:
+            scheduler: The scheduler instance
+            current_step: Current training step
+        """
+        try:
+            # For different scheduler types, we need different approaches
+            scheduler_type = type(scheduler).__name__
 
-                    except Exception as e:
-                        print(f"ERROR: Failed to pickle optimizer during state update: {e}")
-                        print("Switching to state_dict approach for future rounds")
-                        optimizer_state["use_state_dict"] = True
+            if scheduler_type == "CosineAnnealingLR":
+                # For CosineAnnealingLR, we can calculate the expected LR
+                if hasattr(scheduler, 'get_lr'):
+                    calculated_lrs = scheduler.get_lr()
+                    for param_group, lr in zip(scheduler.optimizer.param_groups, calculated_lrs):
+                        old_lr = param_group['lr']
+                        param_group['lr'] = lr
+                        print(f"LR sync: Updated param group LR from {old_lr:.8f} to {lr:.8f}")
+
+                    # Update scheduler's internal _last_lr if it exists
+                    if hasattr(scheduler, '_last_lr'):
+                        scheduler._last_lr = calculated_lrs
+
+                    print(f"Successfully synchronized LR for {scheduler_type} at step {current_step}")
+                else:
+                    print(f"Warning: {scheduler_type} scheduler doesn't have get_lr() method")
+
+            elif scheduler_type in ["StepLR", "MultiStepLR", "ExponentialLR"]:
+                # For step-based schedulers, calculate expected LR
+                if hasattr(scheduler, 'get_lr'):
+                    calculated_lrs = scheduler.get_lr()
+                    for param_group, lr in zip(scheduler.optimizer.param_groups, calculated_lrs):
+                        old_lr = param_group['lr']
+                        param_group['lr'] = lr
+                        print(f"LR sync: Updated param group LR from {old_lr:.8f} to {lr:.8f}")
+
+                    if hasattr(scheduler, '_last_lr'):
+                        scheduler._last_lr = calculated_lrs
+
+                    print(f"Successfully synchronized LR for {scheduler_type} at step {current_step}")
+
+            elif scheduler_type == "ReduceLROnPlateau":
+                # ReduceLROnPlateau doesn't have get_lr(), and its LR changes are event-driven
+                # We can't easily predict the LR without knowing the loss history
+                print(f"Warning: Cannot synchronize LR for {scheduler_type} - LR changes are loss-driven")
+
+            else:
+                print(f"Warning: Unknown scheduler type {scheduler_type}, attempting generic LR sync")
+                if hasattr(scheduler, 'get_lr'):
+                    calculated_lrs = scheduler.get_lr()
+                    for param_group, lr in zip(scheduler.optimizer.param_groups, calculated_lrs):
+                        old_lr = param_group['lr']
+                        param_group['lr'] = lr
+                        print(f"LR sync: Updated param group LR from {old_lr:.8f} to {lr:.8f}")
+
+                    if hasattr(scheduler, '_last_lr'):
+                        scheduler._last_lr = calculated_lrs
+
+        except Exception as e:
+            print(f"Error during LR synchronization: {e}")
+            print(f"Continuing with current LR settings")
 
     def _save_client_checkpoint(self, round_num: int, train_loss: float, train_acc: float, is_best: bool = False):
         """Save client checkpoint after local training.
@@ -493,7 +537,6 @@ class StrategyAwareClient(NumPyClient):
                 'round': round_num,
                 'client_id': self.client_id,
                 'model_state_dict': self.client_strategy.model.state_dict(),
-                'optimizer_state_dict': self.client_strategy.optimizer.state_dict(),
                 'train_loss': train_loss,
                 'train_accuracy': train_acc,
                 'best_val_accuracy': self.best_val_accuracy,
@@ -506,6 +549,13 @@ class StrategyAwareClient(NumPyClient):
                     'weight_decay': self.config.training.weight_decay,
                 }
             }
+
+            # Save optimizer state_dict (simple save since we recreate optimizers fresh each round)
+            try:
+                checkpoint['optimizer_state_dict'] = self.client_strategy.optimizer.state_dict()
+            except Exception as optimizer_error:
+                print(f"Client {self.client_id}: Could not save optimizer state: {optimizer_error}")
+                # Not critical since we recreate optimizers fresh each round
 
             # Add scheduler state if available
             if hasattr(self.client_strategy, 'scheduler') and self.client_strategy.scheduler is not None:
@@ -578,9 +628,13 @@ class StrategyAwareClient(NumPyClient):
             # Load model state
             self.client_strategy.model.load_state_dict(checkpoint['model_state_dict'])
 
-            # Load optimizer state
+            # Load optimizer state (simple load since we recreate optimizers fresh each round)
             if 'optimizer_state_dict' in checkpoint:
-                self.client_strategy.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                try:
+                    self.client_strategy.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                except Exception as optimizer_error:
+                    print(f"Client {self.client_id}: Could not load optimizer state: {optimizer_error}")
+                    # Not critical since we recreate optimizers fresh each round
 
             # Load scheduler state if available
             if ('scheduler_state_dict' in checkpoint and
@@ -883,6 +937,8 @@ class StrategyAwareClient(NumPyClient):
             if self.client_strategy.scheduler.optimizer is not self.client_strategy.optimizer:
                 print(f"Client {self.client_id}: Fixing scheduler optimizer reference mismatch")
                 self.client_strategy.scheduler.optimizer = self.client_strategy.optimizer
+
+
 
     def _check_scheduler_health(self) -> bool:
         """Check if scheduler is in a healthy state for serialization.
