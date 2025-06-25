@@ -86,12 +86,8 @@ class SecureFedCNN(BaseModel):
             nn.MaxPool3d(kernel_size=3, stride=3)  # 64 x 3 x 4 x 3
         )
 
-        # Calculate the size of the flattened features
-        # After conv blocks, for input [182, 218, 182]:
-        # conv1: [91, 109, 91], conv2: [30, 36, 30], conv3: [15, 18, 15], conv4: [5, 6, 5]
-        flat_size = [3, 4, 3]
-        self.flat_features = 64 * flat_size[0] * flat_size[1] * flat_size[2]  # 64 * 3 * 4 * 3 = 2304
-
+        # Dynamically calculate the size of the flattened features
+        self.flat_features = self._calculate_flat_features()
         print(f"Calculated flat features size: {self.flat_features} from input size {self.input_size}")
 
         # Define the fully connected layers
@@ -104,6 +100,27 @@ class SecureFedCNN(BaseModel):
         # Load pretrained weights if provided
         if pretrained_checkpoint:
             self.load_pretrained_weights(pretrained_checkpoint)
+
+    def _calculate_flat_features(self) -> int:
+        """Calculate the number of flat features after convolutional layers.
+
+        Returns:
+            Number of features after flattening the conv output
+        """
+        # Create a dummy input with the specified input size
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 1, *self.input_size)
+
+            # Pass through convolutional layers
+            x = self.conv1(dummy_input)
+            x = self.conv2(x)
+            x = self.conv3(x)
+            x = self.conv4(x)
+
+            # Calculate the flattened size
+            flat_size = x.view(1, -1).size(1)
+
+        return flat_size
 
     def load_pretrained_weights(self, checkpoint_path: str) -> None:
         """Load pretrained weights from checkpoint file.
@@ -136,9 +153,6 @@ class SecureFedCNN(BaseModel):
         x = self.conv3(x)
         x = self.conv4(x)
 
-        # Store original flattened size for debugging
-        orig_shape = x.shape
-
         # Flatten the features
         x = x.view(x.size(0), -1)
 
@@ -146,31 +160,19 @@ class SecureFedCNN(BaseModel):
         if x.size(1) != self.flat_features:
             actual_size = x.size(1)
             print(f"Warning: Flattened size {actual_size} doesn't match expected size {self.flat_features}")
-            print(f"Original tensor shape after conv layers: {orig_shape}")
+            print(f"This may indicate a mismatch between initialization and runtime input sizes.")
 
-            # Dynamically adapt to the actual size if needed
-            if not hasattr(self, 'adapted_fc1') or self.adapted_fc1.in_features != actual_size:
-                print(f"Adapting fully connected layer to actual size: {actual_size}")
-                self.adapted_fc1 = nn.Linear(actual_size, 128).to(x.device)
-                if hasattr(self, 'fc1'):
-                    if actual_size < self.flat_features:
-                        self.adapted_fc1.weight.data[:, :actual_size] = self.fc1.weight.data[:, :actual_size]
-                    else:
-                        self.adapted_fc1.weight.data[:, :self.flat_features] = self.fc1.weight.data
-                    self.adapted_fc1.bias.data = self.fc1.bias.data
+            # For safety, we'll handle this gracefully but it shouldn't happen with proper initialization
+            raise RuntimeError(
+                f"Input size mismatch: expected flattened size {self.flat_features}, "
+                f"got {actual_size}. This suggests the input shape {x.shape[2:]} differs from "
+                f"the initialization input shape {self.input_size}."
+            )
 
-            # Use the adapted layer
-            x = self.dropout(x)
-            x = F.relu(self.adapted_fc1(x))
-        else:
-            # Regular forward pass
-            x = self.dropout(x)
-            x = F.relu(self.fc1(x))
-
-        # Apply dropout before second fully connected layer
+        # Pass through fully connected layers
         x = self.dropout(x)
-
-        # Pass through second fully connected layer
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
         x = self.fc2(x)
 
         return x
