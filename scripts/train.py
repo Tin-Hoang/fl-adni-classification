@@ -680,10 +680,11 @@ def main():
         }
 
     # Add model-specific parameters for pretrained CNN
-    elif config.model.name == "rosanna_cnn":
-        # Pass data configuration for classification mode
+    elif config.model.name in ["rosanna_cnn", "pretrained_cnn"]:
+        # Pass data configuration for classification mode and resize_size
         model_kwargs["data"] = {
-            "classification_mode": config.data.classification_mode
+            "classification_mode": config.data.classification_mode,
+            "resize_size": config.data.resize_size
         }
 
         # Add pretrained CNN specific parameters
