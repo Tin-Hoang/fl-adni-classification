@@ -953,7 +953,7 @@ def main():
                     try:
                         log_sample_images_to_wandb(
                             model=model,
-                            dataset=val_dataset,
+                            dataset=train_dataset,
                             device=device,
                             wandb_run=wandb_run,
                             num_samples=4,
