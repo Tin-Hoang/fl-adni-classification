@@ -97,21 +97,15 @@ serverapp = "adni_flwr.server_app:app"
 clientapp = "adni_flwr.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 200
-fraction-fit = 1.0
-batch-size = 4
-client-config-files = "configs/fl-3T_P1-1220images-2classes-3clients-fedavg/client1.yaml,configs/fl-3T_P1-1220images-2classes-3clients-fedavg/client2.yaml,configs/fl-3T_P1-1220images-2classes-3clients-fedavg/client3.yaml"
-server-config-file = "configs/fl-3T_P1-1220images-2classes-3clients-fedavg/fl_server.yaml"
+client-config-files = "configs/fl-3T_P1-1220images-2classes-2clients-fedprox/client1.yaml,configs/fl-3T_P1-1220images-2classes-2clients-fedprox/client2.yaml"
+server-config-file = "configs/fl-3T_P1-1220images-2classes-2clients-fedprox/fl_server.yaml"
 
 [tool.flwr.federations]
 default = "local-simulation-gpu"
 
-[tool.flwr.federations.local-simulation]
-options.num-supernodes = 3
-
 [tool.flwr.federations.local-simulation-gpu]
-options.num-supernodes = 3
+options.num-supernodes = 2
 options.backend.client-resources.num-cpus = 8
-options.backend.client-resources.num-gpus = 0.33
+options.backend.client-resources.num-gpus = 0.5
 options.backend.ray-config.max-restarts = 3
 options.backend.ray-config.max-task-retries = 3

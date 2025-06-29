@@ -69,12 +69,8 @@ def client_fn(context: Context):
         weight_decay=config.training.weight_decay,
     )
 
-    # Get total FL rounds from run_config (set in pyproject.toml or via flwr run)
-    total_fl_rounds = context.run_config.get("num-server-rounds")
-    if total_fl_rounds is None:
-        print("WARNING: 'num-server-rounds' not found in run_config, using default from FL config")
-        total_fl_rounds = getattr(config.fl, 'num_rounds', 100)  # fallback
-
+    # Get total FL rounds from FL config
+    total_fl_rounds = config.fl.num_rounds
     print(f"Total FL rounds: {total_fl_rounds}")
 
     # Load data to create criterion

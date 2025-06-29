@@ -51,6 +51,7 @@ wandb:
 fl:
   client_id: 1
   local_epochs: 1  # Number of local epochs per round
+  num_rounds: 200  # Number of FL rounds to perform (to setup LR scheduler)
   evaluate_frequency: 5  # Evaluate every 10 rounds (can be overridden by server config)
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
   fedprox_mu: 0.1  # FedProx regularization parameter
