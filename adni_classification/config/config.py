@@ -115,7 +115,50 @@ class Config:
         # Create training config with the checkpoint config
         training_config = TrainingConfig(**training_dict, checkpoint=checkpoint_config)
 
-        fl_config = FLConfig(**config_dict.get("fl", {}))
+        # Handle FL config with multi-machine settings
+        fl_dict = config_dict.get("fl", {})
+
+        # Extract multi-machine config if present
+        multi_machine_dict = fl_dict.pop("multi_machine", None)
+        multi_machine_config = None
+
+        if multi_machine_dict:
+            from .fl_config import MultiMachineConfig, ServerMachineConfig, ClientMachineConfig, SSHConfig
+
+            # Parse server config
+            server_config = None
+            if "server" in multi_machine_dict:
+                server_config = ServerMachineConfig(**multi_machine_dict["server"])
+
+            # Parse client configs
+            client_configs = []
+            if "clients" in multi_machine_dict:
+                for i, client_data in enumerate(multi_machine_dict["clients"]):
+                    client_config = ClientMachineConfig(
+                        host=client_data["host"],
+                        username=client_data["username"],
+                        password=client_data.get("password"),
+                        partition_id=client_data.get("partition_id", i),
+                        project_dir=client_data.get("project_dir")
+                    )
+                    client_configs.append(client_config)
+
+            # Parse SSH config
+            ssh_config = SSHConfig()
+            if "ssh" in multi_machine_dict:
+                ssh_config = SSHConfig(**multi_machine_dict["ssh"])
+
+            # Create multi-machine config
+            multi_machine_config = MultiMachineConfig(
+                server=server_config,
+                clients=client_configs,
+                project_dir=multi_machine_dict.get("project_dir"),
+                venv_path=multi_machine_dict.get("venv_path"),
+                venv_activate=multi_machine_dict.get("venv_activate"),
+                ssh=ssh_config
+            )
+
+        fl_config = FLConfig(**fl_dict, multi_machine=multi_machine_config)
 
         wandb_config = WandbConfig(**config_dict.get("wandb", {}))
 
@@ -168,6 +211,64 @@ class Config:
             self.training.output_dir = os.path.join(self.training.output_dir, f"{self.wandb.run_name}")
 
         # Note: FL checkpoints will be stored in {training.output_dir}/checkpoints/
+
+    def _get_fl_dict(self) -> Dict[str, Any]:
+        """Get FL configuration as dictionary including multi-machine settings."""
+        fl_dict = {
+            "num_rounds": self.fl.num_rounds,
+            "strategy": self.fl.strategy,
+            "fraction_fit": self.fl.fraction_fit,
+            "fraction_evaluate": self.fl.fraction_evaluate,
+            "min_fit_clients": self.fl.min_fit_clients,
+            "min_evaluate_clients": self.fl.min_evaluate_clients,
+            "min_available_clients": self.fl.min_available_clients,
+            "local_epochs": self.fl.local_epochs,
+            "client_config_files": self.fl.client_config_files,
+            "evaluate_frequency": self.fl.evaluate_frequency,
+            "fedprox_mu": self.fl.fedprox_mu,
+            "secagg_noise_multiplier": self.fl.secagg_noise_multiplier,
+            "secagg_dropout_rate": self.fl.secagg_dropout_rate,
+            "client_id": self.fl.client_id,
+        }
+
+        # Add multi-machine configuration if present
+        if self.fl.multi_machine:
+            multi_machine_dict = {
+                "project_dir": self.fl.multi_machine.project_dir,
+                "venv_path": self.fl.multi_machine.venv_path,
+                "venv_activate": self.fl.multi_machine.venv_activate,
+                "ssh": {
+                    "timeout": self.fl.multi_machine.ssh.timeout,
+                    "banner_timeout": self.fl.multi_machine.ssh.banner_timeout,
+                    "auth_timeout": self.fl.multi_machine.ssh.auth_timeout,
+                }
+            }
+
+            # Add server config if present
+            if self.fl.multi_machine.server:
+                multi_machine_dict["server"] = {
+                    "host": self.fl.multi_machine.server.host,
+                    "username": self.fl.multi_machine.server.username,
+                    "password": self.fl.multi_machine.server.password,
+                    "port": self.fl.multi_machine.server.port,
+                }
+
+            # Add clients config
+            if self.fl.multi_machine.clients:
+                multi_machine_dict["clients"] = [
+                    {
+                        "host": client.host,
+                        "username": client.username,
+                        "password": client.password,
+                        "partition_id": client.partition_id,
+                        "project_dir": client.project_dir,
+                    }
+                    for client in self.fl.multi_machine.clients
+                ]
+
+            fl_dict["multi_machine"] = multi_machine_dict
+
+        return fl_dict
 
     @property
     def checkpoint_dir(self) -> str:
@@ -232,22 +333,7 @@ class Config:
                     "save_frequency": self.training.checkpoint.save_frequency,
                 },
             },
-            "fl": {
-                "num_rounds": self.fl.num_rounds,
-                "strategy": self.fl.strategy,
-                "fraction_fit": self.fl.fraction_fit,
-                "fraction_evaluate": self.fl.fraction_evaluate,
-                "min_fit_clients": self.fl.min_fit_clients,
-                "min_evaluate_clients": self.fl.min_evaluate_clients,
-                "min_available_clients": self.fl.min_available_clients,
-                "local_epochs": self.fl.local_epochs,
-                "client_config_files": self.fl.client_config_files,
-                "evaluate_frequency": self.fl.evaluate_frequency,
-                "fedprox_mu": self.fl.fedprox_mu,
-                "secagg_noise_multiplier": self.fl.secagg_noise_multiplier,
-                "secagg_dropout_rate": self.fl.secagg_dropout_rate,
-                "client_id": self.fl.client_id,
-            },
+            "fl": self._get_fl_dict(),
             "wandb": {
                 "use_wandb": self.wandb.use_wandb,
                 "project": self.wandb.project,
@@ -260,6 +346,9 @@ class Config:
 
     def to_yaml(self, yaml_path: str) -> None:
         """Save the Config object to a YAML file."""
-        os.makedirs(os.path.dirname(yaml_path), exist_ok=True)
+        # Only create directory if the path contains a directory
+        dir_path = os.path.dirname(yaml_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
         with open(yaml_path, "w") as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False)

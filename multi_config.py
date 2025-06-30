@@ -1,44 +1,30 @@
-# Flower Multi-Machine Configuration
-# Update these values for your specific setup
+# Flower Multi-Machine Configuration Utilities
+# This module provides utilities for working with the unified FL configuration
 
-import os
+from typing import Dict, List, Any, Optional
+from adni_classification.config.config import Config
+from adni_classification.config.fl_config import MultiMachineConfig
 
-# Machine Configuration
-SERVER_HOST = "otter30.eps.surrey.ac.uk"
-CLIENT_HOSTS = [
-    "otter32.eps.surrey.ac.uk",
-    "otter39.eps.surrey.ac.uk"
-]
 
-# Authentication (consider using environment variables in production)
-USERNAME = os.getenv("FL_USERNAME", "th01167")
-PASSWORD = os.getenv("FL_PASSWORD")
+def load_config_from_yaml(yaml_path: str) -> Config:
+    """Load unified configuration from YAML file."""
+    return Config.from_yaml(yaml_path)
 
-# Project Configuration
-PROJECT_DIR = "/user/HS402/th01167/Surrey/fl-adni-classification"
-SERVER_PORT = 9092
 
-# Virtual Environment Configuration
-VENV_PATH = "/user/HS402/th01167/.venv/master/bin/python"
-VENV_ACTIVATE = "/user/HS402/th01167/.venv/master/bin/activate"
+def get_multi_machine_config(config: Config) -> Optional[MultiMachineConfig]:
+    """Extract multi-machine configuration from unified config."""
+    return config.fl.multi_machine
 
-# Flower Configuration
-FLOWER_CONFIG = {
-    "server_address": f"0.0.0.0:{SERVER_PORT}",
-    "client_timeout": 300,  # 5 minutes
-    "max_retry_attempts": 3
-}
 
-# SSH Configuration
-SSH_CONFIG = {
-    "timeout": 30,
-    "banner_timeout": 30,
-    "auth_timeout": 30
-}
+def get_server_config_dict(config: Config) -> Dict[str, Any]:
+    """Get server configuration as dictionary for backward compatibility."""
+    if config.fl.multi_machine:
+        return config.fl.multi_machine.get_server_config_dict()
+    return {}
 
-# Logging Configuration
-LOG_CONFIG = {
-    "server_log": "server.log",
-    "client_log_prefix": "client_",
-    "max_log_lines": 50
-}
+
+def get_clients_config_dict(config: Config) -> List[Dict[str, Any]]:
+    """Get clients configuration as list of dictionaries for backward compatibility."""
+    if config.fl.multi_machine:
+        return config.fl.multi_machine.get_clients_config_dict()
+    return []
