@@ -1214,37 +1214,57 @@ insecure = true
 
 def main():
     """Main function using tmux sessions"""
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Flower Multi-Machine Federated Learning Runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "config_file",
+        help="Path to YAML configuration file (e.g., fl_server.yaml)"
+    )
+
+    args = parser.parse_args()
+
+    # Load configuration
     try:
-        from multi_config import (
-            SERVER_HOST, CLIENT_HOSTS, USERNAME, PASSWORD,
-            PROJECT_DIR, VENV_ACTIVATE
-        )
-    except ImportError:
-        print("❌ Configuration file 'multi_config.py' not found!")
-        print("📝 Please create multi_config.py with your settings.")
+        print(f"📄 Loading configuration from {args.config_file}...")
+        from multi_config import load_config_from_yaml, get_server_config_dict, get_clients_config_dict
+        config = load_config_from_yaml(args.config_file)
+
+        # Validate multi-machine configuration
+        if not config.fl.multi_machine:
+            print("❌ No multi-machine configuration found in YAML file!")
+            print("📝 Please add 'fl.multi_machine' section to your configuration.")
+            print("📋 See fl_server.yaml for an example configuration.")
+            return
+
+        project_dir = config.fl.multi_machine.project_dir
+        venv_activate = config.fl.multi_machine.venv_activate
+
+    except FileNotFoundError as e:
+        print(f"❌ Configuration file error: {e}")
+        print("📝 Please provide a valid YAML configuration file.")
+        print("📋 Example: python run_multi_machines_tmux.py fl_server.yaml")
+        return
+    except Exception as e:
+        print(f"❌ Error loading configuration: {e}")
+        import traceback
+        print(f"🔍 Traceback: {traceback.format_exc()}")
         return
 
-    # Server configuration
-    server_config = {
-        "host": SERVER_HOST,
-        "username": USERNAME,
-        "password": PASSWORD
-    }
+    # Convert to dictionary format for compatibility with existing runner
+    server_config = get_server_config_dict(config)
+    clients_config = get_clients_config_dict(config)
 
-    # Clients configuration
-    clients_config = [
-        {
-            "host": host,
-            "username": USERNAME,
-            "password": PASSWORD,
-            "project_dir": PROJECT_DIR,
-            "partition_id": i
-        }
-        for i, host in enumerate(CLIENT_HOSTS)
-    ]
+    if not server_config or not clients_config:
+        print("❌ Invalid multi-machine configuration!")
+        print("📝 Please ensure server and clients are properly configured in the YAML file.")
+        return
 
     # Create runner
-    runner = FlowerMultiMachineTmuxRunner(server_config, clients_config, PROJECT_DIR)
+    runner = FlowerMultiMachineTmuxRunner(server_config, clients_config, project_dir)
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
@@ -1256,10 +1276,12 @@ def main():
 
     try:
         print("🔍 Configuration:")
-        print(f"  Server: {SERVER_HOST}")
-        print(f"  Clients: {CLIENT_HOSTS}")
-        print(f"  Project Dir: {PROJECT_DIR}")
-        print(f"  Virtual Env: {VENV_ACTIVATE}")
+        print(f"  Server: {server_config['host']}:{server_config.get('port', 9092)}")
+        print(f"  Clients: {[client['host'] for client in clients_config]}")
+        print(f"  Project Dir: {project_dir}")
+        print(f"  Virtual Env: {venv_activate}")
+        if config.fl.multi_machine:
+            print(f"  SSH Timeout: {config.fl.multi_machine.ssh.timeout}s")
         print()
 
         # Use Full Process Isolation Mode to enable PyTorch DataLoader multiprocessing
@@ -1274,7 +1296,7 @@ def main():
         print("   6. Use 'tmux attach -t flower_server' or 'tmux attach -t flower_serverapp' for server")
         print("   7. Monitor progress and federated learning execution")
         print()
-        if runner.run_federated_learning(venv_activate=VENV_ACTIVATE):
+        if runner.run_federated_learning(venv_activate=venv_activate):
             print("🎉 Federated learning completed successfully!")
             print("✅ Full Process Isolation Mode enabled PyTorch DataLoader with num_workers > 0 on both sides")
         else:
