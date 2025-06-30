@@ -501,7 +501,7 @@ def load_data(
         num_workers=config.training.num_workers,
         pin_memory=True,
         prefetch_factor=2 if config.training.num_workers > 0 else None,
-        multiprocessing_context=config.data.multiprocessing_context,
+        multiprocessing_context=config.data.multiprocessing_context if config.training.num_workers > 0 else None,
         drop_last=True
     )
 
@@ -512,7 +512,7 @@ def load_data(
         num_workers=config.training.num_workers,
         pin_memory=True,
         prefetch_factor=2 if config.training.num_workers > 0 else None,
-        multiprocessing_context=config.data.multiprocessing_context,
+        multiprocessing_context=config.data.multiprocessing_context if config.training.num_workers > 0 else None,
     )
 
     return train_loader, val_loader
