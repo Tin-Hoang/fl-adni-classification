@@ -17,6 +17,7 @@ from sklearn.metrics import confusion_matrix
 from flwr.common import Parameters, FitRes, EvaluateRes, ConfigRecord, ArrayRecord, Array
 from flwr.server.strategy import Strategy
 from flwr.client import NumPyClient
+import gc
 
 from adni_classification.config.config import Config
 from adni_classification.utils.training_utils import get_scheduler
@@ -53,6 +54,55 @@ class FLStrategyBase(Strategy, ABC):
         self.strategy_config = kwargs
 
         super().__init__()
+
+    def get_wandb_run_id(self) -> Optional[str]:
+        """Get the WandB run ID for sharing with clients.
+
+        Returns:
+            WandB run ID if available, None otherwise
+        """
+        if self.wandb_logger and hasattr(self.wandb_logger, 'get_run_id'):
+            return self.wandb_logger.get_run_id()
+        return None
+
+    def add_wandb_config_to_instructions(self, instructions: List[Tuple[Any, Any]], config_key: str = "config") -> List[Tuple[Any, Any]]:
+        """Add WandB run ID to client instructions.
+
+        Args:
+            instructions: List of (client_proxy, instruction) tuples
+            config_key: Key to access config in instruction (usually "config")
+
+        Returns:
+            Updated instructions with WandB run ID
+        """
+        run_id = self.get_wandb_run_id()
+        if not run_id:
+            return instructions
+
+        updated_instructions = []
+        for client_proxy, instruction in instructions:
+            # Get the existing config
+            if hasattr(instruction, config_key):
+                config = getattr(instruction, config_key)
+                config = config.copy() if config else {}
+            else:
+                config = {}
+
+            # Add WandB run ID
+            config["wandb_run_id"] = run_id
+
+            # Create updated instruction
+            if hasattr(instruction, '_replace'):
+                # For named tuples like FitIns/EvaluateIns
+                updated_instruction = instruction._replace(config=config)
+            else:
+                # For other instruction types, try to update config attribute
+                updated_instruction = instruction
+                setattr(updated_instruction, config_key, config)
+
+            updated_instructions.append((client_proxy, updated_instruction))
+
+        return updated_instructions
 
     @abstractmethod
     def get_strategy_name(self) -> str:
@@ -198,7 +248,8 @@ class StrategyAwareClient(NumPyClient):
         device: torch.device,
         client_strategy: ClientStrategyBase,
         context=None,
-        total_fl_rounds: int = None
+        total_fl_rounds: int = None,
+        wandb_logger=None
     ):
         """Initialize strategy-aware client.
 
@@ -208,12 +259,14 @@ class StrategyAwareClient(NumPyClient):
             client_strategy: Client-side strategy implementation
             context: Flower Context for stateful client management (optional)
             total_fl_rounds: Total number of FL rounds for scheduler initialization
+            wandb_logger: Client-side WandB logger for distributed training (optional)
         """
         self.config = config
         self.device = device
         self.client_strategy = client_strategy
         self.context = context
         self.total_fl_rounds = total_fl_rounds
+        self.wandb_logger = wandb_logger
         # Client ID must be explicitly set - FAIL FAST if not specified
         if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
             raise ValueError(
@@ -248,13 +301,20 @@ class StrategyAwareClient(NumPyClient):
         if self.context is not None and self.total_fl_rounds is not None:
             self._initialize_context_scheduler()
 
-        self.training_history = {
-            'train_losses': [],
-            'train_accuracies': [],
-            'val_losses': [],
-            'val_accuracies': [],
-            'rounds': []
-        }
+        # MEMORY FIX: Make training_history optional since WandB already tracks everything
+        self.enable_local_history = getattr(config.training, 'enable_local_history', False)
+        if self.enable_local_history:
+            print(f"Client {self.client_id}: Local training history enabled (memory usage will increase)")
+            self.training_history = {
+                'train_losses': [],
+                'train_accuracies': [],
+                'val_losses': [],
+                'val_accuracies': [],
+                'rounds': []
+            }
+        else:
+            print(f"Client {self.client_id}: Local training history disabled (using WandB tracking only)")
+            self.training_history = None
 
         print(f"Initialized {self.client_strategy.get_strategy_name()} client with config: {self.config.wandb.run_name if hasattr(self.config, 'wandb') and hasattr(self.config.wandb, 'run_name') else 'unknown'}")
         print(f"Train dataset size: {len(self.train_loader.dataset)}")
@@ -540,7 +600,6 @@ class StrategyAwareClient(NumPyClient):
                 'train_loss': train_loss,
                 'train_accuracy': train_acc,
                 'best_val_accuracy': self.best_val_accuracy,
-                'training_history': self.training_history,
                 'strategy_name': self.client_strategy.get_strategy_name(),
                 'strategy_metrics': self.client_strategy.get_custom_metrics(),
                 'config': {
@@ -549,6 +608,12 @@ class StrategyAwareClient(NumPyClient):
                     'weight_decay': self.config.training.weight_decay,
                 }
             }
+
+            # MEMORY FIX: Only save training_history if enabled
+            if self.enable_local_history and self.training_history is not None:
+                checkpoint['training_history'] = self.training_history
+            else:
+                checkpoint['training_history'] = None  # Explicitly set to None to avoid confusion
 
             # Save optimizer state_dict (simple save since we recreate optimizers fresh each round)
             try:
@@ -601,6 +666,14 @@ class StrategyAwareClient(NumPyClient):
         except Exception as e:
             print(f"Client {self.client_id}: Error creating checkpoint data: {e}")
             print(f"Client {self.client_id}: Traceback: {traceback.format_exc()}")
+        finally:
+            # Cleanup memory after checkpoint operations
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+            except Exception as cleanup_error:
+                print(f"Client {self.client_id}: Warning - Checkpoint cleanup failed: {cleanup_error}")
 
     def _load_client_checkpoint(self, checkpoint_path: str) -> bool:
         """Load client checkpoint to resume training.
@@ -646,13 +719,20 @@ class StrategyAwareClient(NumPyClient):
             # Restore training state
             self.current_round = checkpoint.get('round', 0)
             self.best_val_accuracy = checkpoint.get('best_val_accuracy', 0.0)
-            self.training_history = checkpoint.get('training_history', {
-                'train_losses': [],
-                'train_accuracies': [],
-                'val_losses': [],
-                'val_accuracies': [],
-                'rounds': []
-            })
+
+            # MEMORY FIX: Only restore training_history if local history is enabled
+            if self.enable_local_history:
+                self.training_history = checkpoint.get('training_history', {
+                    'train_losses': [],
+                    'train_accuracies': [],
+                    'val_losses': [],
+                    'val_accuracies': [],
+                    'rounds': []
+                })
+            else:
+                # Don't restore training_history if local history is disabled
+                self.training_history = None
+                print(f"Client {self.client_id}: Skipped loading training_history (local history disabled)")
 
             # Load strategy-specific checkpoint data
             if hasattr(self.client_strategy, 'load_checkpoint_data') and 'strategy_data' in checkpoint:
@@ -692,6 +772,12 @@ class StrategyAwareClient(NumPyClient):
         Returns:
             Updated parameters and metrics
         """
+        # Check for WandB run ID in config and join if available
+        wandb_run_id = config.get("wandb_run_id")
+        if wandb_run_id and self.wandb_logger and not self.wandb_logger.run:
+            print(f"Client {self.client_id}: Received WandB run ID from server: {wandb_run_id}")
+            self.wandb_logger.join_wandb_run(wandb_run_id)
+
         # Get current round number from config
         current_round = config.get("server_round", self.current_round + 1)
         self.current_round = current_round
@@ -718,9 +804,10 @@ class StrategyAwareClient(NumPyClient):
         avg_acc = total_acc / local_epochs
 
         # Update training history
-        self.training_history['train_losses'].append(avg_loss)
-        self.training_history['train_accuracies'].append(avg_acc)
-        self.training_history['rounds'].append(current_round)
+        if self.enable_local_history:
+            self.training_history['train_losses'].append(avg_loss)
+            self.training_history['train_accuracies'].append(avg_acc)
+            self.training_history['rounds'].append(current_round)
 
         # Check if this is the best training accuracy (simple heuristic)
         is_best = avg_acc > self.best_val_accuracy
@@ -763,7 +850,65 @@ class StrategyAwareClient(NumPyClient):
             **self.client_strategy.get_strategy_metrics()
         }
 
+        # Log training metrics to WandB if available
+        if self.wandb_logger:
+            self.wandb_logger.log_metrics(
+                metrics,
+                prefix="train",
+                step=current_round
+            )
+
+        # Perform memory cleanup after training
+        self._cleanup_memory()
+
+        # MEMORY FIX: Clean up strategy-specific round data if available (e.g., FedProx global params)
+        if hasattr(self.client_strategy, 'cleanup_round_data'):
+            self.client_strategy.cleanup_round_data()
+
+        # MEMORY FIX: Comprehensive dataset and DataLoader cleanup
+        self._cleanup_dataloaders_and_datasets()
+
+        # MEMORY FIX: Simple but effective memory management
+        self._simple_memory_cleanup()
+
         return updated_params, len(self.train_loader.dataset), metrics
+
+    def _cleanup_memory(self):
+        """Clean up memory after training to prevent accumulation."""
+        try:
+            # MEMORY FIX: More thorough cleanup
+
+            # Clear optimizer gradients
+            if hasattr(self.client_strategy, 'optimizer') and self.client_strategy.optimizer is not None:
+                self.client_strategy.optimizer.zero_grad()
+
+            # Clear model gradients
+            if hasattr(self.client_strategy, 'model') and self.client_strategy.model is not None:
+                for param in self.client_strategy.model.parameters():
+                    if param.grad is not None:
+                        param.grad = None
+
+            # Clear PyTorch's CUDA cache if using GPU
+            if torch.cuda.is_available():
+                # Get memory stats before cleanup
+                memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
+
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+
+                # Get memory stats after cleanup
+                memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
+                memory_freed = memory_before - memory_after
+
+                print(f"Client {self.client_id}: GPU memory cleanup - Before: {memory_before:.2f}GB, After: {memory_after:.2f}GB, Freed: {memory_freed:.2f}GB")
+
+            # Force garbage collection
+            gc.collect()
+
+            print(f"Client {self.client_id}: Memory cleanup completed")
+
+        except Exception as e:
+            print(f"Client {self.client_id}: Warning - Memory cleanup failed: {e}")
 
     def test_serialization(self, metrics: Dict) -> bool:
         """Test if the metrics can be serialized to JSON.
@@ -803,6 +948,12 @@ class StrategyAwareClient(NumPyClient):
         Returns:
             Loss, number of evaluation examples, metrics
         """
+        # Check for WandB run ID in config and join if available
+        wandb_run_id = config.get("wandb_run_id")
+        if wandb_run_id and self.wandb_logger and not self.wandb_logger.run:
+            print(f"Client {self.client_id}: Received WandB run ID from server: {wandb_run_id}")
+            self.wandb_logger.join_wandb_run(wandb_run_id)
+
         # Get the current round number from the config
         current_round = config.get("server_round", 1)
 
@@ -836,8 +987,9 @@ class StrategyAwareClient(NumPyClient):
             )
 
             # Update validation history
-            self.training_history['val_losses'].append(val_loss)
-            self.training_history['val_accuracies'].append(val_acc)
+            if self.enable_local_history:
+                self.training_history['val_losses'].append(val_loss)
+                self.training_history['val_accuracies'].append(val_acc)
 
             # Log evaluation metrics
             print(f"Client {self.client_id} evaluation round {current_round}: loss={val_loss:.4f}, accuracy={val_acc:.2f}%")
@@ -912,11 +1064,31 @@ class StrategyAwareClient(NumPyClient):
                     **self.client_strategy.get_strategy_metrics()
                 }
 
+            # Log evaluation metrics to WandB if available
+            if self.wandb_logger:
+                eval_metrics = {
+                    "val_loss": float(val_loss),
+                    "val_accuracy": float(val_acc),
+                    "client_id": self.client_id
+                }
+                self.wandb_logger.log_metrics(
+                    eval_metrics,
+                    prefix="eval",
+                    step=current_round
+                )
+
+            # Perform memory cleanup after evaluation
+            self._cleanup_memory()
+
             return float(val_loss), len(self.val_loader.dataset), result
 
         except Exception as e:
             print(f"Client {self.client_id}: Error in evaluate method: {e}")
             print(traceback.format_exc())
+
+            # Perform memory cleanup even on error
+            self._cleanup_memory()
+
             # Return minimal results to avoid failure
             return 0.0, 0, {
                 "client_id": str(self.client_id),
@@ -972,3 +1144,105 @@ class StrategyAwareClient(NumPyClient):
             print(f"Client {self.client_id}: Scheduler health check failed: {e}")
             print(f"Client {self.client_id}: Scheduler health check traceback: {traceback.format_exc()}")
             return False
+
+    def _simple_memory_cleanup(self):
+        """Simple but effective memory cleanup to prevent major leaks."""
+        try:
+            # Clear gradients thoroughly
+            if hasattr(self.client_strategy, 'model') and self.client_strategy.model is not None:
+                for param in self.client_strategy.model.parameters():
+                    if param.grad is not None:
+                        param.grad = None
+
+            # Periodically clear optimizer state to prevent accumulation
+            if hasattr(self.client_strategy, 'optimizer') and self.current_round % 10 == 0:
+                # Store current LR before clearing
+                current_lr = self.client_strategy.optimizer.param_groups[0]['lr']
+                # Recreate optimizer to clear accumulated state
+                self._recreate_optimizer()
+                # Restore LR
+                for group in self.client_strategy.optimizer.param_groups:
+                    group['lr'] = current_lr
+                print(f"Client {self.client_id}: Cleared optimizer state at round {self.current_round}")
+
+            # Force garbage collection and CUDA cleanup
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                # Reset peak memory stats periodically
+                if self.current_round % 10 == 0:
+                    torch.cuda.reset_peak_memory_stats()
+
+            if torch.cuda.is_available():
+                memory_mb = torch.cuda.memory_allocated() / 1024**2
+                print(f"Client {self.client_id}: Post-cleanup GPU memory: {memory_mb:.1f}MB")
+
+        except Exception as e:
+            print(f"Client {self.client_id}: Warning - Simple memory cleanup failed: {e}")
+
+    def _cleanup_dataloaders_and_datasets(self):
+        """Clean up DataLoaders and cached datasets to prevent major memory leaks."""
+        try:
+            # 1. Clean up cached datasets (MAJOR MEMORY LEAK SOURCE)
+            if hasattr(self, 'train_loader') and self.train_loader is not None:
+                train_dataset = self.train_loader.dataset
+                self._cleanup_dataset_cache(train_dataset, "train")
+
+            if hasattr(self, 'val_loader') and self.val_loader is not None:
+                val_dataset = self.val_loader.dataset
+                self._cleanup_dataset_cache(val_dataset, "val")
+
+            # 2. Clean up DataLoader workers (prevents worker process accumulation)
+            if hasattr(self, 'train_loader') and self.train_loader is not None:
+                if hasattr(self.train_loader, '_shutdown_workers'):
+                    self.train_loader._shutdown_workers()
+
+            if hasattr(self, 'val_loader') and self.val_loader is not None:
+                if hasattr(self.val_loader, '_shutdown_workers'):
+                    self.val_loader._shutdown_workers()
+
+            print(f"Client {self.client_id}: Cleaned up DataLoaders and datasets")
+
+        except Exception as e:
+            print(f"Client {self.client_id}: Warning - DataLoader/dataset cleanup failed: {e}")
+
+    def _cleanup_dataset_cache(self, dataset, dataset_type: str):
+        """Clean up cached dataset memory."""
+        try:
+            # Check if it's a MONAI cached dataset and clear its cache
+            if hasattr(dataset, '_cache') and dataset._cache is not None:
+                print(f"Client {self.client_id}: Clearing {dataset_type} dataset cache...")
+
+                # For CacheDataset and SmartCacheDataset
+                if hasattr(dataset, '_cache'):
+                    cache_size = len(dataset._cache) if hasattr(dataset._cache, '__len__') else 'unknown'
+                    print(f"  - Clearing cache with {cache_size} items")
+
+                    # Clear the cache
+                    if hasattr(dataset._cache, 'clear'):
+                        dataset._cache.clear()
+                    else:
+                        dataset._cache = None
+
+                # For SmartCacheDataset specifically
+                if hasattr(dataset, 'cache_data') and dataset.cache_data is not None:
+                    print(f"  - Clearing SmartCache cache_data")
+                    dataset.cache_data = None
+
+                # Clear any worker pools
+                if hasattr(dataset, '_workers') and dataset._workers is not None:
+                    print(f"  - Shutting down dataset workers")
+                    dataset._workers = None
+
+            # For PersistentDataset, we don't need to clear disk cache, just memory references
+            elif hasattr(dataset, 'cache_dir'):
+                print(f"Client {self.client_id}: {dataset_type} using PersistentDataset (disk cache) - no memory cleanup needed")
+
+        except Exception as e:
+            print(f"Client {self.client_id}: Warning - {dataset_type} dataset cache cleanup failed: {e}")
+
+    def finish_wandb(self):
+        """Finish WandB logging for this client."""
+        if self.wandb_logger:
+            self.wandb_logger.finish()
