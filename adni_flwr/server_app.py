@@ -23,32 +23,68 @@ except ImportError:
 
 
 class FLWandbLogger:
-    """WandB logger for Federated Learning."""
+    """WandB logger for Federated Learning with distributed training support."""
 
     def __init__(self, config: Config):
         """Initialize WandB logger."""
         self.config = config
         self.wandb_enabled = WANDB_AVAILABLE and config.wandb.use_wandb
+        self.run = None
+        self.run_id = None
         print(f"WandB logging: {'enabled' if self.wandb_enabled else 'disabled'}")
 
-    def init_wandb(self):
-        """Initialize WandB run."""
-        if not self.wandb_enabled:
-            return
+    def init_wandb(self, enable_shared_mode: bool = True):
+        """Initialize WandB run.
 
-        # Initialize wandb with full configuration
-        wandb.init(
-            project=self.config.wandb.project,
-            entity=self.config.wandb.entity,
-            name=self.config.wandb.run_name,
-            tags=self.config.wandb.tags,
-            notes=self.config.wandb.notes,
-            config=self.config.to_dict()
-        )
+        Args:
+            enable_shared_mode: Whether to enable shared mode for distributed training.
+                              When True, server acts as primary node and clients can join the same run.
+        """
+        if not self.wandb_enabled:
+            return None
+
+        try:
+            # Prepare WandB settings for distributed training
+            wandb_settings = None
+            if enable_shared_mode:
+                # Server is the primary node in distributed training
+                wandb_settings = wandb.Settings(
+                    mode="shared",
+                    x_primary=True,
+                    x_label="server",  # Unique label for server node
+                )
+                print("Initializing WandB in shared mode as primary node (server)")
+
+            # Initialize wandb with full configuration
+            self.run = wandb.init(
+                project=self.config.wandb.project,
+                entity=self.config.wandb.entity,
+                name=self.config.wandb.run_name,
+                tags=self.config.wandb.tags,
+                notes=self.config.wandb.notes,
+                config=self.config.to_dict(),
+                settings=wandb_settings
+            )
+
+            if self.run:
+                self.run_id = self.run.id
+                print(f"WandB run initialized successfully. Run ID: {self.run_id}")
+                if enable_shared_mode:
+                    print(f"Clients can join this run using run ID: {self.run_id}")
+                return self.run_id
+
+        except Exception as e:
+            print(f"Error initializing WandB: {e}")
+            self.wandb_enabled = False
+            return None
+
+    def get_run_id(self) -> Optional[str]:
+        """Get the current WandB run ID for sharing with clients."""
+        return self.run_id
 
     def log_metrics(self, metrics: Dict[str, float], prefix: str = "", step: Optional[int] = None):
         """Log metrics to WandB."""
-        if not self.wandb_enabled:
+        if not self.wandb_enabled or not self.run:
             return
 
         try:
@@ -68,9 +104,10 @@ class FLWandbLogger:
 
     def finish(self):
         """Finish WandB run."""
-        if self.wandb_enabled:
+        if self.wandb_enabled and self.run:
             try:
                 wandb.finish()
+                print("WandB run finished successfully")
             except Exception as e:
                 print(f"Error finishing WandB run: {e}")
 
@@ -170,9 +207,16 @@ def server_fn(context: Context):
         # Load the standardized Config object
         config = Config.from_yaml(server_config_file)
 
-        # Create WandB logger with the Config object
+                # Create WandB logger with the Config object
         wandb_logger = FLWandbLogger(config)
-        wandb_logger.init_wandb()
+        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, 'enable_shared_mode') else True
+        run_id = wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
+
+        # Store run ID for sharing with clients through FL communication
+        if run_id:
+            print(f"WandB run ID {run_id} will be shared with clients through FL communication")
+        else:
+            print("Warning: Failed to get WandB run ID for sharing with clients")
 
         # Initialize model using the Config object
         model = load_model(config)  # Assuming load_model can accept the Config object

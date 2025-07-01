@@ -90,6 +90,9 @@ class WandbConfig:
     tags: List[str] = field(default_factory=list)
     notes: str = ""
     run_name: str = ""
+    # Distributed training settings
+    enable_shared_mode: bool = True  # Enable shared mode for distributed training
+    shared_run_id: Optional[str] = None  # Shared run ID for clients (set by server)
 
 
 @dataclass
@@ -341,6 +344,8 @@ class Config:
                 "tags": self.wandb.tags,
                 "notes": self.wandb.notes,
                 "run_name": self.wandb.run_name,
+                "enable_shared_mode": self.wandb.enable_shared_mode,
+                "shared_run_id": self.wandb.shared_run_id,
             },
         }
 

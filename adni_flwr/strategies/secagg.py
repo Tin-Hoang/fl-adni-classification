@@ -355,7 +355,8 @@ class SecAggStrategy(FLStrategyBase):
             )
             updated_instructions.append((client_proxy, updated_fit_ins))
 
-        return updated_instructions
+        # Add WandB run ID to instructions
+        return self.add_wandb_config_to_instructions(updated_instructions)
 
     def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
@@ -378,7 +379,8 @@ class SecAggStrategy(FLStrategyBase):
             )
             updated_instructions.append((client_proxy, updated_evaluate_ins))
 
-        return updated_instructions
+        # Add WandB run ID to instructions
+        return self.add_wandb_config_to_instructions(updated_instructions)
 
     def aggregate_evaluate(
         self,
