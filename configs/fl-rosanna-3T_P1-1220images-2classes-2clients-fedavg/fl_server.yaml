@@ -22,7 +22,7 @@ model:
   pretrained_checkpoint: null
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.1  # Dropout rate for regularization
+  dropout: 0.0  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
@@ -38,36 +38,33 @@ training:
 
 # Federated Learning specific settings
 fl:
-  num_rounds: 200              # Number of FL rounds to perform
+  num_rounds: 100              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
   min_fit_clients: 2           # Minimum number of clients for training
   min_evaluate_clients: 2      # Minimum number of clients for evaluation
   min_available_clients: 2     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
-  strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
+  strategy: "fedavg"           # FL aggregation strategy (options: "fedavg", "fedprox")
   evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
-
-  # FedProx-specific parameters
-  fedprox_mu: 0.1             # Proximal term coefficient (controls client regularization strength)
 
   # Multi-machine configuration for distributed FL
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter21.eps.surrey.ac.uk"
+      host: "otter77.eps.surrey.ac.uk"
       username: "th01167"
       password: null  # Will use FL_PASSWORD environment variable
       port: 9092
 
     # Client machines configuration
     clients:
-      - host: "otter50.eps.surrey.ac.uk"
+      - host: "otter78.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 0
         project_dir: null  # Will use global project_dir
-      - host: "otter66.eps.surrey.ac.uk"
+      - host: "otter87.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1
@@ -89,6 +86,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["federated-learning", "fedprox", "rosanna"]
-  notes: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
-  run_name: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
+  tags: ["federated-learning", "fedavg", "rosanna"]
+  notes: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedavg"
+  run_name: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedavg"

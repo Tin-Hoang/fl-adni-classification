@@ -13,8 +13,8 @@ data:
   resize_mode: "trilinear"
   use_spacing: false
   spacing_size: [1.0, 1.0, 1.0]
-  transform_device: "cpu"
-  multiprocessing_context: "fork"
+  transform_device: "cuda"
+  multiprocessing_context: "spawn"
 
 model:
   name: "securefed_cnn"
@@ -53,5 +53,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "adni", "securefed-cnn", "fedprox"]
-  notes: "fl-securefed-fedprox-2clients-1220images-2classes-LMCI-fixed_dataaug"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox-LMCI-fixed_dataaug"
+  notes: "fl-securefed-fedprox-2clients-1220images-2classes-multimachine"
+  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox"

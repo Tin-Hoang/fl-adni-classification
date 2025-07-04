@@ -5,7 +5,7 @@ data:
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
   mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
-  resize_size: [96, 96, 73]  # Resize to match pretrained model input size
+  resize_size: [73, 96, 96]  # Resize to match pretrained model input size
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
@@ -22,18 +22,18 @@ model:
   # The pretrained_checkpoint parameter serves dual purposes:
   # 1. If it contains pretrained weights (epoch=0 or no training history): Used for transfer learning
   # 2. If it contains a training checkpoint (epoch>0 with training history): Resumes training
-  pretrained_checkpoint: "checkpoints/RosannaCNN_pretrained_checkpoint.pth" # Path to checkpoint
+  pretrained_checkpoint: null # "checkpoints/RosannaCNN_pretrained_checkpoint.pth" # Path to checkpoint
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.1  # Dropout rate for regularization
+  dropout: 0.0  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 32
-  num_epochs: 100  # Fewer epochs for fine-tuning
+  batch_size: 16
+  num_epochs: 100
   learning_rate: 0.0001  # Lower learning rate for fine-tuning
   weight_decay: 0.01
-  num_workers: 4
+  num_workers: 8
   seed: 42
   output_dir: "outputs_centralized"
   mixed_precision: false
@@ -55,6 +55,6 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["rosanna", "3T_P1-1220images-2classes", "pretrained"]
-  notes: "rosanna-3T_P1-1220images-2classes-LMCI-pretrained"
-  run_name: "rosanna-3T_P1-1220images-2classes-LMCI-pretrained"
+  tags: ["rosanna", "3T_P1-1220images-2classes"]
+  notes: "reprocedure-prevAug-73x96x96"
+  run_name: "rosanna-3T_P1-1220images-2classes-scratch"

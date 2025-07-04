@@ -1,11 +1,11 @@
 data:
-  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_2_train_427images.csv"
-  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_2_val_91images.csv"
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_2_train_284images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_2_val_60images.csv"
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
   mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
-  resize_size: [182, 218, 182]  # Default resize dimensions (height, width, depth)
+  resize_size: [96, 96, 73]  # Default resize dimensions (height, width, depth)
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
@@ -15,15 +15,19 @@ data:
   multiprocessing_context: "spawn"  # Options: "spawn", "fork", "forkserver"
 
 model:
-  name: "securefed_cnn"  # Using our secure federated CNN model
+  name: "rosanna_cnn"  # Using our secure federated CNN model
   num_classes: 2  # CN, MCI, AD - will be automatically adjusted based on classification_mode
   pretrained_checkpoint: null
+  # Pretrained model specific parameters
+  freeze_encoder: false  # Set to true for feature extraction only
+  dropout: 0.0  # Dropout rate for regularization
+  input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 4
+  batch_size: 16
   learning_rate: 0.0001
   weight_decay: 0.01  # 1e-2
-  num_workers: 4
+  num_workers: 8
   seed: 42  # Random seed for reproducibility
   output_dir: "outputs"
   mixed_precision: false
@@ -40,9 +44,9 @@ wandb:
   use_wandb: true
   project: "fl-adni-classification"
   entity: "tin-hoang"
-  tags: ["federated-learning", "adni", "fedprox", "securefed-cnn", "client2"]
-  notes: "fl-securefed-fedprox-2clients-1220images-2classes-LMCI-fixed_dataaug"
-  run_name: "fl-securefed-3T_P1-1220images-2classes-2clients-fedprox-LMCI-fixed_dataaug"
+  tags: ["federated-learning", "fedprox", "rosanna"]
+  notes: "fl-rosanna-3T_P1-1220images-2classes-3clients-fedprox"
+  run_name: "fl-rosanna-3T_P1-1220images-2classes-3clients-fedprox"
 
 # FL-specific settings
 fl:
@@ -53,4 +57,4 @@ fl:
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
 
   # FedProx-specific parameters
-  fedprox_mu: 0.01             # Proximal term coefficient (controls client regularization strength)
+  fedprox_mu: 0.1             # Proximal term coefficient (controls client regularization strength)

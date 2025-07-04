@@ -3,8 +3,8 @@
 # Use the same data configuration as clients for consistency
 # (though server typically doesn't load data)
 data:
-  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
-  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_181images.csv"
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"
   classification_mode: "CN_AD"
@@ -62,15 +62,20 @@ fl:
 
     # Client machines configuration
     clients:
-      - host: "otter50.eps.surrey.ac.uk"
+      - host: "otter22.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 0
         project_dir: null  # Will use global project_dir
-      - host: "otter66.eps.surrey.ac.uk"
+      - host: "otter25.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1
+        project_dir: null  # Will use global project_dir
+      - host: "otter27.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 2
         project_dir: null  # Will use global project_dir
 
     # Project configuration
@@ -82,7 +87,7 @@ fl:
     ssh:
       timeout: 30
       banner_timeout: 30
-      auth_timeout: 30
+      auth_timeout: 60
 
 # Wandb logging configuration
 wandb:
@@ -90,5 +95,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "fedprox", "rosanna"]
-  notes: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
-  run_name: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
+  notes: "fl-rosanna-3T_P1-1220images-2classes-3clients-fedprox"
+  run_name: "fl-rosanna-3T_P1-1220images-2classes-3clients-fedprox"

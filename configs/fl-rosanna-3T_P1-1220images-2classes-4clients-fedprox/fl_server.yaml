@@ -3,8 +3,8 @@
 # Use the same data configuration as clients for consistency
 # (though server typically doesn't load data)
 data:
-  train_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
-  val_csv_path: "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_182images.csv"
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_all_val_180images.csv"
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"
   classification_mode: "CN_AD"
@@ -22,7 +22,7 @@ model:
   pretrained_checkpoint: null
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.1  # Dropout rate for regularization
+  dropout: 0.0  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
@@ -41,10 +41,10 @@ fl:
   num_rounds: 200              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
-  min_fit_clients: 2           # Minimum number of clients for training
-  min_evaluate_clients: 2      # Minimum number of clients for evaluation
-  min_available_clients: 2     # Minimum number of total clients
-  local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
+  min_fit_clients: 4           # Minimum number of clients for training
+  min_evaluate_clients: 4      # Minimum number of clients for evaluation
+  min_available_clients: 4     # Minimum number of total clients
+  local_epochs: 1              # Default number of local epochs (can be overridden by client configs)
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
   evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
 
@@ -72,6 +72,16 @@ fl:
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1
         project_dir: null  # Will use global project_dir
+      - host: "otter22.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 2
+        project_dir: null  # Will use global project_dir
+      - host: "otter25.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 3
+        project_dir: null  # Will use global project_dir
 
     # Project configuration
     project_dir: "/user/HS402/th01167/Surrey/fl-adni-classification"
@@ -82,7 +92,7 @@ fl:
     ssh:
       timeout: 30
       banner_timeout: 30
-      auth_timeout: 30
+      auth_timeout: 60
 
 # Wandb logging configuration
 wandb:
@@ -90,5 +100,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "fedprox", "rosanna"]
-  notes: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
-  run_name: "fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox"
+  notes: "fl-rosanna-3T_P1-1220images-2classes-4clients-fedprox"
+  run_name: "fl-rosanna-3T_P1-1220images-2classes-4clients-fedprox"
