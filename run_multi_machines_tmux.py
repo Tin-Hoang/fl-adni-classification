@@ -32,16 +32,40 @@ import threading
 import socket
 import select
 from typing import List, Dict
+from datetime import datetime
 
 class FlowerMultiMachineTmuxRunner:
-    def __init__(self, server_config: Dict, clients_config: List[Dict], project_dir: str):
+    def __init__(self, server_config: Dict, clients_config: List[Dict], project_dir: str, ssh_timeout: int = 30, ssh_auth_timeout: int = 30, ssh_banner_timeout: int = 30):
         self.server_config = server_config
         self.clients_config = clients_config
         self.project_dir = project_dir
+        self.ssh_timeout = ssh_timeout
+        self.ssh_auth_timeout = ssh_auth_timeout
+        self.ssh_banner_timeout = ssh_banner_timeout
         self.ssh_connections = []
         self.server_ssh = None
         self.tunnel_threads = []
         self.tunnel_sockets = []
+        # Generate timestamp for this session
+        self.timestamp = self.generate_timestamp()
+
+    def generate_timestamp(self) -> str:
+        """Generate timestamp string for log files"""
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def ensure_logs_directory(self, ssh_client, project_dir: str) -> bool:
+        """Ensure logs directory exists on remote machine"""
+        try:
+            create_logs_cmd = f"mkdir -p {project_dir}/logs"
+            stdin, stdout, stderr = ssh_client.exec_command(create_logs_cmd)
+            error = stderr.read().decode().strip()
+            if error:
+                print(f"⚠️ Warning creating logs directory: {error}")
+                return False
+            return True
+        except Exception as e:
+            print(f"❌ Error creating logs directory: {e}")
+            return False
 
     def get_venv_command(self, command: str, venv_activate: str) -> str:
         """Wrap a command with virtual environment activation"""
@@ -289,9 +313,11 @@ class FlowerMultiMachineTmuxRunner:
                     self.server_config['host'],
                     username=self.server_config['username'],
                     password=self.server_config['password'],
-                    timeout=30
+                    timeout=self.ssh_timeout,
+                    auth_timeout=self.ssh_auth_timeout,
+                    banner_timeout=self.ssh_banner_timeout
                 )
-                print("✓ SSH connection established")
+                print(f"✓ SSH connection established (timeout: {self.ssh_timeout}s, auth: {self.ssh_auth_timeout}s, banner: {self.ssh_banner_timeout}s)")
             except Exception as ssh_error:
                 print(f"❌ SSH connection failed: {ssh_error}")
                 return False
@@ -305,6 +331,14 @@ class FlowerMultiMachineTmuxRunner:
             for cmd in cleanup_commands:
                 self.server_ssh.exec_command(cmd)
             time.sleep(3)
+
+            # Ensure logs directory exists
+            print("📁 Creating logs directory...")
+            if not self.ensure_logs_directory(self.server_ssh, self.project_dir):
+                print("⚠️ Warning: Could not create logs directory, logs will be saved in project root")
+                logs_prefix = ""
+            else:
+                logs_prefix = "logs/"
 
             # Verify Flower is installed
             print("🔍 Debug: Checking Flower installation...")
@@ -339,8 +373,9 @@ class FlowerMultiMachineTmuxRunner:
             time.sleep(2)
 
             # Send SuperLink command with Process Isolation Mode
+            superlink_log = f"{logs_prefix}superlink_{self.timestamp}.log"
             superlink_command = self.get_venv_command(
-                f'cd {self.project_dir} && flower-superlink --isolation process --insecure 2>&1 | tee superlink.log',
+                f'cd {self.project_dir} && flower-superlink --isolation process --insecure 2>&1 | tee {superlink_log}',
                 venv_activate
             )
 
@@ -359,8 +394,9 @@ class FlowerMultiMachineTmuxRunner:
             time.sleep(2)
 
             # Start ServerApp in separate process
+            serverapp_log = f"{logs_prefix}serverapp_{self.timestamp}.log"
             serverapp_command = self.get_venv_command(
-                f'cd {self.project_dir} && flwr-serverapp --serverappio-api-address 127.0.0.1:9091 --insecure 2>&1 | tee serverapp.log',
+                f'cd {self.project_dir} && flwr-serverapp --serverappio-api-address 127.0.0.1:9091 --insecure 2>&1 | tee {serverapp_log}',
                 venv_activate
             )
 
@@ -411,7 +447,7 @@ class FlowerMultiMachineTmuxRunner:
                 print(f"✅ Server-side PyTorch DataLoader multiprocessing enabled")
 
                 # Show SuperLink log preview
-                superlink_log_command = "tail -10 superlink.log 2>/dev/null || echo 'SuperLink log not yet available'"
+                superlink_log_command = f"tail -10 {superlink_log} 2>/dev/null || echo 'SuperLink log not yet available'"
                 stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {superlink_log_command}")
                 superlink_log_output = stdout.read().decode()
                 if superlink_log_output and "not yet available" not in superlink_log_output:
@@ -419,7 +455,7 @@ class FlowerMultiMachineTmuxRunner:
                     print(superlink_log_output)
 
                 # Show ServerApp log preview
-                serverapp_log_command = "tail -10 serverapp.log 2>/dev/null || echo 'ServerApp log not yet available'"
+                serverapp_log_command = f"tail -10 {serverapp_log} 2>/dev/null || echo 'ServerApp log not yet available'"
                 stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {serverapp_log_command}")
                 serverapp_log_output = stdout.read().decode()
                 if serverapp_log_output and "not yet available" not in serverapp_log_output:
@@ -461,14 +497,14 @@ class FlowerMultiMachineTmuxRunner:
                         print(f"📋 ServerApp tmux output:\n{tmux_output}")
 
                 # Show detailed error logs if available
-                superlink_error_log = "tail -20 superlink.log 2>/dev/null || echo 'No superlink.log found'"
+                superlink_error_log = f"tail -20 {superlink_log} 2>/dev/null || echo 'No {superlink_log} found'"
                 stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {superlink_error_log}")
                 error_log = stdout.read().decode()
                 if error_log and "not found" not in error_log:
                     print("❌ SuperLink error log:")
                     print(error_log)
 
-                serverapp_error_log = "tail -20 serverapp.log 2>/dev/null || echo 'No serverapp.log found'"
+                serverapp_error_log = f"tail -20 {serverapp_log} 2>/dev/null || echo 'No {serverapp_log} found'"
                 stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {serverapp_error_log}")
                 error_log = stdout.read().decode()
                 if error_log and "not found" not in error_log:
@@ -497,7 +533,10 @@ class FlowerMultiMachineTmuxRunner:
             ssh.connect(
                 client_host,
                 username=client_config['username'],
-                password=client_config['password']
+                password=client_config['password'],
+                timeout=self.ssh_timeout,
+                auth_timeout=self.ssh_auth_timeout,
+                banner_timeout=self.ssh_banner_timeout
             )
 
             # Clean up any existing tmux sessions and processes
@@ -508,6 +547,14 @@ class FlowerMultiMachineTmuxRunner:
             for cmd in cleanup_commands:
                 ssh.exec_command(cmd)
             time.sleep(3)
+
+            # Ensure logs directory exists
+            print(f"📁 Creating logs directory on {client_host}...")
+            if not self.ensure_logs_directory(ssh, client_config["project_dir"]):
+                print(f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root")
+                logs_prefix = ""
+            else:
+                logs_prefix = "logs/"
 
             # Clean up any existing tunnels from previous runs
             print(f"🧹 Cleaning up any existing tunnels on local port {9092 + partition_id}...")
@@ -525,7 +572,7 @@ class FlowerMultiMachineTmuxRunner:
 
             # Prepare SuperNode command with logging
             client_port = 9094 + partition_id
-            client_log_name = f"client_{client_host.split('.')[0]}.log"
+            client_log_name = f"{logs_prefix}client_{client_host.split('.')[0]}_{self.timestamp}.log"
             flower_command = self.get_venv_command(
                 f'cd {client_config["project_dir"]} && '
                 f'flower-supernode --insecure '
@@ -609,7 +656,10 @@ class FlowerMultiMachineTmuxRunner:
             ssh.connect(
                 client_host,
                 username=client_config['username'],
-                password=client_config['password']
+                password=client_config['password'],
+                timeout=self.ssh_timeout,
+                auth_timeout=self.ssh_auth_timeout,
+                banner_timeout=self.ssh_banner_timeout
             )
 
             # Clean up any existing tmux sessions and processes
@@ -624,13 +674,21 @@ class FlowerMultiMachineTmuxRunner:
                 ssh.exec_command(cmd)
             time.sleep(3)
 
+            # Ensure logs directory exists
+            print(f"📁 Creating logs directory on {client_host}...")
+            if not self.ensure_logs_directory(ssh, client_config["project_dir"]):
+                print(f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root")
+                logs_prefix = ""
+            else:
+                logs_prefix = "logs/"
+
             # Create tmux sessions for SuperNode and ClientApp
             print(f"🔗 Creating Process Isolation Mode setup on {client_host}...")
 
             local_tunnel_port = 9092 + partition_id  # Each client gets a unique local port
             client_port = 9094 + partition_id
-            supernode_log = f"supernode_{client_host.split('.')[0]}.log"
-            clientapp_log = f"clientapp_{client_host.split('.')[0]}.log"
+            supernode_log = f"{logs_prefix}supernode_{client_host.split('.')[0]}_{self.timestamp}.log"
+            clientapp_log = f"{logs_prefix}clientapp_{client_host.split('.')[0]}_{self.timestamp}.log"
 
             print(f"🔧 Client {partition_id} will use local tunnel port {local_tunnel_port}")
 
@@ -645,6 +703,11 @@ class FlowerMultiMachineTmuxRunner:
                 f'ssh -f -N -L {local_tunnel_port}:{self.server_config["host"]}:9092 '
                 f'-o StrictHostKeyChecking=no '
                 f'-o UserKnownHostsFile=/dev/null '
+                f'-o ConnectTimeout={self.ssh_timeout} '
+                f'-o PasswordAuthentication=yes '
+                f'-o NumberOfPasswordPrompts=3 '
+                f'-o ServerAliveInterval=30 '
+                f'-o ServerAliveCountMax=3 '
                 f'{self.server_config["username"]}@{self.server_config["host"]} && '
                 f'sleep 3 && '
                 f'flower-supernode --isolation process --insecure '
@@ -660,6 +723,8 @@ class FlowerMultiMachineTmuxRunner:
             stdin, stdout, stderr = ssh.exec_command(send_supernode_cmd)
             print(f"🚀 Started SuperNode in process isolation mode")
             print(f"💡 SSH tunnel will prompt for password in tmux session '{supernode_session}' on {client_host}")
+            print(f"⏱️ SSH tunnel timeouts: connect={self.ssh_timeout}s, auth={self.ssh_auth_timeout}s (3 attempts)")
+            print(f"🔄 Keep-alive: 30s interval × 3 attempts = 90s grace period")
             print(f"📋 To enter password: ssh {client_host} && tmux attach -t {supernode_session}")
 
             # Wait longer for user to input password and tunnel to be established
@@ -1263,8 +1328,12 @@ def main():
         print("📝 Please ensure server and clients are properly configured in the YAML file.")
         return
 
-    # Create runner
-    runner = FlowerMultiMachineTmuxRunner(server_config, clients_config, project_dir)
+    # Create runner with SSH timeout configurations
+    ssh_config = config.fl.multi_machine.ssh if config.fl.multi_machine.ssh else None
+    ssh_timeout = ssh_config.timeout if ssh_config else 30
+    ssh_auth_timeout = ssh_config.auth_timeout if ssh_config else 30
+    ssh_banner_timeout = ssh_config.banner_timeout if ssh_config else 30
+    runner = FlowerMultiMachineTmuxRunner(server_config, clients_config, project_dir, ssh_timeout, ssh_auth_timeout, ssh_banner_timeout)
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
@@ -1280,8 +1349,7 @@ def main():
         print(f"  Clients: {[client['host'] for client in clients_config]}")
         print(f"  Project Dir: {project_dir}")
         print(f"  Virtual Env: {venv_activate}")
-        if config.fl.multi_machine:
-            print(f"  SSH Timeout: {config.fl.multi_machine.ssh.timeout}s")
+        print(f"  SSH Timeouts: connect={ssh_timeout}s, auth={ssh_auth_timeout}s, banner={ssh_banner_timeout}s")
         print()
 
         # Use Full Process Isolation Mode to enable PyTorch DataLoader multiprocessing
