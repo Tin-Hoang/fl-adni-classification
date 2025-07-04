@@ -109,6 +109,7 @@ class FedProxStrategy(FLStrategyBase):
             Tuple of (loss, accuracy, predictions, labels) or (None, None, None, None) if evaluation fails
         """
         if self.server_val_loader is None or self.criterion is None:
+            print("Warning: Server validation data or criterion not found. Skipping server evaluation.")
             return None, None, None, None
 
         try:
@@ -581,6 +582,9 @@ class FedProxStrategy(FLStrategyBase):
             if should_evaluate_server and server_val_accuracy is not None:
                 aggregated_metrics["server_val_accuracy"] = server_val_accuracy
 
+            # Check if this is the final round and finish WandB if so
+            self.finish_wandb_if_final_round(server_round)
+
             return aggregated_loss, aggregated_metrics
 
         except Exception as e:
@@ -780,8 +784,10 @@ class FedProxClient(ClientStrategyBase):
         Returns:
             Dictionary of custom metrics
         """
-        # Return empty dict to avoid logging non-essential configuration metrics to WandB
-        return {}
+        # Return FedProx-specific metrics for WandB tracking
+        return {
+            "fedprox_mu": self.mu
+        }
 
     def get_checkpoint_data(self) -> Dict[str, Any]:
         """Return FedProx-specific checkpoint data.

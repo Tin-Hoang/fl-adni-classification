@@ -82,7 +82,7 @@ class FLConfig:
     # FedProx specific parameters
     fedprox_mu: float = 0.01
     # SecAgg specific parameters
-    secagg_noise_multiplier: float = 1.0
+    secagg_noise_multiplier: float = 0.1
     secagg_dropout_rate: float = 0.0
     # Client ID (used for client applications)
     client_id: Optional[int] = None

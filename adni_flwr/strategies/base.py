@@ -104,6 +104,62 @@ class FLStrategyBase(Strategy, ABC):
 
         return updated_instructions
 
+    def is_final_round(self, server_round: int) -> bool:
+        """Check if this is the final FL round.
+
+        Args:
+            server_round: Current server round number
+
+        Returns:
+            True if this is the final round, False otherwise
+        """
+        return server_round >= self.config.fl.num_rounds
+
+    def finish_wandb_if_final_round(self, server_round: int):
+        """Finish WandB logging if this is the final round.
+
+        The server coordinates the overall federated learning experiment and is responsible
+        for finishing WandB after the final evaluation aggregation.
+
+        Args:
+            server_round: Current server round number
+        """
+        if self.is_final_round(server_round):
+            print(f"🎉 Server: Final round {server_round} completed! Finishing WandB logging after evaluation...")
+            print(f"🏁 Server: Coordinating experiment completion (clients will not auto-finish WandB)")
+
+            if self.wandb_logger:
+                # Check if already finished to avoid multiple finish calls
+                if hasattr(self.wandb_logger, '_finished') and self.wandb_logger._finished:
+                    print(f"⚠️ Server: WandB already finished, skipping...")
+                    return
+
+                try:
+                    # Add a small delay to ensure clients have time to signal completion
+                    print(f"⏳ Server: Waiting 3 seconds for client completion signals...")
+                    import time
+                    time.sleep(3)
+
+                    # Finish WandB run properly (server logger doesn't support exit_code parameter)
+                    self.wandb_logger.finish()
+
+                    # Mark as finished to prevent duplicate calls
+                    self.wandb_logger._finished = True
+
+                    print(f"✅ Server: WandB experiment finished successfully after evaluation in round {server_round}")
+                    print(f"🌟 Server: Federated learning experiment completed with {self.config.fl.num_rounds} rounds!")
+
+                    # Additional delay to ensure WandB has time to sync
+                    print(f"⏳ Server: Allowing WandB sync time...")
+                    time.sleep(2)
+
+                except Exception as e:
+                    print(f"⚠️ Server: Error finishing WandB run: {e}")
+            else:
+                print("⚠️ Server: No WandB logger available to finish")
+
+
+
     @abstractmethod
     def get_strategy_name(self) -> str:
         """Return the strategy name."""
@@ -265,7 +321,7 @@ class StrategyAwareClient(NumPyClient):
         self.device = device
         self.client_strategy = client_strategy
         self.context = context
-        self.total_fl_rounds = total_fl_rounds
+        self.total_fl_rounds = total_fl_rounds or config.fl.num_rounds  # Use config if not provided
         self.wandb_logger = wandb_logger
         # Client ID must be explicitly set - FAIL FAST if not specified
         if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
@@ -322,6 +378,7 @@ class StrategyAwareClient(NumPyClient):
         print(f"Evaluation frequency: every {self.evaluate_frequency} round(s)")
         print(f"Client checkpoint directory: {self.client_checkpoint_dir}")
         print(f"Client checkpoint saving: {'enabled' if self.save_client_checkpoints else 'disabled'} (frequency: {self.checkpoint_save_frequency})")
+        print(f"Total FL rounds configured: {self.total_fl_rounds}")
 
     def _initialize_context_scheduler(self):
         """Initialize or restore scheduler from lightweight context tracking."""
@@ -850,14 +907,6 @@ class StrategyAwareClient(NumPyClient):
             **self.client_strategy.get_strategy_metrics()
         }
 
-        # Log training metrics to WandB if available
-        if self.wandb_logger:
-            self.wandb_logger.log_metrics(
-                metrics,
-                prefix="train",
-                step=current_round
-            )
-
         # Perform memory cleanup after training
         self._cleanup_memory()
 
@@ -960,6 +1009,10 @@ class StrategyAwareClient(NumPyClient):
         # Check if we should evaluate in this round
         if current_round % self.evaluate_frequency != 0:
             print(f"Client {self.client_id}: Skipping evaluation for round {current_round} (evaluating every {self.evaluate_frequency} rounds)")
+
+            # Signal completion to WandB if this is the final round (even when skipping evaluation)
+            self.finish_wandb_if_final_round(current_round)
+
             # Return a minimal result indicating no evaluation was performed
             return 0.0, 0, {
                 "client_id": str(self.client_id),
@@ -1064,21 +1117,11 @@ class StrategyAwareClient(NumPyClient):
                     **self.client_strategy.get_strategy_metrics()
                 }
 
-            # Log evaluation metrics to WandB if available
-            if self.wandb_logger:
-                eval_metrics = {
-                    "val_loss": float(val_loss),
-                    "val_accuracy": float(val_acc),
-                    "client_id": self.client_id
-                }
-                self.wandb_logger.log_metrics(
-                    eval_metrics,
-                    prefix="eval",
-                    step=current_round
-                )
-
             # Perform memory cleanup after evaluation
             self._cleanup_memory()
+
+            # Signal completion to WandB if this is the final round
+            self.finish_wandb_if_final_round(current_round)
 
             return float(val_loss), len(self.val_loader.dataset), result
 
@@ -1088,6 +1131,9 @@ class StrategyAwareClient(NumPyClient):
 
             # Perform memory cleanup even on error
             self._cleanup_memory()
+
+            # Signal completion to WandB if this is the final round (even on error)
+            self.finish_wandb_if_final_round(current_round)
 
             # Return minimal results to avoid failure
             return 0.0, 0, {
@@ -1240,9 +1286,39 @@ class StrategyAwareClient(NumPyClient):
                 print(f"Client {self.client_id}: {dataset_type} using PersistentDataset (disk cache) - no memory cleanup needed")
 
         except Exception as e:
-            print(f"Client {self.client_id}: Warning - {dataset_type} dataset cache cleanup failed: {e}")
+                          print(f"Client {self.client_id}: Warning - {dataset_type} dataset cache cleanup failed: {e}")
 
-    def finish_wandb(self):
-        """Finish WandB logging for this client."""
-        if self.wandb_logger:
-            self.wandb_logger.finish()
+    def is_final_round(self, current_round: int) -> bool:
+        """Check if this is the final FL round.
+
+        Args:
+            current_round: Current round number
+
+        Returns:
+            True if this is the final round, False otherwise
+        """
+        return current_round >= self.total_fl_rounds
+
+    def finish_wandb_if_final_round(self, current_round: int):
+        """Signal completion to WandB if this is the final round.
+
+        In distributed setups, clients need to properly signal their completion
+        even though they don't finish the main run (server coordinates that).
+
+        Args:
+            current_round: Current round number
+        """
+        if self.is_final_round(current_round):
+            print(f"🎯 Client {self.client_id}: Final round {current_round} completed!")
+            print(f"📡 Client {self.client_id}: Signaling completion to WandB (server coordinates overall finish)")
+
+            if self.wandb_logger and hasattr(self.wandb_logger, 'finish'):
+                try:
+                    # Client signals completion but doesn't finish the main run
+                    # (x_update_finish_state=False ensures server maintains control)
+                    self.wandb_logger.finish()
+                    print(f"✅ Client {self.client_id}: Successfully signaled completion to WandB for round {current_round}")
+                except Exception as e:
+                    print(f"⚠️ Client {self.client_id}: Error signaling completion to WandB: {e}")
+            else:
+                print(f"⚠️ Client {self.client_id}: No WandB logger available to signal completion")

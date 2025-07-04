@@ -126,12 +126,28 @@ class FLClientWandbLogger:
         self.server_run_id = run_id
         return self._connect_to_wandb()
 
+    def log_config(self):
+        """Log client configuration to WandB once."""
+        if not self.wandb_enabled or not self.run:
+            return
+
+        # Use environment variable to persistently track config logging across client reinitializations
+        env_flag = f"WANDB_CLIENT_{self.client_id}_CONFIG_LOGGED"
+        if os.environ.get(env_flag) == "true":
+            return
+
+        self._log_config_internal(env_flag)
+
     def _connect_to_wandb(self) -> bool:
         """Internal method to connect to WandB using the stored run ID."""
         if not self.server_run_id:
             return False
 
         try:
+            # Set up environment variable for config logging tracking BEFORE wandb.init()
+            env_flag = f"WANDB_CLIENT_{self.client_id}_CONFIG_LOGGED"
+            config_already_logged = os.environ.get(env_flag) == "true"
+
             # Client joins the server's run as a worker node
             wandb_settings = wandb.Settings(
                 mode="shared",
@@ -151,6 +167,9 @@ class FLClientWandbLogger:
 
             if self.run:
                 print(f"Client {self.client_id}: Successfully joined WandB run {self.server_run_id}")
+                # Log client configuration once after successful connection (only if not already logged)
+                if not config_already_logged:
+                    self._log_config_internal(env_flag)
                 return True
             else:
                 print(f"Client {self.client_id}: Failed to join WandB run")
@@ -161,6 +180,25 @@ class FLClientWandbLogger:
             print(f"Client {self.client_id}: Error joining WandB run: {e}")
             self.wandb_enabled = False
             return False
+
+    def _log_config_internal(self, env_flag: str):
+        """Internal method to log configuration without environment variable checks."""
+        try:
+            # Use the existing to_dict method from Config class
+            config_dict = self.config.to_dict()
+
+            # Add client-specific prefix to avoid conflicts in shared WandB run
+            prefixed_config = {f"client_{self.client_id}": config_dict}
+
+            # Log the configuration
+            wandb.config.update(prefixed_config)
+
+            # Set persistent flag to prevent duplicate logging
+            os.environ[env_flag] = "true"
+            print(f"Client {self.client_id}: Configuration logged to WandB")
+
+        except Exception as e:
+            print(f"Client {self.client_id}: Error logging config to WandB: {e}")
 
 
 def client_fn(context: Context):

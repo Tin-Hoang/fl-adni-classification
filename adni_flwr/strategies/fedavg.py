@@ -566,6 +566,9 @@ class FedAvgStrategy(FLStrategyBase):
             if should_evaluate_server and server_val_accuracy is not None:
                 aggregated_metrics["server_val_accuracy"] = server_val_accuracy
 
+            # Check if this is the final round and finish WandB if so
+            self.finish_wandb_if_final_round(server_round)
+
             return aggregated_loss, aggregated_metrics
 
         except Exception as e:
