@@ -68,82 +68,9 @@ class FedProxStrategy(FLStrategyBase):
 
         # Initialize additional components for enhanced functionality
         self.current_round = 0
-        self.checkpoint_dir = config.checkpoint_dir
-        self.best_metric = None
-        self.metric_name = "val_accuracy"
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        # Create checkpoint directory if it doesn't exist
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Load server-side validation dataset for global evaluation
         self._load_server_validation_data()
-
-    def _load_server_validation_data(self):
-        """Load validation dataset on the server for global evaluation."""
-        try:
-            print("Loading server-side validation dataset...")
-            # Load only the validation loader for server evaluation
-            _, self.server_val_loader = load_data(
-                config=self.config,
-                batch_size=self.config.training.batch_size
-            )
-
-            # Create criterion for evaluation
-            self.criterion = create_criterion(self.config, train_dataset=None, device=self.device)
-
-            print(f"Server validation dataset loaded with {len(self.server_val_loader)} batches")
-        except Exception as e:
-            print(f"Warning: Could not load server validation data: {e}")
-            print("Global accuracy evaluation will be skipped.")
-            self.server_val_loader = None
-            self.criterion = None
-
-    def _evaluate_server_model(self, server_round: int) -> Tuple[Optional[float], Optional[float], Optional[List], Optional[List]]:
-        """Evaluate the server model on the validation dataset.
-
-        Args:
-            server_round: Current round number
-
-        Returns:
-            Tuple of (loss, accuracy, predictions, labels) or (None, None, None, None) if evaluation fails
-        """
-        if self.server_val_loader is None or self.criterion is None:
-            print("Warning: Server validation data or criterion not found. Skipping server evaluation.")
-            return None, None, None, None
-
-        try:
-            print(f"Evaluating server model on validation set for round {server_round}...")
-
-            # Evaluate the server model
-            val_loss, val_accuracy, predictions, labels = test_with_predictions(
-                model=self.model,
-                test_loader=self.server_val_loader,
-                criterion=self.criterion,
-                device=self.device,
-                mixed_precision=self.config.training.mixed_precision
-            )
-
-            print(f"Server validation results - Loss: {val_loss:.4f}, Accuracy: {val_accuracy:.2f}%")
-            return val_loss, val_accuracy, predictions, labels
-
-        except Exception as e:
-            print(f"Error evaluating server model: {e}")
-            return None, None, None, None
-
-    def _save_checkpoint(self, model_state_dict: dict, round_num: int):
-        """Save model checkpoint."""
-        checkpoint_path = os.path.join(self.checkpoint_dir, f"round_{round_num}.pt")
-        torch.save(model_state_dict, checkpoint_path)
-        print(f"Saved checkpoint for round {round_num} to {checkpoint_path}")
-
-    def _save_best_checkpoint(self, model_state_dict: dict, metric: float):
-        """Save the best model checkpoint based on the given metric."""
-        if self.best_metric is None or metric > self.best_metric:
-            self.best_metric = metric
-            best_checkpoint_path = os.path.join(self.checkpoint_dir, "best_model.pt")
-            torch.save(model_state_dict, best_checkpoint_path)
-            print(f"Saved new best model checkpoint with {self.metric_name} {metric:.4f} to {best_checkpoint_path}")
 
     def get_strategy_name(self) -> str:
         """Return the strategy name."""
@@ -158,6 +85,16 @@ class FedProxStrategy(FLStrategyBase):
             "min_fit_clients": self.fedavg_strategy.min_fit_clients,
             "min_evaluate_clients": self.fedavg_strategy.min_evaluate_clients,
             "min_available_clients": self.fedavg_strategy.min_available_clients,
+        }
+
+    def get_strategy_specific_metrics(self) -> Dict[str, Any]:
+        """Return strategy-specific metrics for FedProx.
+
+        Returns:
+            Dictionary of FedProx specific metrics for logging.
+        """
+        return {
+            "fedprox_mu": self.mu,
         }
 
     # Implement required Strategy abstract methods (FedProx uses same aggregation as FedAvg)
@@ -188,7 +125,7 @@ class FedProxStrategy(FLStrategyBase):
             # Add server_round and mu to the existing config
             config = fit_ins.config.copy() if fit_ins.config else {}
             config["server_round"] = server_round
-            config["fedprox_mu"] = self.mu
+            config["mu"] = self.mu
 
             # Create new FitIns with updated config
             updated_fit_ins = FitIns(
@@ -206,7 +143,7 @@ class FedProxStrategy(FLStrategyBase):
         results: List[Tuple[ClientProxy, FitRes]],
         failures: List[BaseException],
     ) -> Tuple[Optional[Parameters], Dict[str, float]]:
-        """Aggregate fit results using FedAvg with enhanced logging."""
+        """Aggregate fit results using FedProx with enhanced logging."""
         self.current_round = server_round
 
         # Log client training metrics
@@ -216,52 +153,47 @@ class FedProxStrategy(FLStrategyBase):
                 if client_metrics:
                     client_id = fit_res.metrics.get("client_id", "unknown")
                     metrics_to_log = {k: v for k, v in client_metrics.items() if k != "client_id"}
-                    # Add FedProx-specific prefix to distinguish from FedAvg
                     self.wandb_logger.log_metrics(
                         metrics_to_log,
                         prefix=f"client_{client_id}/fit",
                         step=server_round
                     )
 
-        # Aggregate parameters and metrics using base FedAvg (same aggregation as FedProx)
+        # Aggregate parameters and metrics using base FedAvg
         aggregated_params, aggregated_metrics = self.fedavg_strategy.aggregate_fit(
             server_round, results, failures
         )
 
         # Load aggregated parameters into the server model instance
         if aggregated_params is not None:
-            aggregated_ndarrays = parameters_to_ndarrays(aggregated_params)
-            model_state_dict = self.model.state_dict()
-            keys = list(model_state_dict.keys())
-            if len(keys) == len(aggregated_ndarrays):
-                new_state_dict = {keys[i]: torch.tensor(aggregated_ndarrays[i]) for i in range(len(keys))}
-                self.model.load_state_dict(new_state_dict)
-                print(f"Server model updated with aggregated parameters for round {server_round}")
-            else:
-                print(f"Warning: Number of aggregated parameters ({len(aggregated_ndarrays)}) does not match model state_dict keys ({len(keys)}). Cannot load parameters.")
+            param_arrays = safe_parameters_to_ndarrays(aggregated_params)
+            set_params(self.model, param_arrays)
+
+        # Collect metrics with FedProx-specific information
+        metrics = {
+            "num_clients": len(results),
+            "num_failures": len(failures),
+            "fedprox_mu": self.mu,
+        }
 
         # Log aggregated fit metrics with FedProx-specific information
-        if self.wandb_logger and aggregated_metrics:
-            # Remove client_id from aggregated metrics and add strategy info
-            aggregated_metrics.pop("client_id", None)
-            aggregated_metrics["fedprox_mu"] = self.mu
+        if self.wandb_logger and metrics:
             self.wandb_logger.log_metrics(
-                aggregated_metrics,
+                metrics,
                 prefix="server",
                 step=server_round
             )
 
-        # Print server model's current loss and accuracy
-        if aggregated_metrics:
-            print(f"Server model metrics after round {server_round} (FedProx mu={self.mu}):")
-            for metric_name, metric_value in aggregated_metrics.items():
-                print(f"  {metric_name}: {metric_value:.4f}")
+        # Print server model's current metrics
+        print(f"Server model metrics after round {server_round} (FedProx mu={self.mu}):")
+        for metric_name, metric_value in metrics.items():
+            print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
         if server_round % self.config.training.checkpoint.save_frequency == 0:
             self._save_checkpoint(self.model.state_dict(), server_round)
 
-        return aggregated_params, aggregated_metrics
+        return aggregated_params, metrics
 
     def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
@@ -286,312 +218,6 @@ class FedProxStrategy(FLStrategyBase):
 
         # Add WandB run ID to instructions
         return self.add_wandb_config_to_instructions(updated_instructions)
-
-    def aggregate_evaluate(
-        self,
-        server_round: int,
-        results: List[Tuple[ClientProxy, EvaluateRes]],
-        failures: List[BaseException],
-    ) -> Tuple[Optional[float], Dict[str, float]]:
-        """Aggregate evaluation results with enhanced logging."""
-        # Print information about results and failures
-        print(f"aggregate_evaluate: received {len(results)} results and {len(failures)} failures")
-
-        # Check if server should evaluate in this round based on frequency
-        evaluate_frequency = getattr(self.config.fl, 'evaluate_frequency', 1)
-        should_evaluate_server = server_round % evaluate_frequency == 0
-
-        # Count clients that skipped evaluation vs those that actually evaluated
-        skipped_count = 0
-        evaluated_count = 0
-        actual_results = []
-
-        for client_proxy, eval_res in results:
-            client_metrics = eval_res.metrics
-            if client_metrics and client_metrics.get("evaluation_skipped", False):
-                skipped_count += 1
-                print(f"Client {client_metrics.get('client_id', 'unknown')} skipped evaluation for round {server_round}")
-            else:
-                evaluated_count += 1
-                actual_results.append((client_proxy, eval_res))
-
-        print(f"Round {server_round}: {evaluated_count} clients evaluated, {skipped_count} clients skipped evaluation")
-        print(f"Server evaluation: {'enabled' if should_evaluate_server else 'skipped'} for round {server_round} (evaluating every {evaluate_frequency} rounds)")
-
-        # Print details about any failures
-        if failures:
-            for i, failure in enumerate(failures):
-                print(f"Failure {i+1}: {type(failure).__name__}: {str(failure)}")
-
-        # Initialize server evaluation variables
-        server_val_loss, server_val_accuracy, server_predictions, server_labels = None, None, None, None
-
-        # Evaluate server model only if it's the right frequency
-        if should_evaluate_server:
-            server_val_loss, server_val_accuracy, server_predictions, server_labels = self._evaluate_server_model(server_round)
-        else:
-            print(f"Skipping server-side evaluation for round {server_round}")
-
-        # If no clients actually evaluated, handle gracefully
-        if not actual_results:
-            print("WARNING: No clients performed evaluation in this round")
-
-            if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
-                print(f"Server validation results for round {server_round}:")
-                print(f"  Server validation loss: {server_val_loss:.4f}")
-                print(f"  Server validation accuracy: {server_val_accuracy:.2f}%")
-
-                # Log server metrics even if no clients evaluated
-                if self.wandb_logger:
-                    self.wandb_logger.log_metrics(
-                        {
-                            "global_accuracy": server_val_accuracy,
-                            "global_loss": server_val_loss,
-                            "fedprox_mu": self.mu
-                        },
-                        prefix="server",
-                        step=server_round
-                    )
-
-                # Save best checkpoint based on server validation
-                self._save_best_checkpoint(self.model.state_dict(), server_val_accuracy)
-
-            return None, {
-                "no_client_evaluation": True,
-                "server_val_accuracy": server_val_accuracy or 0.0,
-                "server_evaluation_skipped": not should_evaluate_server,
-                "fedprox_mu": self.mu
-            }
-
-        try:
-            # Log client evaluation metrics for clients that actually evaluated
-            if self.wandb_logger and WANDB_AVAILABLE:
-                for client_proxy, eval_res in actual_results:
-                    try:
-                        client_metrics = eval_res.metrics
-                        if not client_metrics:
-                            print(f"WARNING: Client metrics are empty for a client")
-                            continue
-
-                        client_id = client_metrics.get("client_id", "unknown")
-                        print(f"Processing metrics from client {client_id}")
-
-                        # Debug: print all keys in client metrics
-                        print(f"Client {client_id} metrics keys: {list(client_metrics.keys())}")
-
-                        # Extract and decode JSON predictions and labels if present for client-specific confusion matrices
-                        if "predictions_json" in client_metrics and "labels_json" in client_metrics:
-                            try:
-                                import json
-
-                                # Decode JSON strings to lists
-                                predictions_json = client_metrics.get("predictions_json", "[]")
-                                labels_json = client_metrics.get("labels_json", "[]")
-                                sample_info = client_metrics.get("sample_info", "unknown")
-
-                                # Parse the JSON strings
-                                predictions = json.loads(predictions_json)
-                                labels = json.loads(labels_json)
-
-                                print(f"Client {client_id}: Decoded {len(predictions)} predictions and {len(labels)} labels. Sample info: {sample_info}")
-
-                                # Get the number of classes
-                                num_classes = client_metrics.get("num_classes", 3)
-
-                                # Generate confusion matrix for this client
-                                if len(predictions) > 0 and len(labels) > 0:
-                                    # Set class names based on classification mode
-                                    class_names = ["CN", "AD"] if num_classes == 2 else ["CN", "MCI", "AD"]
-
-                                    # Create the confusion matrix
-                                    from sklearn.metrics import confusion_matrix
-                                    client_cm = confusion_matrix(labels, predictions, labels=list(range(num_classes)))
-
-                                    # Create a figure for the confusion matrix
-                                    client_title = f'Confusion Matrix - Client {client_id} - Round {server_round} (FedProx)'
-                                    if sample_info != "full_dataset":
-                                        client_title += f" ({sample_info})"
-
-                                    # Plot using the original visualization function
-                                    client_fig = plot_confusion_matrix(
-                                        y_true=np.array(labels),
-                                        y_pred=np.array(predictions),
-                                        class_names=class_names,
-                                        normalize=False,
-                                        title=client_title
-                                    )
-
-                                    # Log to wandb
-                                    self.wandb_logger.log_metrics(
-                                        {"confusion_matrix": wandb.Image(client_fig)},
-                                        prefix=f"client_{client_id}/eval",
-                                        step=server_round
-                                    )
-                                    plt.close(client_fig)
-                            except Exception as e:
-                                print(f"Error decoding predictions/labels from client {client_id}: {e}")
-
-                        # Log other scalar metrics (excluding the encoded data and metadata)
-                        try:
-                            metrics_to_log = {
-                                k: v for k, v in client_metrics.items()
-                                if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"]
-                                and isinstance(v, (int, float))
-                            }
-
-                            self.wandb_logger.log_metrics(
-                                metrics_to_log,
-                                prefix=f"client_{client_id}/eval",
-                                step=server_round
-                            )
-                        except Exception as e:
-                            print(f"Error logging metrics for client {client_id}: {e}")
-                    except Exception as e:
-                        print(f"Error processing evaluation result: {e}")
-
-            # Create and log global confusion matrix using server evaluation (only if server evaluated)
-            if should_evaluate_server and server_predictions is not None and server_labels is not None:
-                try:
-                    # Determine the number of classes
-                    num_classes = 2 if self.config.data.classification_mode == "CN_AD" else 3
-                    class_names = ["CN", "AD"] if num_classes == 2 else ["CN", "MCI", "AD"]
-
-                    print(f"Creating global confusion matrix from server evaluation with {len(server_predictions)} predictions")
-
-                    # Create the confusion matrix
-                    from sklearn.metrics import confusion_matrix
-                    global_cm = confusion_matrix(server_labels, server_predictions, labels=list(range(num_classes)))
-
-                    # Plot the global confusion matrix
-                    global_title = f'Global Confusion Matrix (Server Evaluation) - Round {server_round} (FedProx)'
-                    global_fig = plot_confusion_matrix(
-                        y_true=np.array(server_labels),
-                        y_pred=np.array(server_predictions),
-                        class_names=class_names,
-                        normalize=False,
-                        title=global_title
-                    )
-
-                    # Log to wandb
-                    if self.wandb_logger and WANDB_AVAILABLE:
-                        self.wandb_logger.log_metrics(
-                            {
-                                "global_confusion_matrix": wandb.Image(global_fig),
-                                "global_accuracy": server_val_accuracy,
-                                "global_loss": server_val_loss,
-                                "fedprox_mu": self.mu
-                            },
-                            prefix="server",
-                            step=server_round
-                        )
-
-                    plt.close(global_fig)
-                    print(f"Logged global confusion matrix from server evaluation - Accuracy: {server_val_accuracy:.2f}%")
-
-                except Exception as e:
-                    print(f"Error creating global confusion matrix from server evaluation: {e}")
-
-            # Aggregate metrics from clients that actually evaluated using base FedAvg
-            aggregated_loss, aggregated_metrics = self.fedavg_strategy.aggregate_evaluate(
-                server_round, actual_results, failures
-            )
-
-            print(f"Aggregated loss: {aggregated_loss}, metrics keys: {aggregated_metrics.keys() if aggregated_metrics else 'None'}")
-
-            # Log aggregated evaluation metrics and server-side metrics
-            if self.wandb_logger:
-                try:
-                    if aggregated_loss is not None:
-                        self.wandb_logger.log_metrics(
-                            {"val_aggregated_loss": aggregated_loss, "fedprox_mu": self.mu},
-                            prefix="server",
-                            step=server_round
-                        )
-                    if aggregated_metrics:
-                        # Filter out non-scalar and special keys
-                        filtered_metrics = {
-                            k: v for k, v in aggregated_metrics.items()
-                            if k not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"]
-                            and isinstance(v, (int, float))
-                        }
-                        # Add FedProx-specific information
-                        filtered_metrics["fedprox_mu"] = self.mu
-
-                        if filtered_metrics:  # Only log if there are metrics left
-                            self.wandb_logger.log_metrics(
-                                filtered_metrics,
-                                prefix="server",
-                                step=server_round
-                            )
-
-                    # Log server-side metrics only if server evaluated
-                    if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
-                        self.wandb_logger.log_metrics(
-                            {
-                                "global_accuracy": server_val_accuracy,
-                                "global_loss": server_val_loss,
-                                "fedprox_mu": self.mu
-                            },
-                            prefix="server",
-                            step=server_round
-                        )
-                except Exception as e:
-                    print(f"Error logging aggregated metrics: {e}")
-
-            # Print server model's current loss and accuracy
-            if aggregated_loss is not None:
-                print(f"Server model evaluation loss after round {server_round}: {aggregated_loss:.4f}")
-            if aggregated_metrics:
-                print(f"Server model evaluation metrics after round {server_round} (FedProx mu={self.mu}):")
-                for metric_name, metric_value in aggregated_metrics.items():
-                    if metric_name not in ["predictions_json", "labels_json", "sample_info", "client_id", "error", "num_classes", "evaluation_skipped", "evaluation_frequency", "current_round"] and isinstance(metric_value, (int, float)):
-                        print(f"  {metric_name}: {metric_value:.4f}")
-
-            # Print server-side validation results only if server evaluated
-            if should_evaluate_server and server_val_loss is not None and server_val_accuracy is not None:
-                print(f"Server validation results after round {server_round}:")
-                print(f"  Server validation loss: {server_val_loss:.4f}")
-                print(f"  Server validation accuracy: {server_val_accuracy:.2f}%")
-
-                # Save the best model checkpoint based on server validation accuracy
-                try:
-                    self._save_best_checkpoint(self.model.state_dict(), server_val_accuracy)
-                except Exception as e:
-                    print(f"Error saving best checkpoint: {e}")
-            elif should_evaluate_server:
-                print(f"Server evaluation was attempted but failed for round {server_round}")
-
-            # Fallback to aggregated metrics if server evaluation is not available or not performed
-            if not should_evaluate_server or server_val_accuracy is None:
-                if aggregated_metrics and self.metric_name in aggregated_metrics:
-                    try:
-                        metric_value = aggregated_metrics[self.metric_name]
-                        if isinstance(metric_value, (int, float)):
-                            self._save_best_checkpoint(self.model.state_dict(), metric_value)
-                        else:
-                            print(f"Cannot save checkpoint: metric {self.metric_name} is not a number")
-                    except Exception as e:
-                        print(f"Error saving best checkpoint: {e}")
-
-            # Add server evaluation info to aggregated metrics
-            if aggregated_metrics is None:
-                aggregated_metrics = {}
-
-            aggregated_metrics["server_evaluation_performed"] = should_evaluate_server
-            aggregated_metrics["fedprox_mu"] = self.mu
-            if should_evaluate_server and server_val_accuracy is not None:
-                aggregated_metrics["server_val_accuracy"] = server_val_accuracy
-
-            # Check if this is the final round and finish WandB if so
-            self.finish_wandb_if_final_round(server_round)
-
-            return aggregated_loss, aggregated_metrics
-
-        except Exception as e:
-            import traceback
-            print(f"Error in aggregate_evaluate: {e}")
-            print(traceback.format_exc())
-            return None, {"server_evaluation_performed": should_evaluate_server, "fedprox_mu": self.mu}
 
     def evaluate(self, server_round, parameters):
         """Evaluate model parameters."""
