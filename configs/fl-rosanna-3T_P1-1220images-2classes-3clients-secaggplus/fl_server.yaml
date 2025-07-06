@@ -1,0 +1,104 @@
+# Server configuration for Federated Learning with ADNI using SecAgg+ (Real Secure Aggregation)
+
+# Use the same data configuration as clients for consistency
+# (though server typically doesn't load data)
+data:
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_train_853images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_3clients/3T_bl_org_MRI_UniqueSID_1220images_client_all_val_181images.csv"
+  img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
+  dataset_type: "normal"
+  classification_mode: "CN_AD"
+  mci_subtype_filter: ["LMCI", "AD"]
+  resize_size: [96, 96, 73]
+  resize_mode: "trilinear"
+  use_spacing: false
+  spacing_size: [1.0, 1.0, 1.0]
+  transform_device: "cuda"
+  multiprocessing_context: "spawn"
+
+model:
+  name: "rosanna_cnn"
+  num_classes: 2
+  pretrained_checkpoint: null
+  # Pretrained model specific parameters
+  freeze_encoder: false  # Set to true for feature extraction only
+  dropout: 0.1  # Dropout rate for regularization
+  input_channels: 1  # Number of input channels
+
+training:
+  batch_size: 16
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  seed: 42
+  num_workers: 8
+  num_epochs: 2
+  output_dir: "outputs"  # Checkpoints will be saved in {output_dir}/checkpoints/
+  checkpoint:
+    save_frequency: 10
+
+# Federated Learning specific settings
+fl:
+  num_rounds: 100              # Number of FL rounds to perform
+  fraction_fit: 1.0            # Fraction of clients to sample in each round for training
+  fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
+  min_fit_clients: 3           # Minimum number of clients for training (must be >= reconstruction_threshold)
+  min_evaluate_clients: 3      # Minimum number of clients for evaluation
+  min_available_clients: 3     # Minimum number of total clients (must be >= reconstruction_threshold)
+  local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
+  strategy: "secagg+"          # FL aggregation strategy using real SecAgg+ (cryptographic secure aggregation)
+  evaluate_frequency: 5        # Clients will evaluate every 5 rounds instead of every round
+
+  # SecAgg+ (Real Secure Aggregation) specific parameters - OPTIMIZED for 3-client CNN
+  secagg_num_shares: 3                    # Minimum for 3 clients (40% reduction from 5 shares)
+  secagg_reconstruction_threshold: 2      # Allows 1 client dropout tolerance (was 0 tolerance before)
+  secagg_max_weight: 65536               # 2^16 - sufficient for CNN weights, 256x reduction in overhead
+  secagg_timeout: 45.0                   # Optimized timeout for 3 local clients (25% faster)
+  secagg_clipping_range: 1.0             # Matches typical CNN weight/gradient distributions
+  secagg_quantization_range: 32768       # 2^15 - reduces communication by 32x while maintaining precision
+
+  # Multi-machine configuration for distributed FL
+  multi_machine:
+    # Server machine configuration
+    server:
+      host: "otter21.eps.surrey.ac.uk"
+      username: "th01167"
+      password: null  # Will use FL_PASSWORD environment variable
+      port: 9092
+
+    # Client machines configuration
+    clients:
+      - host: "otter22.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 0
+        project_dir: null  # Will use global project_dir
+      - host: "otter25.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 1
+        project_dir: null  # Will use global project_dir
+      - host: "otter27.eps.surrey.ac.uk"
+        username: "th01167"
+        password: null  # Will use FL_PASSWORD environment variable
+        partition_id: 2
+        project_dir: null  # Will use global project_dir
+
+    # Project configuration
+    project_dir: "/user/HS402/th01167/Surrey/fl-adni-classification"
+    venv_path: "/user/HS402/th01167/.venv/master/bin/python"
+    venv_activate: "/user/HS402/th01167/.venv/master/bin/activate"
+
+    # SSH configuration
+    ssh:
+      timeout: 30
+      banner_timeout: 30
+      auth_timeout: 300
+
+# Wandb logging configuration
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["federated-learning", "secagg+", "real-secure-aggregation", "rosanna"]
+  notes: "fl-rosanna-3T_P1-1220images-2classes-3clients-secaggplus - Real cryptographic secure aggregation using Flower's SecAgg+ implementation"
+  run_name: "fl-rosanna-3T_P1-1220images-2classes-3clients-secaggplus-shares5-threshold3"
