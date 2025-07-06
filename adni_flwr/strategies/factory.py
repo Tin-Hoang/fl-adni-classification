@@ -8,6 +8,7 @@ from .base import FLStrategyBase, ClientStrategyBase
 from .fedavg import FedAvgStrategy, FedAvgClient
 from .fedprox import FedProxStrategy, FedProxClient
 from .secagg import SecAggStrategy, SecAggClient
+from .secaggplus import SecAggPlusStrategy, SecAggPlusClient
 from adni_classification.config.config import Config
 
 
@@ -19,12 +20,16 @@ class StrategyFactory:
         "fedavg": FedAvgStrategy,
         "fedprox": FedProxStrategy,
         "secagg": SecAggStrategy,
+        "secagg+": SecAggPlusStrategy,
+        "secaggplus": SecAggPlusStrategy,  # Alternative name
     }
 
     CLIENT_STRATEGIES = {
         "fedavg": FedAvgClient,
         "fedprox": FedProxClient,
         "secagg": SecAggClient,
+        "secagg+": SecAggPlusClient,
+        "secaggplus": SecAggPlusClient,  # Alternative name
     }
 
     @classmethod
@@ -148,6 +153,15 @@ class StrategyFactory:
             params.setdefault("noise_multiplier", getattr(config.fl, 'secagg_noise_multiplier', 0.1))
             params.setdefault("dropout_rate", getattr(config.fl, 'secagg_dropout_rate', 0.0))
 
+        elif strategy_name in ["secagg+", "secaggplus"]:
+            # SecAgg+ parameters
+            params.setdefault("num_shares", getattr(config.fl, 'secagg_num_shares', 3))
+            params.setdefault("reconstruction_threshold", getattr(config.fl, 'secagg_reconstruction_threshold', 3))
+            params.setdefault("max_weight", getattr(config.fl, 'secagg_max_weight', 16777216))
+            params.setdefault("timeout", getattr(config.fl, 'secagg_timeout', None))
+            params.setdefault("clipping_range", getattr(config.fl, 'secagg_clipping_range', 1.0))
+            params.setdefault("quantization_range", getattr(config.fl, 'secagg_quantization_range', 2**20))
+
         return params
 
     @classmethod
@@ -198,26 +212,17 @@ class StrategyFactory:
         Raises:
             ValueError: If configuration is invalid
         """
-        if strategy_name not in self.SERVER_STRATEGIES:
-            available = ", ".join(self.SERVER_STRATEGIES.keys())
-            raise ValueError(f"Unknown strategy: {strategy_name}. Available: {available}")
+        validator = StrategyConfigValidator()
 
-        # Strategy-specific validation
         if strategy_name == "fedprox":
-            mu = getattr(config.fl, 'fedprox_mu', 0.01)
-            if mu < 0:
-                raise ValueError(f"FedProx mu must be non-negative, got: {mu}")
-
+            return validator.validate_fedprox_config(config)
         elif strategy_name == "secagg":
-            noise_multiplier = getattr(config.fl, 'secagg_noise_multiplier', 0.1)
-            dropout_rate = getattr(config.fl, 'secagg_dropout_rate', 0.0)
-
-            if noise_multiplier < 0:
-                raise ValueError(f"SecAgg noise_multiplier must be non-negative, got: {noise_multiplier}")
-            if not (0 <= dropout_rate <= 1):
-                raise ValueError(f"SecAgg dropout_rate must be in [0, 1], got: {dropout_rate}")
-
-        return True
+            return validator.validate_secagg_config(config)
+        elif strategy_name in ["secagg+", "secaggplus"]:
+            return validator.validate_secaggplus_config(config)
+        else:
+            # No specific validation for other strategies
+            return True
 
 
 class StrategyConfigValidator:
@@ -262,5 +267,40 @@ class StrategyConfigValidator:
 
         if not isinstance(dropout_rate, (int, float)) or not (0 <= dropout_rate <= 1):
             raise ValueError(f"SecAgg dropout_rate must be a number in [0, 1], got: {dropout_rate}")
+
+        return True
+
+    @staticmethod
+    def validate_secaggplus_config(config: Config) -> bool:
+        """Validate SecAgg+ configuration.
+
+        Args:
+            config: Configuration object
+
+        Returns:
+            True if valid
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        num_shares = getattr(config.fl, 'secagg_num_shares', 3)
+        reconstruction_threshold = getattr(config.fl, 'secagg_reconstruction_threshold', 3)
+        max_weight = getattr(config.fl, 'secagg_max_weight', 16777216)
+        timeout = getattr(config.fl, 'secagg_timeout', None)
+        clipping_range = getattr(config.fl, 'secagg_clipping_range', 1.0)
+        quantization_range = getattr(config.fl, 'secagg_quantization_range', 2**20)
+
+        if not isinstance(num_shares, (int, float)) or num_shares < 0:
+            raise ValueError(f"SecAgg+ num_shares must be a non-negative number, got: {num_shares}")
+        if not isinstance(reconstruction_threshold, (int, float)) or reconstruction_threshold < 0:
+            raise ValueError(f"SecAgg+ reconstruction_threshold must be a non-negative number, got: {reconstruction_threshold}")
+        if not isinstance(max_weight, (int, float)) or max_weight < 0:
+            raise ValueError(f"SecAgg+ max_weight must be a non-negative number, got: {max_weight}")
+        if timeout is not None and not isinstance(timeout, (int, float)):
+            raise ValueError(f"SecAgg+ timeout must be a number or None, got: {timeout}")
+        if not isinstance(clipping_range, (int, float)) or clipping_range < 0:
+            raise ValueError(f"SecAgg+ clipping_range must be a non-negative number, got: {clipping_range}")
+        if not isinstance(quantization_range, (int, float)) or quantization_range < 0:
+            raise ValueError(f"SecAgg+ quantization_range must be a non-negative number, got: {quantization_range}")
 
         return True

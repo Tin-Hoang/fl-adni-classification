@@ -229,8 +229,16 @@ class Config:
             "client_config_files": self.fl.client_config_files,
             "evaluate_frequency": self.fl.evaluate_frequency,
             "fedprox_mu": self.fl.fedprox_mu,
+            # Original SecAgg (differential privacy) parameters
             "secagg_noise_multiplier": self.fl.secagg_noise_multiplier,
             "secagg_dropout_rate": self.fl.secagg_dropout_rate,
+            # SecAgg+ (real secure aggregation) parameters
+            "secagg_num_shares": self.fl.secagg_num_shares,
+            "secagg_reconstruction_threshold": self.fl.secagg_reconstruction_threshold,
+            "secagg_max_weight": self.fl.secagg_max_weight,
+            "secagg_timeout": self.fl.secagg_timeout,
+            "secagg_clipping_range": self.fl.secagg_clipping_range,
+            "secagg_quantization_range": self.fl.secagg_quantization_range,
             "client_id": self.fl.client_id,
         }
 
