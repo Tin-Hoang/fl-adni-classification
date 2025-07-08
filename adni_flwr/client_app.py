@@ -19,6 +19,13 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
+try:
+    from flwr.client.mod import secaggplus_mod
+    SECAGGPLUS_MOD_AVAILABLE = True
+except ImportError:
+    SECAGGPLUS_MOD_AVAILABLE = False
+    secaggplus_mod = None
+
 
 class FLClientWandbLogger:
     """Client-side WandB logger for Federated Learning distributed training."""
@@ -245,12 +252,22 @@ def client_fn(context: Context):
         raise ValueError(
             f"ERROR: 'strategy' not specified in client config {config_path}. "
             f"You must explicitly set 'strategy' in the FL config section. "
-            f"Available strategies: fedavg, fedprox, secagg. "
+            f"Available strategies: fedavg, fedprox, secagg, secagg+. "
             f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
         )
 
     strategy_name = config.fl.strategy
     print(f'Initializing client {client_id} with {strategy_name} strategy, config: {config_path} on device: {device}')
+
+    # Check for SecAgg+ and validate requirements
+    if strategy_name.lower() in ["secagg+", "secaggplus"]:
+        print("🔒 SecAgg+ strategy detected on client")
+        if not SECAGGPLUS_MOD_AVAILABLE:
+            raise ValueError(
+                "SecAgg+ strategy selected but secaggplus_mod is not available. "
+                "Please ensure you have the correct Flower version with SecAgg+ support."
+            )
+        print("✅ SecAgg+ mod is available")
 
     # Use new strategy system (only path supported)
     print(f"Using new strategy system with {strategy_name} strategy")
@@ -300,5 +317,75 @@ def client_fn(context: Context):
     return client.to_client()
 
 
-# Initialize the client app
-app = ClientApp(client_fn=client_fn)
+def secagg_plus_client_fn(context: Context):
+    """Special client function for SecAgg+ that includes proper mod support.
+
+    Args:
+        context: Context containing client configuration
+
+    Returns:
+        An instance of NumPyClient with SecAgg+ support
+    """
+    print("🔒 SecAgg+ client function called")
+
+    # Verify SecAgg+ mod is available
+    if not SECAGGPLUS_MOD_AVAILABLE:
+        raise ValueError(
+            "SecAgg+ client function called but secaggplus_mod is not available. "
+            "Please ensure you have the correct Flower version with SecAgg+ support."
+        )
+
+    # Use the regular client function for the actual client creation
+    # The difference is in how the ClientApp is created (with mods)
+    return client_fn(context)
+
+
+# Check if we need SecAgg+ support by examining environment or context
+def determine_strategy_from_config():
+    """Determine if SecAgg+ is being used by checking available config files."""
+    try:
+        # This is a heuristic to determine strategy during app initialization
+        # We'll try to read the strategy from environment or use default client_fn
+        import sys
+
+        # Check command line arguments for config files
+        config_files = []
+        for arg in sys.argv:
+            if arg.endswith('.yaml') and 'client' in arg and os.path.exists(arg):
+                config_files.append(arg)
+
+        # If we found config files, check if any use SecAgg+
+        for config_file in config_files:
+            try:
+                config = Config.from_yaml(config_file)
+                if hasattr(config.fl, 'strategy') and config.fl.strategy.lower() in ["secagg+", "secaggplus"]:
+                    print(f"🔒 SecAgg+ detected in config: {config_file}")
+                    return True
+            except Exception:
+                continue
+
+        return False
+    except Exception:
+        # If we can't determine, default to regular client
+        return False
+
+
+# Initialize the appropriate client app based on strategy
+if determine_strategy_from_config():
+    print("🔒 Creating SecAgg+ client app with secaggplus_mod")
+    if SECAGGPLUS_MOD_AVAILABLE:
+        app = ClientApp(client_fn=secagg_plus_client_fn, mods=[secaggplus_mod])
+    else:
+        print("❌ SecAgg+ detected but secaggplus_mod not available, falling back to regular client")
+        app = ClientApp(client_fn=client_fn)
+else:
+    print("📊 Creating regular client app")
+    app = ClientApp(client_fn=client_fn)
+
+# Also create specialized apps for explicit use
+regular_app = ClientApp(client_fn=client_fn)
+
+if SECAGGPLUS_MOD_AVAILABLE:
+    secagg_plus_app = ClientApp(client_fn=secagg_plus_client_fn, mods=[secaggplus_mod])
+else:
+    secagg_plus_app = None

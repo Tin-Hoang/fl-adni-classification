@@ -8,7 +8,8 @@ import torch
 from collections.abc import Mapping
 
 from flwr.common import Context, Metrics, Parameters, ndarrays_to_parameters
-from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+from flwr.server import ServerApp, ServerAppComponents, ServerConfig, LegacyContext, Grid
+from flwr.server.workflow import DefaultWorkflow
 
 from adni_classification.config.config import Config
 from adni_flwr.task import load_model, get_params, debug_model_architecture
@@ -190,13 +191,17 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 
 
 def server_fn(context: Context):
-    """Server factory function.
+    """Server factory function that auto-detects strategy and uses appropriate execution mode.
 
     Args:
         context: Context containing server configuration
 
     Returns:
-        Server components for the FL application
+        Server components for the FL application (regular strategies only)
+
+    Note:
+        For SecAgg+ strategy, this function will execute the workflow directly
+        and return None to indicate the workflow has been handled.
     """
     try:
         # Get server config file from app config
@@ -207,7 +212,37 @@ def server_fn(context: Context):
         # Load the standardized Config object
         config = Config.from_yaml(server_config_file)
 
-                # Create WandB logger with the Config object
+        # Determine which strategy to use from config - FAIL FAST if not specified
+        if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+            raise ValueError(
+                f"ERROR: 'strategy' not specified in server config {server_config_file}. "
+                f"You must explicitly set 'strategy' in the FL config section. "
+                f"Available strategies: fedavg, fedprox, secagg, secagg+. "
+                f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
+            )
+
+        strategy_name = config.fl.strategy
+        print(f"Using FL strategy: {strategy_name}")
+
+                # AUTO-DETECTION: If SecAgg+ is detected, raise error with helpful message
+        if strategy_name.lower() in ["secagg+", "secaggplus"]:
+            raise ValueError(
+                f"🔒 SecAgg+ strategy detected!\n"
+                f"SecAgg+ requires workflow-based execution using @app.main() pattern.\n"
+                f"Your config specifies SecAgg+ but you're using the regular ServerApp pattern.\n"
+                f"\n"
+                f"Solutions:\n"
+                f"1. Use dedicated SecAgg+ app: flower-server-app adni_flwr.server_app:secagg_plus_app\n"
+                f"2. Or use auto-detecting app: flower-server-app adni_flwr.server_app:auto_app\n"
+                f"\n"
+                f"The regular 'app' cannot handle SecAgg+ due to Flower framework limitations.\n"
+                f"SecAgg+ requires Grid parameter that's only available in @app.main() context."
+            )
+
+        # For regular strategies (FedAvg, FedProx, SecAgg), use standard approach
+        print(f"📊 Using regular strategy execution for: {strategy_name}")
+
+        # Create WandB logger with the Config object
         wandb_logger = FLWandbLogger(config)
         enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, 'enable_shared_mode') else True
         run_id = wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
@@ -238,18 +273,6 @@ def server_fn(context: Context):
         min_fit_clients = fl_config.min_fit_clients
         min_evaluate_clients = fl_config.min_evaluate_clients
         min_available_clients = fl_config.min_available_clients
-
-        # Determine which strategy to use from config - FAIL FAST if not specified
-        if not hasattr(fl_config, 'strategy') or not fl_config.strategy:
-            raise ValueError(
-                f"ERROR: 'strategy' not specified in server config {server_config_file}. "
-                f"You must explicitly set 'strategy' in the FL config section. "
-                f"Available strategies: fedavg, fedprox, secagg. "
-                f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
-            )
-
-        strategy_name = fl_config.strategy
-        print(f"Using FL strategy: {strategy_name}")
 
         # Validate strategy configuration
         StrategyFactory.validate_strategy_config(strategy_name, config)
@@ -293,5 +316,144 @@ def server_fn(context: Context):
         raise
 
 
-# Create the server app
+def secagg_plus_server_main(grid: Grid, context: Context):
+    """Main function for SecAgg+ server that executes the workflow directly.
+
+    This function follows the pattern from Flower's SecAgg+ examples.
+
+    Args:
+        grid: Flower Grid for workflow execution
+        context: Context containing server configuration
+    """
+    print("🔒 SecAgg+ Server - Starting workflow-based execution")
+
+    try:
+        # Get server config file from app config
+        server_config_file = context.run_config.get("server-config-file")
+        if not server_config_file or not os.path.exists(server_config_file):
+            raise ValueError(f"Server config file not found: {server_config_file}")
+
+        # Load the standardized Config object
+        config = Config.from_yaml(server_config_file)
+
+        # Create WandB logger with the Config object
+        wandb_logger = FLWandbLogger(config)
+        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, 'enable_shared_mode') else True
+        run_id = wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
+
+        # Initialize model using the Config object
+        model = load_model(config)
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+
+        # Debug server model after loading
+        debug_model_architecture(model, "SecAgg+ Server Model (after initialization)")
+
+        # Get FL-specific parameters from config
+        fl_config = config.fl
+        num_rounds = fl_config.num_rounds
+        strategy_name = fl_config.strategy
+
+        print(f"🔒 SecAgg+ Server - Using strategy: {strategy_name}")
+
+        # Validate it's actually SecAgg+
+        if strategy_name.lower() not in ["secagg+", "secaggplus"]:
+            raise ValueError(f"SecAgg+ server function called with non-SecAgg+ strategy: {strategy_name}")
+
+        # Validate strategy configuration
+        StrategyFactory.validate_strategy_config(strategy_name, config)
+
+        # Create SecAgg+ strategy
+        strategy = StrategyFactory.create_server_strategy(
+            strategy_name=strategy_name,
+            config=config,
+            model=model,
+            wandb_logger=wandb_logger,
+            evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average
+        )
+
+        # Get the SecAgg+ workflow
+        if not hasattr(strategy, 'get_secagg_workflow'):
+            raise ValueError("SecAgg+ strategy does not have get_secagg_workflow method")
+
+        secagg_workflow = strategy.get_secagg_workflow()
+        print(f"✅ Retrieved SecAgg+ workflow: {type(secagg_workflow).__name__}")
+
+        # Create the main workflow with SecAgg+ fit workflow
+        workflow = DefaultWorkflow(fit_workflow=secagg_workflow)
+
+        # Create legacy context for workflow execution
+        legacy_context = LegacyContext(
+            context=context,
+            config=ServerConfig(num_rounds=num_rounds),
+            strategy=strategy,
+        )
+
+        # Execute the SecAgg+ workflow
+        print("🚀 Executing SecAgg+ workflow...")
+        workflow(grid, legacy_context)
+        print("✅ SecAgg+ workflow completed successfully!")
+
+    except Exception as e:
+        print(f"❌ SecAgg+ server execution failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+# Create the regular server app for FedAvg, FedProx, SecAgg (NOT SecAgg+)
 app = ServerApp(server_fn=server_fn)
+
+# Create a dedicated SecAgg+ server app using the correct Flower pattern
+secagg_plus_app = ServerApp()
+
+@secagg_plus_app.main()
+def main(grid: Grid, context: Context):
+    """Main entry point for SecAgg+ server app using proper Flower workflow pattern."""
+    print("🔒 SecAgg+ Server - Starting workflow-based execution")
+    secagg_plus_server_main(grid, context)
+
+# Create an auto-detecting server app that chooses the right execution pattern
+auto_app = ServerApp()
+
+@auto_app.main()
+def auto_main(grid: Grid, context: Context):
+    """Auto-detecting main entry point that chooses the right execution pattern."""
+    try:
+        # Get server config file from app config
+        server_config_file = context.run_config.get("server-config-file")
+        if not server_config_file or not os.path.exists(server_config_file):
+            raise ValueError(f"Server config file not found: {server_config_file}")
+
+        # Load the standardized Config object
+        config = Config.from_yaml(server_config_file)
+
+        # Determine which strategy to use from config
+        if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+            raise ValueError(
+                f"ERROR: 'strategy' not specified in server config {server_config_file}. "
+                f"Available strategies: fedavg, fedprox, secagg, secagg+."
+            )
+
+        strategy_name = config.fl.strategy
+        print(f"🔍 Auto-detected strategy: {strategy_name}")
+
+        if strategy_name.lower() in ["secagg+", "secaggplus"]:
+            print("🔒 Using SecAgg+ workflow execution")
+            secagg_plus_server_main(grid, context)
+        else:
+            print(f"📊 Regular strategies require the standard ServerApp pattern")
+            print(f"Use: flower-server-app adni_flwr.server_app:app")
+            raise ValueError(
+                f"Regular strategy '{strategy_name}' cannot be used with auto_app.\n"
+                f"Regular strategies (fedavg, fedprox, secagg) require the standard ServerApp pattern.\n"
+                f"Use: flower-server-app adni_flwr.server_app:app\n"
+                f"Only SecAgg+ can be auto-detected due to its workflow requirements."
+            )
+
+    except Exception as e:
+        import traceback
+        print(f"❌ Auto-detection failed: {e}")
+        print(traceback.format_exc())
+        raise
