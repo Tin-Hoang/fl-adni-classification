@@ -182,3 +182,6 @@ outputs/
 visualization/
 outputs_centralized/
 outputs  /
+docs/
+logs/
+examples/

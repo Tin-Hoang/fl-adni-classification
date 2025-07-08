@@ -100,27 +100,17 @@ class ModelFactory:
                         kwargs["num_classes"] = 3
                         print(f"Setting num_classes=3 for classification_mode={classification_mode}")
 
-            # Handle input_size from data config (CRITICAL: matches resize_size)
-            if "input_size" not in kwargs:
-                # Try to get resize_size from data config
-                if data_config and "resize_size" in data_config:
-                    resize_size = data_config["resize_size"]
-                    print(f"Using resize_size {resize_size} from config as input_size for RosannaCNN")
-
-                    # Convert list to proper format (RosannaCNN expects tuple)
-                    if isinstance(resize_size, (list, tuple)):
-                        input_size = tuple(int(x) for x in resize_size)
-                    else:
-                        input_size = resize_size
-
-                    # Add input_size to kwargs
-                    kwargs["input_size"] = input_size
-                else:
-                    # Default to original pretrained model input size if no resize_size specified
-                    print(f"No resize_size found in data config, using default input_size (73, 96, 96) for RosannaCNN")
-                    kwargs["input_size"] = (73, 96, 96)
+            # Get input_size from data config if available
+            if data_config and "resize_size" in data_config:
+                # Use resize_size directly - dimension order doesn't matter for RosannaCNN
+                input_size = data_config["resize_size"]
+                kwargs["input_size"] = tuple(input_size)
+                print(f"Using resize_size from data config: {input_size}")
             else:
-                print(f"Using provided input_size {kwargs['input_size']} for RosannaCNN")
+                # Default fallback
+                default_input_size = (73, 96, 96)
+                kwargs["input_size"] = default_input_size
+                print(f"No resize_size found in data config, using default input_size {default_input_size} for RosannaCNN")
 
             # Handle pretrained checkpoint parameter
             if "pretrained_checkpoint" in kwargs:
@@ -131,6 +121,11 @@ class ModelFactory:
                     print(f"Using pretrained checkpoint from: {kwargs['pretrained_checkpoint']}")
                 elif pretrained_checkpoint:
                     print(f"Using pretrained checkpoint from: {pretrained_checkpoint}")
+
+            # Create the model
+            model = RosannaCNN(**kwargs)
+            print(f"Created RosannaCNN with input_size={kwargs['input_size']}, feature_size={model.feature_size}")
+            return model
 
         # For other models, create as usual
         return cls._models[model_name](**kwargs)

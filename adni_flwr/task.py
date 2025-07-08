@@ -52,6 +52,21 @@ def load_model(config: Config) -> nn.Module:
             "classification_mode": config.data.classification_mode
         }
 
+    # Pass data configuration for RosannaCNN models (fixes resize_size issue)
+    elif config.model.name in ["rosanna_cnn", "pretrained_cnn"]:
+        model_kwargs["data"] = {
+            "resize_size": config.data.resize_size,
+            "classification_mode": config.data.classification_mode
+        }
+
+        # Add RosannaCNN specific parameters
+        if hasattr(config.model, 'freeze_encoder'):
+            model_kwargs["freeze_encoder"] = config.model.freeze_encoder
+        if hasattr(config.model, 'dropout'):
+            model_kwargs["dropout"] = config.model.dropout
+        if hasattr(config.model, 'input_channels'):
+            model_kwargs["input_channels"] = config.model.input_channels
+
     print(f"Creating model '{config.model.name}' with kwargs: {model_kwargs}")
     model = ModelFactory.create_model(config.model.name, **model_kwargs)
     return model
