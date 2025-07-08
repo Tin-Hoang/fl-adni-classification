@@ -38,7 +38,7 @@ training:
 
 # Federated Learning specific settings
 fl:
-  num_rounds: 200              # Number of FL rounds to perform
+  num_rounds: 100              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
   min_fit_clients: 2           # Minimum number of clients for training
@@ -55,7 +55,7 @@ fl:
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter21.eps.surrey.ac.uk"
+      host: "otter82.eps.surrey.ac.uk"
       username: "th01167"
       password: null  # Will use FL_PASSWORD environment variable
       port: 9092

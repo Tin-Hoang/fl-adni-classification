@@ -1,6 +1,6 @@
 data:
-  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_1_train_214images.csv"
-  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_1_val_45images.csv"
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients_seed40/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_1_train_214images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_1220images_4clients_seed40/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata_client_1_val_45images.csv"
   img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
@@ -20,14 +20,14 @@ model:
   pretrained_checkpoint: null
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.0  # Dropout rate for regularization
+  dropout: 0.1  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01  # 1e-2
-  num_workers: 8
+  num_workers: 4
   seed: 42  # Random seed for reproducibility
   output_dir: "outputs"
   mixed_precision: false
@@ -45,8 +45,8 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["federated-learning", "fedavg", "rosanna"]
-  notes: "fl-rosanna-3T_P1-1220images-2classes-4clients-fedavg"
-  run_name: "fl-rosanna-3T_P1-1220images-2classes-4clients-fedavg"
+  notes: "fl-rosanna-3T_P1-1220images-seed40-2classes-4clients-fedavg"
+  run_name: "fl-rosanna-3T_P1-1220images-seed40-2classes-4clients-fedavg"
 
 # FL-specific settings
 fl:

@@ -20,14 +20,14 @@ model:
   pretrained_checkpoint: null
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.0  # Dropout rate for regularization
+  dropout: 0.1  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01  # 1e-2
-  num_workers: 8
+  num_workers: 4
   seed: 42  # Random seed for reproducibility
   output_dir: "outputs"
   mixed_precision: false

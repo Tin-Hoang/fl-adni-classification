@@ -97,15 +97,24 @@ serverapp = "adni_flwr.server_app:app"
 clientapp = "adni_flwr.client_app:app"
 
 [tool.flwr.app.config]
-client-config-files = "configs/fl-3T_P1-1220images-2classes-2clients-fedprox/client1.yaml,configs/fl-3T_P1-1220images-2classes-2clients-fedprox/client2.yaml"
-server-config-file = "configs/fl-3T_P1-1220images-2classes-2clients-fedprox/fl_server.yaml"
+client-config-files = "configs/fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox/client1.yaml,configs/fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox/client2.yaml"
+server-config-file = "configs/fl-rosanna-3T_P1-1220images-2classes-2clients-fedprox/fl_server.yaml"
 
 [tool.flwr.federations]
 default = "local-simulation-gpu"
 
 [tool.flwr.federations.local-simulation-gpu]
+options.num-supernodes = 3
+options.backend.client-resources.num-cpus = 10
+options.backend.client-resources.num-gpus = 0.33
+options.backend.ray-config.max-restarts = 3
+options.backend.ray-config.max-task-retries = 3
+
+[tool.flwr.federations.multi-machine]
+address = "127.0.0.1:9093"
+insecure = true
 options.num-supernodes = 2
-options.backend.client-resources.num-cpus = 8
-options.backend.client-resources.num-gpus = 0.5
+options.backend.client-resources.num-cpus = 10
+options.backend.client-resources.num-gpus = 1.0
 options.backend.ray-config.max-restarts = 3
 options.backend.ray-config.max-task-retries = 3

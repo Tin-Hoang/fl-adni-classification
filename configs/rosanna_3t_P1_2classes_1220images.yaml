@@ -5,7 +5,7 @@ data:
   dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
   classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
   mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
-  resize_size: [73, 96, 96]  # Resize to match pretrained model input size
+  resize_size: [96, 96, 73]  # Resize to match pretrained model input size
   resize_mode: "trilinear"  # Default resize mode
   use_spacing: false  # Disable spacing transform since images are already preprocessed
   spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
@@ -38,7 +38,7 @@ training:
   output_dir: "outputs_centralized"
   mixed_precision: false
   visualize: false
-  lr_scheduler: "plateau"
+  lr_scheduler: "cosine"
   val_epoch_freq: 1
   use_class_weights: true
   class_weight_type: "inverse"
@@ -56,5 +56,5 @@ wandb:
   project: "fl-adni-classification"
   entity: "tin-hoang"
   tags: ["rosanna", "3T_P1-1220images-2classes"]
-  notes: "reprocedure-prevAug-73x96x96"
+  notes: "prevAug-96x96x73"
   run_name: "rosanna-3T_P1-1220images-2classes-scratch"

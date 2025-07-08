@@ -22,15 +22,15 @@ model:
   pretrained_checkpoint: null
   # Pretrained model specific parameters
   freeze_encoder: false  # Set to true for feature extraction only
-  dropout: 0.0  # Dropout rate for regularization
+  dropout: 0.1  # Dropout rate for regularization
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01
   seed: 42
-  num_workers: 8
+  num_workers: 4
   num_epochs: 2
   output_dir: "outputs"  # Checkpoints will be saved in {output_dir}/checkpoints/
   checkpoint:
@@ -52,19 +52,19 @@ fl:
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter77.eps.surrey.ac.uk"
+      host: "otter30.eps.surrey.ac.uk"
       username: "th01167"
       password: null  # Will use FL_PASSWORD environment variable
       port: 9092
 
     # Client machines configuration
     clients:
-      - host: "otter78.eps.surrey.ac.uk"
+      - host: "otter31.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 0
         project_dir: null  # Will use global project_dir
-      - host: "otter87.eps.surrey.ac.uk"
+      - host: "otter32.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1

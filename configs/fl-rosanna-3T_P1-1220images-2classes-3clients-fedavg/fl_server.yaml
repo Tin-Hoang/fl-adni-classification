@@ -26,11 +26,11 @@ model:
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01
   seed: 42
-  num_workers: 8
+  num_workers: 4
   num_epochs: 2
   output_dir: "outputs"  # Checkpoints will be saved in {output_dir}/checkpoints/
   checkpoint:
@@ -46,7 +46,7 @@ fl:
   min_available_clients: 2     # Minimum number of total clients
   local_epochs: 2              # Default number of local epochs (can be overridden by client configs)
   strategy: "fedavg"           # FL aggregation strategy (options: "fedavg", "fedprox")
-  evaluate_frequency: 5       # Clients will evaluate every 10 rounds instead of every round
+  evaluate_frequency: 5        # Clients will evaluate every 10 rounds instead of every round
 
   # FedProx-specific parameters
   fedprox_mu: 0.1             # Proximal term coefficient (controls client regularization strength)
@@ -55,24 +55,24 @@ fl:
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter81.eps.surrey.ac.uk"
+      host: "otter82.eps.surrey.ac.uk"
       username: "th01167"
       password: null  # Will use FL_PASSWORD environment variable
       port: 9092
 
     # Client machines configuration
     clients:
-      - host: "otter82.eps.surrey.ac.uk"
+      - host: "otter84.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 0
         project_dir: null  # Will use global project_dir
-      - host: "otter83.eps.surrey.ac.uk"
+      - host: "otter78.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1
         project_dir: null  # Will use global project_dir
-      - host: "otter84.eps.surrey.ac.uk"
+      - host: "otter90.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 2

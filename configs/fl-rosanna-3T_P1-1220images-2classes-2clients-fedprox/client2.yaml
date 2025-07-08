@@ -24,10 +24,10 @@ model:
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01  # 1e-2
-  num_workers: 8
+  num_workers: 4
   seed: 42  # Random seed for reproducibility
   output_dir: "outputs"
   mixed_precision: false
@@ -52,7 +52,7 @@ wandb:
 fl:
   client_id: 2
   local_epochs: 1  # Number of local epochs per round
-  num_rounds: 200  # Number of FL rounds to perform (to setup LR scheduler)
+  num_rounds: 100  # Number of FL rounds to perform (to setup LR scheduler)
   evaluate_frequency: 5  # Evaluate every 10 rounds (can be overridden by server config)
   strategy: "fedprox"           # FL aggregation strategy (options: "fedavg", "fedprox")
 

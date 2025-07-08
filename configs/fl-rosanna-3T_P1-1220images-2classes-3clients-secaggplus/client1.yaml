@@ -24,10 +24,10 @@ model:
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01  # 1e-2
-  num_workers: 8
+  num_workers: 4
   seed: 42  # Random seed for reproducibility
   output_dir: "outputs"
   mixed_precision: false
@@ -37,7 +37,7 @@ training:
   # manual_class_weights: [5.1741293532338308, 0.7283950617283951, 5.289617486338798]
   gradient_accumulation_steps: 1
   num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
-  lr_scheduler: "plateau"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
+  lr_scheduler: "cosine"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
 
 # Wandb logging configuration
 wandb:
@@ -59,7 +59,7 @@ fl:
   # SecAgg+ (Real Secure Aggregation) specific parameters - OPTIMIZED for 3-client CNN
   secagg_num_shares: 3                    # Minimum for 3 clients (40% reduction from 5 shares)
   secagg_reconstruction_threshold: 2      # Allows 1 client dropout tolerance (was 0 tolerance before)
-  secagg_max_weight: 65536               # 2^16 - sufficient for CNN weights, 256x reduction in overhead
-  secagg_timeout: 45.0                   # Optimized timeout for 3 local clients (25% faster)
-  secagg_clipping_range: 1.0             # Matches typical CNN weight/gradient distributions
-  secagg_quantization_range: 32768       # 2^15 - reduces communication by 32x while maintaining precision
+  secagg_max_weight: 1000.0               # default
+  secagg_timeout: 300.0                  # 5 minutes for training + crypto operations (was 120.0)
+  secagg_clipping_range: 8.0             # default
+  secagg_quantization_range: 4194304       # default

@@ -26,11 +26,11 @@ model:
   input_channels: 1  # Number of input channels
 
 training:
-  batch_size: 16
+  batch_size: 8
   learning_rate: 0.0001
   weight_decay: 0.01
   seed: 42
-  num_workers: 8
+  num_workers: 4
   num_epochs: 2
   output_dir: "outputs"  # Checkpoints will be saved in {output_dir}/checkpoints/
   checkpoint:
@@ -38,7 +38,7 @@ training:
 
 # Federated Learning specific settings
 fl:
-  num_rounds: 200              # Number of FL rounds to perform
+  num_rounds: 100              # Number of FL rounds to perform
   fraction_fit: 1.0            # Fraction of clients to sample in each round for training
   fraction_evaluate: 1.0       # Fraction of clients to sample for evaluation
   min_fit_clients: 2           # Minimum number of clients for training
@@ -55,19 +55,19 @@ fl:
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter21.eps.surrey.ac.uk"
+      host: "otter37.eps.surrey.ac.uk"
       username: "th01167"
       password: null  # Will use FL_PASSWORD environment variable
       port: 9092
 
     # Client machines configuration
     clients:
-      - host: "otter50.eps.surrey.ac.uk"
+      - host: "otter38.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 0
         project_dir: null  # Will use global project_dir
-      - host: "otter66.eps.surrey.ac.uk"
+      - host: "otter39.eps.surrey.ac.uk"
         username: "th01167"
         password: null  # Will use FL_PASSWORD environment variable
         partition_id: 1
