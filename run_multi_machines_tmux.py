@@ -31,6 +31,7 @@ import sys
 import threading
 import socket
 import select
+import codecs
 from typing import List, Dict
 from datetime import datetime
 
@@ -52,6 +53,43 @@ class FlowerMultiMachineTmuxRunner:
     def generate_timestamp(self) -> str:
         """Generate timestamp string for log files"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def stream_channel_output(self, channel, output_buffer_ref, timeout_counter_ref, max_timeout):
+        """
+        Robust UTF-8 streaming from SSH channel with proper handling of partial characters.
+        Returns (should_continue, completion_detected)
+        """
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+
+        try:
+            if not channel.recv_ready():
+                return True, False
+
+            raw_data = channel.recv(4096)
+            if not raw_data:
+                return True, False
+
+            # Use incremental decoder to handle partial UTF-8 sequences
+            text_data = decoder.decode(raw_data, final=False)
+
+            if text_data:  # Only process if we got actual text
+                output_buffer_ref[0] += text_data
+                print(text_data, end="")
+                timeout_counter_ref[0] = 0  # Reset timeout when receiving data
+
+                # Check for completion indicators
+                if any(phrase in output_buffer_ref[0].lower() for phrase in [
+                    "run finished", "completed successfully", "experiment completed",
+                    "training finished", "federation completed"
+                ]):
+                    print("\n🎉 Detected completion signal!")
+                    return False, True  # Stop processing, completion detected
+
+            return True, False  # Continue processing
+
+        except Exception as e:
+            print(f"\n⚠️ Stream processing error: {e}")
+            return True, False  # Continue despite error
 
     def ensure_logs_directory(self, ssh_client, project_dir: str) -> bool:
         """Ensure logs directory exists on remote machine"""
@@ -978,24 +1016,33 @@ insecure = true
 
             while timeout_counter < max_timeout:
                 if channel.recv_ready():
-                    data = channel.recv(4096).decode()
-                    output_buffer += data
-                    print(data, end="")
-                    timeout_counter = 0  # Reset timeout when receiving data
+                    try:
+                        data = channel.recv(4096).decode('utf-8', errors='replace')
+                        output_buffer += data
+                        print(data, end="")
+                        timeout_counter = 0  # Reset timeout when receiving data
 
-                    # Check for completion indicators
-                    if any(phrase in output_buffer.lower() for phrase in [
-                        "run finished", "completed successfully", "experiment completed",
-                        "training finished", "federation completed"
-                    ]):
-                        print("\n🎉 Detected completion signal!")
-                        break
+                        # Check for completion indicators
+                        if any(phrase in output_buffer.lower() for phrase in [
+                            "run finished", "completed successfully", "experiment completed",
+                            "training finished", "federation completed"
+                        ]):
+                            print("\n🎉 Detected completion signal!")
+                            break
+                    except UnicodeDecodeError as decode_error:
+                        # Handle partial UTF-8 sequences gracefully
+                        print(f"\n⚠️ UTF-8 decode warning: {decode_error}")
+                        # Continue processing - this is likely a partial character at buffer boundary
+                        timeout_counter = 0
 
                 if channel.exit_status_ready():
                     # Get any remaining output
                     while channel.recv_ready():
-                        data = channel.recv(4096).decode()
-                        print(data, end="")
+                        try:
+                            data = channel.recv(4096).decode('utf-8', errors='replace')
+                            print(data, end="")
+                        except UnicodeDecodeError as decode_error:
+                            print(f"\n⚠️ UTF-8 decode warning in remaining output: {decode_error}")
                     break
 
                 time.sleep(0.5)
