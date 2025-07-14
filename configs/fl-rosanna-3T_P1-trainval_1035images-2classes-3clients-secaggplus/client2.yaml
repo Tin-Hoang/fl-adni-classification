@@ -1,0 +1,65 @@
+data:
+  train_csv_path: "data/ADNI/LABELS/3T_bl_org_trainval_1035images_3clients_seed01/3T_bl_org_MRI_UniqueSID_trainval_1035images_fullmetadata_client_2_train_283images.csv"
+  val_csv_path: "data/ADNI/LABELS/3T_bl_org_trainval_1035images_3clients_seed01/3T_bl_org_MRI_UniqueSID_trainval_1035images_fullmetadata_client_2_val_63images.csv"
+  img_dir: "data/ADNI/3T_bl_org_P1_20250603/3T_bl_org_MRI_1_NIfTI_removedDup_step3_skull_stripping"
+  dataset_type: "normal"  # Options: "smartcache", "cache", "normal"
+  classification_mode: "CN_AD"  # Options: "CN_MCI_AD" (3 classes), "CN_AD" (2 classes, where MCI is treated as CN)
+  mci_subtype_filter: ["LMCI", "AD"]  # Optional: Filter MCI samples by subtypes. Can be single subtype or list. Valid: "SMC", "EMCI", "LMCI". Use null to include all MCI samples.
+  resize_size: [96, 96, 73]  # Default resize dimensions (height, width, depth)
+  resize_mode: "trilinear"  # Default resize mode
+  use_spacing: false  # Disable spacing transform since images are already preprocessed
+  spacing_size: [1.0, 1.0, 1.0]  # Original spacing in mm (not used when use_spacing is false)
+  cache_rate: 0.0  # No cache for FL setting to save memory
+  cache_num_workers: 0  # Workers for creating the cache (separate from DataLoader workers)
+  transform_device: "cuda"  # Device to use for transforms (e.g., "cuda" or "cpu")
+  multiprocessing_context: "spawn"  # Options: "spawn", "fork", "forkserver"
+
+model:
+  name: "rosanna_cnn"  # Using our secure federated CNN model
+  num_classes: 2  # CN, MCI, AD - will be automatically adjusted based on classification_mode
+  pretrained_checkpoint: null
+  # Pretrained model specific parameters
+  freeze_encoder: false  # Set to true for feature extraction only
+  dropout: 0.1  # Dropout rate for regularization
+  input_channels: 1  # Number of input channels
+
+training:
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.01  # 1e-2
+  num_workers: 2
+  seed: 1
+  output_dir: "outputs"
+  mixed_precision: false
+  visualize: false
+  use_class_weights: true
+  class_weight_type: "inverse"
+  # manual_class_weights: [5.1741293532338308, 0.7283950617283951, 5.289617486338798]
+  gradient_accumulation_steps: 1
+  num_epochs: 1  # Dummy value to satisfy the config, the actual number of epochs is set in the server config
+  lr_scheduler: "cosine"  # Options: "cosine", "step", "multistep", "plateau", "exponential", or empty/none for no scheduler
+
+# Wandb logging configuration
+wandb:
+  use_wandb: true
+  project: "fl-adni-classification"
+  entity: "tin-hoang"
+  tags: ["federated-learning", "secaggplus", "rosanna"]
+  notes: "fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus-seed01"
+  run_name: "fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus-seed01"
+
+# FL-specific settings
+fl:
+  client_id: 2
+  local_epochs: 1  # Number of local epochs per round
+  num_rounds: 100  # Number of FL rounds to perform (to setup LR scheduler)
+  evaluate_frequency: 5  # Evaluate every 10 rounds (can be overridden by server config)
+  strategy: "secagg+"  # FL aggregation strategy using real SecAgg+ (cryptographic secure aggregation)
+
+  # SecAgg+ (Real Secure Aggregation) specific parameters - OPTIMIZED for 3-client CNN
+  secagg_num_shares: 3                    # Minimum for 3 clients (40% reduction from 5 shares)
+  secagg_reconstruction_threshold: 2      # Allows 1 client dropout tolerance (was 0 tolerance before)
+  secagg_max_weight: 1000.0               # default
+  secagg_timeout: 300.0                  # 5 minutes for training + crypto operations (was 120.0)
+  secagg_clipping_range: 8.0             # default
+  secagg_quantization_range: 4194304       # default
