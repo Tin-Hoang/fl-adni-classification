@@ -1,4 +1,4 @@
-# ADNI Classification
+# Federated Learning for Privacy-Preserving Alzheimer's Disease Classification on 3D MRI Data
 
 ***Abstract:** This work presents a federated learning framework for automated classification of Alzheimer's Disease using neuroimaging data from the Alzheimer's Disease Neuroimaging Initiative (ADNI). We implement 3D convolutional neural networks to classify MRI scans into three diagnostic categories: Alzheimer's Disease (AD), Mild Cognitive Impairment (MCI), and Cognitively Normal (CN) controls. The framework employs a modular architecture supporting multiple 3D CNN models including ResNet3D and DenseNet3D configurations. A standardized preprocessing pipeline utilizing ANTs and FSL performs resampling to 1mm isotropic spacing, registration to ICBM152 templates, and skull stripping. The system integrates YAML-based configuration management and Weights & Biases for experiment tracking, supporting multiple ADNI dataset formats while maintaining reproducible workflows for neuroimaging-based disease classification.*
 
@@ -29,10 +29,8 @@ fl-adni-classification/
 ├── configs/             # Configuration YAML files
 ├── data/                # Data directory
 ├── logs/                # Training logs
-├── run_multi_machines.py      # Multi-machine FL execution
-├── run_multi_machines_tmux.py # Multi-machine FL with tmux
-├── setup_fl_env.sh            # Environment setup script
-├── config.py                  # Global configuration
+├── run_local_simulation.py    # Run local simulation (single machine)
+├── run_multi_machines_tmux.py # Distributed multi-machine FL with tmux
 ├── pyproject.toml             # Project dependencies (uv)
 └── README.md                  # Project documentation
 ```
@@ -319,37 +317,32 @@ The input data should be:
   - sex
   - age
 
-
-## Model Architecture
-
-The project uses a ResNet50-based 3D CNN architecture, implemented using the Model Factory pattern for easy extension.
-
-# ADNI MRI Preprocessing Tool
+## ADNI MRI Preprocessing
 
 Automates preprocessing for ADNI MRI images:
 1. Resampling to 1mm isotropic spacing
 2. Registration to a standard template
 3. Skull stripping
 
-## Requirements
+### Requirements
 
-- Python 3.6+
+- Python 3.10+
 - ANTs (Advanced Normalization Tools)
 - FSL (FMRIB Software Library)
 
-## Usage
+### Usage
 
 ```bash
 python scripts/preprocess_mri.py --input input_folder [--output output_dir] [--template template.nii.gz]
 ```
 
-### Arguments
+#### Arguments
 
 - `--input`: Path to input directory containing MRI images (required)
 - `--output`: Base output directory (default: same folder name in parent directory)
 - `--template`: Template for registration (default: data/ICBM152/mni_icbm152_t1_tal_nlin_sym_09a.nii)
 
-### Output Structure
+#### Output Structure
 
 For each .nii or .nii.gz file in the input directory, the script creates:
 
@@ -362,7 +355,7 @@ Where `<dirname>` is the parent directory of the input folder and `<basename>` i
 The script preserves the original subfolder structure in each step's output directory.
 Each output file maintains the same filename and directory structure as in the input directory.
 
-### Example
+#### Example
 
 Using this input structure:
 ```
