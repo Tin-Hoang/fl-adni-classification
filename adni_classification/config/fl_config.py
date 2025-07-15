@@ -19,6 +19,10 @@ class ClientMachineConfig:
     password: Optional[str] = None
     partition_id: int = 0
     project_dir: Optional[str] = None
+    config_file: Optional[str] = None
+    sequential_experiment: bool = False
+    train_sequential_labels: Optional[List[str]] = None
+    val_sequential_labels: Optional[List[str]] = None
 
 
 @dataclass
@@ -28,6 +32,10 @@ class ServerMachineConfig:
     username: str
     password: Optional[str] = None
     port: int = 9092
+    config_file: Optional[str] = None
+    sequential_experiment: bool = False
+    train_sequential_labels: Optional[List[str]] = None
+    val_sequential_labels: Optional[List[str]] = None
 
 
 @dataclass
@@ -44,25 +52,43 @@ class MultiMachineConfig:
         """Get server configuration as dictionary for backward compatibility."""
         if not self.server:
             return {}
-        return {
+        config_dict = {
             "host": self.server.host,
             "username": self.server.username,
             "password": self.server.password or os.getenv("FL_PASSWORD"),
             "port": self.server.port
         }
+        if self.server.config_file:
+            config_dict["config_file"] = self.server.config_file
+        if self.server.sequential_experiment:
+            config_dict["sequential_experiment"] = self.server.sequential_experiment
+        if self.server.train_sequential_labels:
+            config_dict["train_sequential_labels"] = self.server.train_sequential_labels
+        if self.server.val_sequential_labels:
+            config_dict["val_sequential_labels"] = self.server.val_sequential_labels
+        return config_dict
 
     def get_clients_config_dict(self) -> List[Dict[str, Any]]:
         """Get clients configuration as list of dictionaries for backward compatibility."""
-        return [
-            {
+        client_configs = []
+        for client in self.clients:
+            client_dict = {
                 "host": client.host,
                 "username": client.username,
                 "password": client.password or os.getenv("FL_PASSWORD"),
                 "project_dir": client.project_dir or self.project_dir,
                 "partition_id": client.partition_id
             }
-            for client in self.clients
-        ]
+            if client.config_file:
+                client_dict["config_file"] = client.config_file
+            if client.sequential_experiment:
+                client_dict["sequential_experiment"] = client.sequential_experiment
+            if client.train_sequential_labels:
+                client_dict["train_sequential_labels"] = client.train_sequential_labels
+            if client.val_sequential_labels:
+                client_dict["val_sequential_labels"] = client.val_sequential_labels
+            client_configs.append(client_dict)
+        return client_configs
 
 
 @dataclass

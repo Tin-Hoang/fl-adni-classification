@@ -181,7 +181,7 @@ class FedAvgStrategy(FLStrategyBase):
             print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
-        if server_round % self.config.training.checkpoint.save_frequency == 0:
+        if self.config.training.checkpoint.save_regular and server_round % self.config.training.checkpoint.save_frequency == 0:
             self._save_checkpoint(self.model.state_dict(), server_round)
 
         return aggregated_params, metrics

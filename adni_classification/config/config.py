@@ -52,8 +52,8 @@ class CheckpointConfig:
     """Checkpoint configuration."""
     save_best: bool = True
     save_latest: bool = True
-    save_regular: bool = True
-    save_frequency: int = 1  # Save a regular checkpoint every N epochs
+    save_regular: bool = False
+    save_frequency: int = 10  # Save a regular checkpoint every N epochs
 
 
 @dataclass
@@ -131,7 +131,17 @@ class Config:
             # Parse server config
             server_config = None
             if "server" in multi_machine_dict:
-                server_config = ServerMachineConfig(**multi_machine_dict["server"])
+                server_data = multi_machine_dict["server"]
+                server_config = ServerMachineConfig(
+                    host=server_data["host"],
+                    username=server_data["username"],
+                    password=server_data.get("password"),
+                    port=server_data.get("port", 9092),
+                    config_file=server_data.get("config_file"),
+                    sequential_experiment=server_data.get("sequential_experiment", False),
+                    train_sequential_labels=server_data.get("train_sequential_labels"),
+                    val_sequential_labels=server_data.get("val_sequential_labels")
+                )
 
             # Parse client configs
             client_configs = []
@@ -142,7 +152,11 @@ class Config:
                         username=client_data["username"],
                         password=client_data.get("password"),
                         partition_id=client_data.get("partition_id", i),
-                        project_dir=client_data.get("project_dir")
+                        project_dir=client_data.get("project_dir"),
+                        config_file=client_data.get("config_file"),
+                        sequential_experiment=client_data.get("sequential_experiment", False),
+                        train_sequential_labels=client_data.get("train_sequential_labels"),
+                        val_sequential_labels=client_data.get("val_sequential_labels")
                     )
                     client_configs.append(client_config)
 
@@ -257,25 +271,43 @@ class Config:
 
             # Add server config if present
             if self.fl.multi_machine.server:
-                multi_machine_dict["server"] = {
+                server_dict = {
                     "host": self.fl.multi_machine.server.host,
                     "username": self.fl.multi_machine.server.username,
                     "password": self.fl.multi_machine.server.password,
                     "port": self.fl.multi_machine.server.port,
                 }
+                if self.fl.multi_machine.server.config_file:
+                    server_dict["config_file"] = self.fl.multi_machine.server.config_file
+                if self.fl.multi_machine.server.sequential_experiment:
+                    server_dict["sequential_experiment"] = self.fl.multi_machine.server.sequential_experiment
+                if self.fl.multi_machine.server.train_sequential_labels:
+                    server_dict["train_sequential_labels"] = self.fl.multi_machine.server.train_sequential_labels
+                if self.fl.multi_machine.server.val_sequential_labels:
+                    server_dict["val_sequential_labels"] = self.fl.multi_machine.server.val_sequential_labels
+                multi_machine_dict["server"] = server_dict
 
             # Add clients config
             if self.fl.multi_machine.clients:
-                multi_machine_dict["clients"] = [
-                    {
+                client_dicts = []
+                for client in self.fl.multi_machine.clients:
+                    client_dict = {
                         "host": client.host,
                         "username": client.username,
                         "password": client.password,
                         "partition_id": client.partition_id,
                         "project_dir": client.project_dir,
                     }
-                    for client in self.fl.multi_machine.clients
-                ]
+                    if client.config_file:
+                        client_dict["config_file"] = client.config_file
+                    if client.sequential_experiment:
+                        client_dict["sequential_experiment"] = client.sequential_experiment
+                    if client.train_sequential_labels:
+                        client_dict["train_sequential_labels"] = client.train_sequential_labels
+                    if client.val_sequential_labels:
+                        client_dict["val_sequential_labels"] = client.val_sequential_labels
+                    client_dicts.append(client_dict)
+                multi_machine_dict["clients"] = client_dicts
 
             fl_dict["multi_machine"] = multi_machine_dict
 
