@@ -32,6 +32,7 @@ import threading
 import socket
 import select
 import codecs
+import os
 from typing import List, Dict
 from datetime import datetime
 
@@ -53,6 +54,387 @@ class FlowerMultiMachineTmuxRunner:
     def generate_timestamp(self) -> str:
         """Generate timestamp string for log files"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def update_config_file(self, ssh_client, config_file_path: str, train_csv_path: str, val_csv_path: str, experiment_idx: int):
+        """Update a config file with new data paths for sequential experiments"""
+        try:
+            print(f"📝 Updating config file: {config_file_path}")
+            print(f"   Train CSV: {train_csv_path}")
+            print(f"   Val CSV: {val_csv_path}")
+
+            # First, check if the file exists and get the absolute path
+            check_command = f"cd {self.project_dir} && ls -la {config_file_path}"
+            stdin, stdout, stderr = ssh_client.exec_command(check_command)
+            ls_output = stdout.read().decode()
+            ls_error = stderr.read().decode()
+
+            if ls_error:
+                print(f"❌ Config file not found: {config_file_path}")
+                print(f"🔍 Error: {ls_error}")
+                # Try to find similar files for debugging
+                config_dir = "/".join(config_file_path.split("/")[:-1])
+                if config_dir:
+                    find_command = f"cd {self.project_dir} && find {config_dir} -name '*.yaml' -type f 2>/dev/null || echo 'Directory not found'"
+                    stdin, stdout, stderr = ssh_client.exec_command(find_command)
+                    find_output = stdout.read().decode()
+                    print(f"🔍 Available config files in {config_dir}:")
+                    print(find_output)
+                return False
+
+            print(f"✅ Config file found: {ls_output.strip()}")
+
+            # Read current config file
+            read_command = f"cd {self.project_dir} && cat {config_file_path}"
+            stdin, stdout, stderr = ssh_client.exec_command(read_command)
+            config_content = stdout.read().decode()
+            error = stderr.read().decode()
+
+            if error:
+                print(f"❌ Error reading config file {config_file_path}: {error}")
+                return False
+
+            # Update data paths using sed to preserve comments and formatting
+            # Extract seed ID from the train_csv_path for wandb naming
+            seed_id = "unknown"
+            try:
+                # Look for pattern like "seed01", "seed10", "seed42", etc.
+                import re
+                seed_match = re.search(r'seed(\d+)', train_csv_path)
+                if seed_match:
+                    seed_id = f"seed{seed_match.group(1)}"
+                    print(f"🔍 Extracted seed ID: {seed_id}")
+                else:
+                    print(f"⚠️ Could not extract seed ID from path: {train_csv_path}")
+            except Exception as e:
+                print(f"⚠️ Error extracting seed ID: {e}")
+
+            # Use sed to update train_csv_path line
+            train_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*train_csv_path:.*|  train_csv_path: \"{train_csv_path}\"|' {config_file_path}"
+            stdin, stdout, stderr = ssh_client.exec_command(train_update_command)
+            train_error = stderr.read().decode()
+
+            if train_error:
+                print(f"❌ Error updating train_csv_path: {train_error}")
+                return False
+
+            # Use sed to update val_csv_path line
+            val_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*val_csv_path:.*|  val_csv_path: \"{val_csv_path}\"|' {config_file_path}"
+            stdin, stdout, stderr = ssh_client.exec_command(val_update_command)
+            val_error = stderr.read().decode()
+
+            if val_error:
+                print(f"❌ Error updating val_csv_path: {val_error}")
+                return False
+
+            # Update wandb run_name and notes with seed ID
+            if seed_id != "unknown":
+                print(f"🏷️ Updating wandb configuration with {seed_id}...")
+
+                # Update wandb run_name: properly remove existing seed suffix and add new one
+                # Use a more precise regex that captures everything before the -seed pattern
+                run_name_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*run_name:\\s*\"\\(.*\\)-seed[0-9]\\+\".*|  run_name: \"\\1-{seed_id}\"|' {config_file_path}"
+                stdin, stdout, stderr = ssh_client.exec_command(run_name_update_command)
+                run_name_error = stderr.read().decode()
+
+                if run_name_error:
+                    print(f"⚠️ Warning updating wandb run_name: {run_name_error}")
+
+                # Update wandb notes: properly remove existing seed suffix and add new one
+                notes_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*notes:\\s*\"\\(.*\\)-seed[0-9]\\+\".*|  notes: \"\\1-{seed_id}\"|' {config_file_path}"
+                stdin, stdout, stderr = ssh_client.exec_command(notes_update_command)
+                notes_error = stderr.read().decode()
+
+                if notes_error:
+                    print(f"⚠️ Warning updating wandb notes: {notes_error}")
+
+                # Extract numeric seed value from seed_id (e.g., "seed01" -> "1", "seed42" -> "42")
+                try:
+                    numeric_seed = str(int(seed_id.replace("seed", "")))
+                    print(f"🔢 Updating training.seed with numeric value: {numeric_seed}")
+
+                    # Update training.seed field
+                    training_seed_command = f"cd {self.project_dir} && sed -i 's|^\\s*seed:\\s*[0-9]\\+.*|  seed: {numeric_seed}|' {config_file_path}"
+                    stdin, stdout, stderr = ssh_client.exec_command(training_seed_command)
+                    training_seed_error = stderr.read().decode()
+
+                    if training_seed_error:
+                        print(f"⚠️ Warning updating training.seed: {training_seed_error}")
+                    else:
+                        print(f"✅ Updated training.seed to: {numeric_seed}")
+
+                except ValueError as e:
+                    print(f"⚠️ Could not extract numeric seed from {seed_id}: {e}")
+
+                print(f"✅ Updated wandb configuration with seed ID: {seed_id}")
+            else:
+                print("⚠️ Skipping wandb update due to unknown seed ID")
+
+            # Verify the changes were made
+            verify_command = f"cd {self.project_dir} && grep -E '(train_csv_path|val_csv_path|run_name|notes):' {config_file_path}"
+            stdin, stdout, stderr = ssh_client.exec_command(verify_command)
+            verify_output = stdout.read().decode()
+
+            if verify_output:
+                print(f"✅ Updated configuration verified:")
+                for line in verify_output.strip().split('\n'):
+                    if line.strip():
+                        print(f"   {line.strip()}")
+            else:
+                print("⚠️ Could not verify configuration updates")
+
+            print(f"✅ Successfully updated config file: {config_file_path}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error updating config file {config_file_path}: {e}")
+            import traceback
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+            return False
+
+    def update_server_config_for_experiment(self, experiment_idx: int, server_config: Dict):
+        """Update server config file for current experiment"""
+        try:
+            if not server_config.get("sequential_experiment", False):
+                return True
+
+            config_file = server_config.get("config_file")
+            train_labels = server_config.get("train_sequential_labels", [])
+            val_labels = server_config.get("val_sequential_labels", [])
+
+            if not config_file or experiment_idx >= len(train_labels) or experiment_idx >= len(val_labels):
+                print(f"❌ Invalid server config for experiment {experiment_idx}")
+                return False
+
+            train_csv_path = train_labels[experiment_idx]
+            val_csv_path = val_labels[experiment_idx]
+
+            return self.update_config_file(
+                self.server_ssh,
+                config_file,
+                train_csv_path,
+                val_csv_path,
+                experiment_idx
+            )
+
+        except Exception as e:
+            print(f"❌ Error updating server config for experiment {experiment_idx}: {e}")
+            return False
+
+    def update_client_configs_for_experiment(self, experiment_idx: int, clients_config: List[Dict]):
+        """Update all client config files for current experiment"""
+        success_count = 0
+
+        for i, client_config in enumerate(clients_config):
+            try:
+                if not client_config.get("sequential_experiment", False):
+                    success_count += 1
+                    continue
+
+                config_file = client_config.get("config_file")
+                train_labels = client_config.get("train_sequential_labels", [])
+                val_labels = client_config.get("val_sequential_labels", [])
+
+                if not config_file or experiment_idx >= len(train_labels) or experiment_idx >= len(val_labels):
+                    print(f"❌ Invalid client config for experiment {experiment_idx}, client {i}")
+                    continue
+
+                train_csv_path = train_labels[experiment_idx]
+                val_csv_path = val_labels[experiment_idx]
+
+                # Get SSH connection for this client
+                ssh_client = self.ssh_connections[i] if i < len(self.ssh_connections) else None
+                if not ssh_client:
+                    print(f"❌ No SSH connection for client {i}")
+                    continue
+
+                if self.update_config_file(
+                    ssh_client,
+                    config_file,
+                    train_csv_path,
+                    val_csv_path,
+                    experiment_idx
+                ):
+                    success_count += 1
+
+            except Exception as e:
+                print(f"❌ Error updating client {i} config for experiment {experiment_idx}: {e}")
+
+        return success_count == len(clients_config)
+
+    def update_pyproject_toml(self, server_config: Dict, clients_config: List[Dict]) -> bool:
+        """Update pyproject.toml with correct config files, app components, and number of supernodes"""
+        try:
+            print("🔧 Updating pyproject.toml with current experiment configuration...")
+
+            pyproject_path = f"{self.project_dir}/pyproject.toml"
+
+            # Determine strategy from server config to set correct app components
+            strategy = "fedavg"  # default
+            if server_config.get("config_file"):
+                # Try to read strategy from server config file
+                try:
+                    read_server_config_cmd = f"cd {self.project_dir} && grep -E 'strategy:' {server_config['config_file']} | head -1"
+                    stdin, stdout, stderr = self.server_ssh.exec_command(read_server_config_cmd)
+                    strategy_line = stdout.read().decode().strip()
+                    if strategy_line:
+                        # Extract strategy value from YAML line like "strategy: fedavg" or "strategy: \"secagg+\""
+                        import re
+                        strategy_match = re.search(r'strategy:\s*["\']?([^"\']+)["\']?', strategy_line)
+                        if strategy_match:
+                            strategy = strategy_match.group(1).strip().lower()
+                            print(f"🔍 Detected strategy: {strategy}")
+                except Exception as e:
+                    print(f"⚠️ Could not detect strategy, using default: {e}")
+
+            # Determine app components based on strategy
+            if strategy in ["secagg+", "secaggplus"]:
+                serverapp_component = "adni_flwr.server_app:secagg_plus_app"
+                clientapp_component = "adni_flwr.client_app:secagg_plus_app"
+                print(f"🔒 Using SecAgg+ components for strategy: {strategy}")
+            else:
+                serverapp_component = "adni_flwr.server_app:app"
+                clientapp_component = "adni_flwr.client_app:app"
+                print(f"📊 Using standard components for strategy: {strategy}")
+
+            # Read current pyproject.toml
+            read_command = f"cat {pyproject_path}"
+            stdin, stdout, stderr = self.server_ssh.exec_command(read_command)
+            content = stdout.read().decode()
+            error = stderr.read().decode()
+
+            if error:
+                print(f"❌ Error reading pyproject.toml: {error}")
+                return False
+
+            if not content.strip():
+                print("❌ pyproject.toml is empty")
+                return False
+
+            lines = content.split('\n')
+            updated_lines = []
+            in_app_components = False
+            in_app_config = False
+            in_federation_config = False
+
+            for line in lines:
+                # Track sections
+                if line.strip() == "[tool.flwr.app.components]":
+                    in_app_components = True
+                    in_app_config = False
+                    in_federation_config = False
+                elif line.strip() == "[tool.flwr.app.config]":
+                    in_app_components = False
+                    in_app_config = True
+                    in_federation_config = False
+                elif line.strip() == "[tool.flwr.federations.multi-machine]":
+                    in_app_components = False
+                    in_app_config = False
+                    in_federation_config = True
+                elif line.strip().startswith("[") and line.strip().endswith("]"):
+                    in_app_components = False
+                    in_app_config = False
+                    in_federation_config = False
+
+                # Update app components based on strategy
+                if in_app_components and line.strip().startswith("serverapp"):
+                    updated_lines.append(f'serverapp = "{serverapp_component}"')
+                    print(f"📝 Updated serverapp: {serverapp_component}")
+                elif in_app_components and line.strip().startswith("clientapp"):
+                    updated_lines.append(f'clientapp = "{clientapp_component}"')
+                    print(f"📝 Updated clientapp: {clientapp_component}")
+
+                # Update client-config-files
+                elif in_app_config and line.strip().startswith("client-config-files"):
+                    client_config_files = []
+                    for client_config in clients_config:
+                        config_file = client_config.get("config_file")
+                        if config_file:
+                            client_config_files.append(config_file)
+
+                    if client_config_files:
+                        client_config_str = ",".join(client_config_files)
+                        updated_lines.append(f'client-config-files = "{client_config_str}"')
+                        print(f"📝 Updated client-config-files: {client_config_str}")
+                    else:
+                        updated_lines.append(line)
+
+                # Update server-config-file
+                elif in_app_config and line.strip().startswith("server-config-file"):
+                    server_config_file = server_config.get("config_file")
+                    if server_config_file:
+                        updated_lines.append(f'server-config-file = "{server_config_file}"')
+                        print(f"📝 Updated server-config-file: {server_config_file}")
+                    else:
+                        updated_lines.append(line)
+
+                # Update options.num-supernodes
+                elif in_federation_config and line.strip().startswith("options.num-supernodes"):
+                    num_clients = len(clients_config)
+                    updated_lines.append(f'options.num-supernodes = {num_clients}')
+                    print(f"📝 Updated options.num-supernodes: {num_clients}")
+
+                else:
+                    updated_lines.append(line)
+
+            # Write updated content back
+            updated_content = '\n'.join(updated_lines)
+            write_command = f"cat > {pyproject_path} << 'EOF'\n{updated_content}\nEOF"
+            stdin, stdout, stderr = self.server_ssh.exec_command(write_command)
+            error = stderr.read().decode()
+
+            if error:
+                print(f"❌ Error writing pyproject.toml: {error}")
+                return False
+
+            print("✅ Successfully updated pyproject.toml")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error updating pyproject.toml: {e}")
+            import traceback
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+            return False
+
+    def get_num_experiments(self, server_config: Dict, clients_config: List[Dict]) -> int:
+        """Get the number of sequential experiments based on config"""
+        try:
+            # Check if sequential experiment is enabled
+            if not server_config.get("sequential_experiment", False):
+                return 1  # Single experiment
+
+            # Get number of experiments from server config
+            server_train_labels = server_config.get("train_sequential_labels", [])
+            server_val_labels = server_config.get("val_sequential_labels", [])
+
+            if not server_train_labels or not server_val_labels:
+                return 1
+
+            server_experiments = min(len(server_train_labels), len(server_val_labels))
+
+            # Validate that all clients have the same number of experiments
+            for i, client_config in enumerate(clients_config):
+                if not client_config.get("sequential_experiment", False):
+                    continue
+
+                client_train_labels = client_config.get("train_sequential_labels", [])
+                client_val_labels = client_config.get("val_sequential_labels", [])
+
+                if not client_train_labels or not client_val_labels:
+                    print(f"❌ Client {i} has no sequential labels")
+                    return 1
+
+                client_experiments = min(len(client_train_labels), len(client_val_labels))
+
+                if client_experiments != server_experiments:
+                    print(f"❌ Client {i} has {client_experiments} experiments but server has {server_experiments}")
+                    return 1
+
+            print(f"✅ Found {server_experiments} sequential experiments")
+            return server_experiments
+
+        except Exception as e:
+            print(f"❌ Error determining number of experiments: {e}")
+            return 1
 
     def stream_channel_output(self, channel, output_buffer_ref, timeout_counter_ref, max_timeout):
         """
@@ -335,10 +717,10 @@ class FlowerMultiMachineTmuxRunner:
             except:
                 pass
 
-    def start_flower_server_tmux(self, venv_activate: str):
-        """Start Flower server using tmux session"""
+    def start_flower_superlink_only(self, venv_activate: str):
+        """Start only SuperLink (infrastructure) - ServerApp will be started per experiment"""
         try:
-            print(f"🌸 Starting Flower server on {self.server_config['host']} using tmux...")
+            print(f"🌸 Starting Flower SuperLink on {self.server_config['host']} using tmux...")
             print(f"🔍 Debug: Connecting to {self.server_config['host']} as {self.server_config['username']}")
             print(f"🔍 Debug: Using virtual environment: {venv_activate}")
 
@@ -364,7 +746,9 @@ class FlowerMultiMachineTmuxRunner:
             print("🧹 Cleaning up existing Flower processes and tmux sessions...")
             cleanup_commands = [
                 "tmux kill-session -t flower_server 2>/dev/null || true",
-                "pkill -f 'flower-superlink' || pkill -f 'flower-supernode' || true"
+                "tmux kill-session -t flower_serverapp 2>/dev/null || true",
+                "pkill -f 'flower-superlink' || true",
+                "pkill -f 'flwr-serverapp' || true"
             ]
             for cmd in cleanup_commands:
                 self.server_ssh.exec_command(cmd)
@@ -391,19 +775,6 @@ class FlowerMultiMachineTmuxRunner:
             else:
                 print(f"✓ Flower found: {flwr_check}")
 
-            # Test basic Flower command
-            print("🔍 Debug: Testing basic Flower command...")
-            test_command = self.get_venv_command(f"cd {self.project_dir} && flwr run --help", venv_activate)
-            stdin, stdout, stderr = self.server_ssh.exec_command(test_command)
-            test_output = stdout.read().decode()
-            test_error = stderr.read().decode()
-
-            if test_error:
-                print(f"❌ Flower command test failed: {test_error}")
-                return False
-            else:
-                print("✓ Flower command works")
-
             # Create new tmux session for SuperLink
             print("🚀 Creating tmux session for SuperLink...")
             session_command = f"tmux new-session -d -s flower_server"
@@ -418,144 +789,95 @@ class FlowerMultiMachineTmuxRunner:
             )
 
             send_command = f'tmux send-keys -t flower_server "{superlink_command}" Enter'
-            print(f"🚀 Starting SuperLink with Process Isolation Mode: {superlink_command}")
+            print(f"🚀 Starting SuperLink with Process Isolation Mode")
             stdin, stdout, stderr = self.server_ssh.exec_command(send_command)
 
             # Wait for SuperLink to start
             print("⏳ Waiting for SuperLink to start...")
             time.sleep(10)
 
-            # Create separate tmux session for ServerApp
-            print("🔧 Creating tmux session for ServerApp...")
+            # Check if SuperLink is running
+            check_superlink_session = "tmux list-sessions | grep flower_server"
+            stdin, stdout, stderr = self.server_ssh.exec_command(check_superlink_session)
+            superlink_session_output = stdout.read().decode()
+
+            check_superlink_process = "pgrep -f 'flower-superlink'"
+            stdin, stdout, stderr = self.server_ssh.exec_command(check_superlink_process)
+            superlink_pids = stdout.read().decode().strip()
+
+            check_fleet_port_command = "netstat -tuln | grep :9092 || ss -tuln | grep :9092"
+            stdin, stdout, stderr = self.server_ssh.exec_command(check_fleet_port_command)
+            fleet_port_output = stdout.read().decode()
+
+            if superlink_session_output and superlink_pids and fleet_port_output:
+                print(f"✅ SuperLink infrastructure started successfully")
+                print(f"📺 SuperLink session: {superlink_session_output.strip()}")
+                print(f"🔧 SuperLink PID: {superlink_pids}")
+                print(f"🌐 Fleet API (port 9092): {fleet_port_output.strip()}")
+                print(f"🔧 ServerApp will be started fresh for each experiment")
+                return True
+            else:
+                print("❌ Failed to start SuperLink infrastructure")
+                return False
+
+        except Exception as e:
+            print(f"❌ Error starting SuperLink: {e}")
+            import traceback
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+            return False
+
+    def start_serverapp_for_experiment(self, venv_activate: str, experiment_idx: int) -> bool:
+        """Start fresh ServerApp for a specific experiment"""
+        try:
+            print(f"🔧 Starting fresh ServerApp for experiment {experiment_idx + 1}...")
+
+            # Kill any existing ServerApp
+            self.server_ssh.exec_command("tmux kill-session -t flower_serverapp 2>/dev/null || true")
+            self.server_ssh.exec_command("pkill -f 'flwr-serverapp' || true")
+            time.sleep(2)
+
+            # Create new tmux session for ServerApp
             serverapp_session_cmd = "tmux new-session -d -s flower_serverapp"
             stdin, stdout, stderr = self.server_ssh.exec_command(serverapp_session_cmd)
             time.sleep(2)
 
-            # Start ServerApp in separate process
-            serverapp_log = f"{logs_prefix}serverapp_{self.timestamp}.log"
+            # Start fresh ServerApp
+            logs_prefix = "logs/" if self.ensure_logs_directory(self.server_ssh, self.project_dir) else ""
+            serverapp_log = f"{logs_prefix}serverapp_exp{experiment_idx + 1}_{self.timestamp}.log"
             serverapp_command = self.get_venv_command(
                 f'cd {self.project_dir} && flwr-serverapp --serverappio-api-address 127.0.0.1:9091 --insecure 2>&1 | tee {serverapp_log}',
                 venv_activate
             )
 
             send_serverapp_cmd = f'tmux send-keys -t flower_serverapp "{serverapp_command}" Enter'
-            print(f"🚀 Starting ServerApp in separate process")
             stdin, stdout, stderr = self.server_ssh.exec_command(send_serverapp_cmd)
-            time.sleep(5)
+            time.sleep(3)
 
-            # Check if SuperLink tmux session exists and is running
-            check_superlink_session = "tmux list-sessions | grep flower_server"
-            stdin, stdout, stderr = self.server_ssh.exec_command(check_superlink_session)
-            superlink_session_output = stdout.read().decode()
-
-            # Check if ServerApp tmux session exists and is running
-            check_serverapp_session = "tmux list-sessions | grep flower_serverapp"
-            stdin, stdout, stderr = self.server_ssh.exec_command(check_serverapp_session)
-            serverapp_session_output = stdout.read().decode()
-
-            # Check if SuperLink process is running
-            check_superlink_process = "pgrep -f 'flower-superlink'"
-            stdin, stdout, stderr = self.server_ssh.exec_command(check_superlink_process)
-            superlink_pids = stdout.read().decode().strip()
-
-            # Check if ServerApp process is running
+            # Verify ServerApp is running
             check_serverapp_process = "pgrep -f 'flwr-serverapp'"
             stdin, stdout, stderr = self.server_ssh.exec_command(check_serverapp_process)
             serverapp_pids = stdout.read().decode().strip()
 
-            # Check if ports 9092 (Fleet API) and 9093 (REST API) are listening
-            check_fleet_port_command = "netstat -tuln | grep :9092 || ss -tuln | grep :9092"
-            stdin, stdout, stderr = self.server_ssh.exec_command(check_fleet_port_command)
-            fleet_port_output = stdout.read().decode()
-
-            check_rest_port_command = "netstat -tuln | grep :9093 || ss -tuln | grep :9093"
-            stdin, stdout, stderr = self.server_ssh.exec_command(check_rest_port_command)
-            rest_port_output = stdout.read().decode()
-
-            if (superlink_session_output and serverapp_session_output and
-                superlink_pids and serverapp_pids and fleet_port_output and rest_port_output):
-                print(f"✅ Flower Server Process Isolation Mode started successfully")
-                print(f"📺 SuperLink session: {superlink_session_output.strip()}")
-                print(f"📺 ServerApp session: {serverapp_session_output.strip()}")
-                print(f"🔧 SuperLink PID: {superlink_pids}")
-                print(f"🔧 ServerApp PID: {serverapp_pids}")
-                print(f"🌐 Fleet API (port 9092): {fleet_port_output.strip()}")
-                print(f"🌐 REST API (port 9093): {rest_port_output.strip()}")
-                print(f"🔗 Process Isolation: SuperLink <-> ServerApp via 127.0.0.1:9091")
-                print(f"✅ Server-side PyTorch DataLoader multiprocessing enabled")
-
-                # Show SuperLink log preview
-                superlink_log_command = f"tail -10 {superlink_log} 2>/dev/null || echo 'SuperLink log not yet available'"
-                stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {superlink_log_command}")
-                superlink_log_output = stdout.read().decode()
-                if superlink_log_output and "not yet available" not in superlink_log_output:
-                    print("📋 SuperLink log preview:")
-                    print(superlink_log_output)
-
-                # Show ServerApp log preview
-                serverapp_log_command = f"tail -10 {serverapp_log} 2>/dev/null || echo 'ServerApp log not yet available'"
-                stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {serverapp_log_command}")
-                serverapp_log_output = stdout.read().decode()
-                if serverapp_log_output and "not yet available" not in serverapp_log_output:
-                    print("📋 ServerApp log preview:")
-                    print(serverapp_log_output)
-
+            if serverapp_pids:
+                print(f"✅ Fresh ServerApp started for experiment {experiment_idx + 1} (PID: {serverapp_pids})")
                 return True
             else:
-                print("❌ Failed to start Flower Server Process Isolation Mode")
-
-                # Debug information
-                if not superlink_session_output:
-                    print("  - SuperLink tmux session not found")
-                if not serverapp_session_output:
-                    print("  - ServerApp tmux session not found")
-                if not superlink_pids:
-                    print("  - SuperLink process not running")
-                if not serverapp_pids:
-                    print("  - ServerApp process not running")
-                if not fleet_port_output:
-                    print("  - Fleet API port 9092 not listening")
-                if not rest_port_output:
-                    print("  - REST API port 9093 not listening")
-
-                # Check SuperLink tmux session content for errors
-                if superlink_session_output:
-                    log_command = "tmux capture-pane -t flower_server -p"
-                    stdin, stdout, stderr = self.server_ssh.exec_command(log_command)
-                    tmux_output = stdout.read().decode()
-                    if tmux_output:
-                        print(f"📋 SuperLink tmux output:\n{tmux_output}")
-
-                # Check ServerApp tmux session content for errors
-                if serverapp_session_output:
-                    log_command = "tmux capture-pane -t flower_serverapp -p"
-                    stdin, stdout, stderr = self.server_ssh.exec_command(log_command)
-                    tmux_output = stdout.read().decode()
-                    if tmux_output:
-                        print(f"📋 ServerApp tmux output:\n{tmux_output}")
-
-                # Show detailed error logs if available
-                superlink_error_log = f"tail -20 {superlink_log} 2>/dev/null || echo 'No {superlink_log} found'"
-                stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {superlink_error_log}")
-                error_log = stdout.read().decode()
-                if error_log and "not found" not in error_log:
-                    print("❌ SuperLink error log:")
-                    print(error_log)
-
-                serverapp_error_log = f"tail -20 {serverapp_log} 2>/dev/null || echo 'No {serverapp_log} found'"
-                stdin, stdout, stderr = self.server_ssh.exec_command(f"cd {self.project_dir} && {serverapp_error_log}")
-                error_log = stdout.read().decode()
-                if error_log and "not found" not in error_log:
-                    print("❌ ServerApp error log:")
-                    print(error_log)
-
+                print(f"❌ Failed to start ServerApp for experiment {experiment_idx + 1}")
                 return False
 
         except Exception as e:
-            print(f"❌ Error starting server with tmux: {e}")
-            import traceback
-            print(f"🔍 Traceback: {traceback.format_exc()}")
+            print(f"❌ Error starting ServerApp for experiment {experiment_idx + 1}: {e}")
             return False
+
+    def stop_serverapp(self):
+        """Stop ServerApp after experiment"""
+        try:
+            self.server_ssh.exec_command("tmux kill-session -t flower_serverapp 2>/dev/null || true")
+            self.server_ssh.exec_command("pkill -f 'flwr-serverapp' || true")
+            time.sleep(1)
+            print("🛑 ServerApp stopped")
+        except Exception as e:
+            print(f"⚠️ Error stopping ServerApp: {e}")
 
     def start_flower_client_tmux(self, client_config: Dict, venv_activate: str):
         """Start Flower client using tmux session"""
@@ -679,15 +1001,14 @@ class FlowerMultiMachineTmuxRunner:
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
-    def start_flower_client_tmux_with_tunnel(self, client_config: Dict, venv_activate: str):
-        """Start Flower client using tmux session with SSH tunnel and Process Isolation Mode"""
+    def start_flower_supernode_only(self, client_config: Dict, venv_activate: str):
+        """Start only SuperNode with SSH tunnel (infrastructure) - ClientApp will be started per experiment"""
         client_host = client_config['host']
         partition_id = client_config.get('partition_id', 0)
         supernode_session = f"flower_supernode_{partition_id}"
-        clientapp_session = f"flower_clientapp_{partition_id}"
 
         try:
-            print(f"🌻 Starting Flower client on {client_host} using Process Isolation Mode with SSH tunnel...")
+            print(f"🌻 Starting SuperNode infrastructure on {client_host} with SSH tunnel...")
 
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -703,7 +1024,7 @@ class FlowerMultiMachineTmuxRunner:
             # Clean up any existing tmux sessions and processes
             cleanup_commands = [
                 f"tmux kill-session -t {supernode_session} 2>/dev/null || true",
-                f"tmux kill-session -t {clientapp_session} 2>/dev/null || true",
+                f"tmux kill-session -t flower_clientapp_{partition_id} 2>/dev/null || true",
                 "pkill -f 'flower-supernode' || true",
                 "pkill -f 'flwr-clientapp' || true",
                 f"pkill -f 'ssh.*{self.server_config['host']}.*9092' || true"  # Kill existing SSH tunnels to this server
@@ -720,22 +1041,18 @@ class FlowerMultiMachineTmuxRunner:
             else:
                 logs_prefix = "logs/"
 
-            # Create tmux sessions for SuperNode and ClientApp
-            print(f"🔗 Creating Process Isolation Mode setup on {client_host}...")
-
             local_tunnel_port = 9092 + partition_id  # Each client gets a unique local port
             client_port = 9094 + partition_id
             supernode_log = f"{logs_prefix}supernode_{client_host.split('.')[0]}_{self.timestamp}.log"
-            clientapp_log = f"{logs_prefix}clientapp_{client_host.split('.')[0]}_{self.timestamp}.log"
 
             print(f"🔧 Client {partition_id} will use local tunnel port {local_tunnel_port}")
 
-            # Step 1: Create SSH tunnel and start SuperNode in process isolation mode
+            # Create SSH tunnel and start SuperNode
             supernode_session_cmd = f"tmux new-session -d -s {supernode_session}"
             stdin, stdout, stderr = ssh.exec_command(supernode_session_cmd)
             time.sleep(2)
 
-            # SuperNode command with interactive SSH tunnel (user will input password manually)
+            # SuperNode command with SSH tunnel
             supernode_command = self.get_venv_command(
                 f'cd {client_config["project_dir"]} && '
                 f'ssh -f -N -L {local_tunnel_port}:{self.server_config["host"]}:9092 '
@@ -759,21 +1076,71 @@ class FlowerMultiMachineTmuxRunner:
             # Send SuperNode command to tmux session
             send_supernode_cmd = f'tmux send-keys -t {supernode_session} "{supernode_command}" Enter'
             stdin, stdout, stderr = ssh.exec_command(send_supernode_cmd)
-            print(f"🚀 Started SuperNode in process isolation mode")
+            print(f"🚀 Started SuperNode infrastructure")
             print(f"💡 SSH tunnel will prompt for password in tmux session '{supernode_session}' on {client_host}")
-            print(f"⏱️ SSH tunnel timeouts: connect={self.ssh_timeout}s, auth={self.ssh_auth_timeout}s (3 attempts)")
-            print(f"🔄 Keep-alive: 30s interval × 3 attempts = 90s grace period")
             print(f"📋 To enter password: ssh {client_host} && tmux attach -t {supernode_session}")
 
             # Wait longer for user to input password and tunnel to be established
             time.sleep(15)
 
-            # Step 2: Create separate tmux session for ClientApp
+            # Verify SuperNode is running
+            check_supernode_session = f"tmux list-sessions | grep {supernode_session}"
+            stdin, stdout, stderr = ssh.exec_command(check_supernode_session)
+            supernode_session_output = stdout.read().decode()
+
+            check_tunnel_process = f"pgrep -f 'ssh.*-L {local_tunnel_port}:{self.server_config['host']}:9092'"
+            stdin, stdout, stderr = ssh.exec_command(check_tunnel_process)
+            tunnel_pid = stdout.read().decode().strip()
+
+            check_supernode_process = "pgrep -f 'flower-supernode'"
+            stdin, stdout, stderr = ssh.exec_command(check_supernode_process)
+            supernode_pids = stdout.read().decode().strip()
+
+            if supernode_session_output and tunnel_pid and supernode_pids:
+                print(f"✅ SuperNode infrastructure started on {client_host}")
+                print(f"📺 SuperNode session: {supernode_session_output.strip()}")
+                print(f"🔧 SSH tunnel: Active on local port {local_tunnel_port} (PID: {tunnel_pid})")
+                print(f"🔧 SuperNode PID: {supernode_pids}")
+                print(f"🔧 ClientApp will be started fresh for each experiment")
+                self.ssh_connections.append(ssh)
+                return True
+            else:
+                print(f"❌ Failed to start SuperNode infrastructure on {client_host}")
+                ssh.close()
+                return False
+
+        except Exception as e:
+            print(f"❌ Error starting SuperNode infrastructure on {client_host}: {e}")
+            import traceback
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+            return False
+
+    def start_clientapp_for_experiment(self, client_idx: int, venv_activate: str, experiment_idx: int) -> bool:
+        """Start fresh ClientApp for a specific experiment"""
+        try:
+            client_config = self.clients_config[client_idx]
+            partition_id = client_config.get('partition_id', 0)
+            client_host = client_config['host']
+            client_port = 9094 + partition_id
+            clientapp_session = f"flower_clientapp_{partition_id}"
+
+            print(f"🔧 Starting fresh ClientApp for experiment {experiment_idx + 1} on {client_host}...")
+
+            ssh = self.ssh_connections[client_idx]
+
+            # Kill any existing ClientApp
+            ssh.exec_command(f"tmux kill-session -t {clientapp_session} 2>/dev/null || true")
+            ssh.exec_command("pkill -f 'flwr-clientapp' || true")
+            time.sleep(2)
+
+            # Create new tmux session for ClientApp
             clientapp_session_cmd = f"tmux new-session -d -s {clientapp_session}"
             stdin, stdout, stderr = ssh.exec_command(clientapp_session_cmd)
             time.sleep(2)
 
-            # Start ClientApp connecting to SuperNode
+            # Start fresh ClientApp
+            logs_prefix = "logs/" if self.ensure_logs_directory(ssh, client_config["project_dir"]) else ""
+            clientapp_log = f"{logs_prefix}clientapp_{client_host.split('.')[0]}_exp{experiment_idx + 1}_{self.timestamp}.log"
             clientapp_command = self.get_venv_command(
                 f'cd {client_config["project_dir"]} && '
                 f'flwr-clientapp --clientappio-api-address 127.0.0.1:{client_port} --insecure '
@@ -781,110 +1148,38 @@ class FlowerMultiMachineTmuxRunner:
                 venv_activate
             )
 
-            # Send ClientApp command to its tmux session
             send_clientapp_cmd = f'tmux send-keys -t {clientapp_session} "{clientapp_command}" Enter'
-            print(f"🚀 Started ClientApp in separate process")
             stdin, stdout, stderr = ssh.exec_command(send_clientapp_cmd)
+            time.sleep(3)
 
-            # Wait for ClientApp to start
-            time.sleep(5)
-
-            # Verify both processes are running
-            # Check SuperNode tmux session
-            check_supernode_session = f"tmux list-sessions | grep {supernode_session}"
-            stdin, stdout, stderr = ssh.exec_command(check_supernode_session)
-            supernode_session_output = stdout.read().decode()
-
-            # Check ClientApp tmux session
-            check_clientapp_session = f"tmux list-sessions | grep {clientapp_session}"
-            stdin, stdout, stderr = ssh.exec_command(check_clientapp_session)
-            clientapp_session_output = stdout.read().decode()
-
-            # Verify SSH tunnel is active (check for SSH tunnel process)
-            check_tunnel_process = f"pgrep -f 'ssh.*-L {local_tunnel_port}:{self.server_config['host']}:9092'"
-            stdin, stdout, stderr = ssh.exec_command(check_tunnel_process)
-            tunnel_pid = stdout.read().decode().strip()
-            tunnel_active = bool(tunnel_pid)
-
-            # Check if SuperNode process is running
-            check_supernode_process = "pgrep -f 'flower-supernode'"
-            stdin, stdout, stderr = ssh.exec_command(check_supernode_process)
-            supernode_pids = stdout.read().decode().strip()
-
-            # Check if ClientApp process is running
+            # Verify ClientApp is running
             check_clientapp_process = "pgrep -f 'flwr-clientapp'"
             stdin, stdout, stderr = ssh.exec_command(check_clientapp_process)
             clientapp_pids = stdout.read().decode().strip()
 
-            if (supernode_session_output and clientapp_session_output and
-                tunnel_active and supernode_pids and clientapp_pids):
-                print(f"✅ Process Isolation Mode setup successful on {client_host}")
-                print(f"📺 SuperNode session: {supernode_session_output.strip()}")
-                print(f"📺 ClientApp session: {clientapp_session_output.strip()}")
-                print(f"🔧 SSH tunnel: Active on local port {local_tunnel_port}")
-                if tunnel_pid:
-                    print(f"🌐 Tunnel process: {tunnel_pid}")
-                print(f"🔧 SuperNode PID: {supernode_pids}")
-                print(f"🔧 ClientApp PID: {clientapp_pids}")
-                print(f"📝 SuperNode logs: {client_config['project_dir']}/{supernode_log}")
-                print(f"📝 ClientApp logs: {client_config['project_dir']}/{clientapp_log}")
-                print(f"🔗 Process Isolation: SuperNode <-> ClientApp via 127.0.0.1:{client_port}")
-                print(f"🔗 Network: SuperNode -> SSH tunnel -> {self.server_config['host']}:9092")
-                self.ssh_connections.append(ssh)
+            if clientapp_pids:
+                print(f"✅ Fresh ClientApp started for experiment {experiment_idx + 1} on {client_host} (PID: {clientapp_pids})")
                 return True
             else:
-                print(f"❌ Failed to start Process Isolation Mode setup on {client_host}")
-
-                # Debug information
-                if not supernode_session_output:
-                    print("  - SuperNode tmux session not found")
-                if not clientapp_session_output:
-                    print("  - ClientApp tmux session not found")
-                if not tunnel_active:
-                    print(f"  - SSH tunnel not active on port {local_tunnel_port}")
-                if not supernode_pids:
-                    print("  - SuperNode process not running")
-                if not clientapp_pids:
-                    print("  - ClientApp process not running")
-
-                # Check tmux session content for errors
-                if supernode_session_output:
-                    log_command = f"tmux capture-pane -t {supernode_session} -p"
-                    stdin, stdout, stderr = ssh.exec_command(log_command)
-                    tmux_output = stdout.read().decode()
-                    if tmux_output:
-                        print(f"📋 SuperNode tmux output:\n{tmux_output}")
-
-                if clientapp_session_output:
-                    log_command = f"tmux capture-pane -t {clientapp_session} -p"
-                    stdin, stdout, stderr = ssh.exec_command(log_command)
-                    tmux_output = stdout.read().decode()
-                    if tmux_output:
-                        print(f"📋 ClientApp tmux output:\n{tmux_output}")
-
-                # Check log files for detailed errors
-                supernode_log_command = f"tail -10 {supernode_log} 2>/dev/null || echo 'SuperNode log not yet available'"
-                stdin, stdout, stderr = ssh.exec_command(f"cd {client_config['project_dir']} && {supernode_log_command}")
-                supernode_log_output = stdout.read().decode()
-                if supernode_log_output and "not yet available" not in supernode_log_output:
-                    print(f"📋 SuperNode log preview:")
-                    print(supernode_log_output)
-
-                clientapp_log_command = f"tail -10 {clientapp_log} 2>/dev/null || echo 'ClientApp log not yet available'"
-                stdin, stdout, stderr = ssh.exec_command(f"cd {client_config['project_dir']} && {clientapp_log_command}")
-                clientapp_log_output = stdout.read().decode()
-                if clientapp_log_output and "not yet available" not in clientapp_log_output:
-                    print(f"📋 ClientApp log preview:")
-                    print(clientapp_log_output)
-
-                ssh.close()
+                print(f"❌ Failed to start ClientApp for experiment {experiment_idx + 1} on {client_host}")
                 return False
 
         except Exception as e:
-            print(f"❌ Error starting Process Isolation Mode on {client_host}: {e}")
-            import traceback
-            print(f"🔍 Traceback: {traceback.format_exc()}")
+            print(f"❌ Error starting ClientApp for experiment {experiment_idx + 1} on client {client_idx}: {e}")
             return False
+
+    def stop_clientapps(self):
+        """Stop all ClientApps after experiment"""
+        try:
+            for i, ssh in enumerate(self.ssh_connections):
+                partition_id = self.clients_config[i].get('partition_id', 0)
+                clientapp_session = f"flower_clientapp_{partition_id}"
+                ssh.exec_command(f"tmux kill-session -t {clientapp_session} 2>/dev/null || true")
+                ssh.exec_command("pkill -f 'flwr-clientapp' || true")
+            time.sleep(1)
+            print("🛑 All ClientApps stopped")
+        except Exception as e:
+            print(f"⚠️ Error stopping ClientApps: {e}")
 
     def ensure_federation_config(self, federation_name: str = "multi-machine"):
         """Ensure pyproject.toml has the correct federation configuration on the server"""
@@ -973,7 +1268,7 @@ insecure = true
             return False
 
     def run_flower_app(self, venv_activate: str, federation_name: str = "multi-machine"):
-        """Run the Flower App"""
+        """Run the Flower App with intelligent timeout and process monitoring"""
         try:
             print(f"🚀 Running Flower App on federation '{federation_name}'...")
             print(f"🔍 Note: Federation will connect to SuperLink REST API at localhost:9093")
@@ -1009,50 +1304,110 @@ insecure = true
             print("📊 Flower App Output:")
             print("=" * 50)
 
-            # Stream output with timeout
+            # Enhanced streaming with intelligent timeout and process monitoring
             output_buffer = ""
-            timeout_counter = 0
-            max_timeout = 3000  # 25 minutes
+            silence_counter = 0
+            total_runtime = 0
+            max_silence_time = 1800  # 15 minutes of silence before checking processes
+            max_total_time = 14400   # 4 hours maximum total runtime
+            check_interval = 30      # Check every 30 seconds
 
-            while timeout_counter < max_timeout:
+            while total_runtime < max_total_time:
+                data_received = False
+
+                # Check for new output
                 if channel.recv_ready():
                     try:
                         data = channel.recv(4096).decode('utf-8', errors='replace')
-                        output_buffer += data
-                        print(data, end="")
-                        timeout_counter = 0  # Reset timeout when receiving data
+                        if data:
+                            output_buffer += data
+                            print(data, end="")
+                            silence_counter = 0  # Reset silence counter when data received
+                            data_received = True
 
-                        # Check for completion indicators
-                        if any(phrase in output_buffer.lower() for phrase in [
-                            "run finished", "completed successfully", "experiment completed",
-                            "training finished", "federation completed"
-                        ]):
-                            print("\n🎉 Detected completion signal!")
-                            break
+                            # Check for completion indicators
+                            completion_phrases = [
+                                "run finished", "completed successfully", "experiment completed",
+                                "training finished", "federation completed", "fl training completed",
+                            ]
+                            if any(phrase in output_buffer.lower() for phrase in completion_phrases):
+                                print("\n🎉 Detected completion signal in output!")
+                                break
+
                     except UnicodeDecodeError as decode_error:
-                        # Handle partial UTF-8 sequences gracefully
                         print(f"\n⚠️ UTF-8 decode warning: {decode_error}")
-                        # Continue processing - this is likely a partial character at buffer boundary
-                        timeout_counter = 0
+                        silence_counter = 0  # Reset on any activity
 
+                # Check if command completed
                 if channel.exit_status_ready():
+                    print("\n🏁 Command completed - collecting remaining output...")
                     # Get any remaining output
+                    remaining_output = ""
                     while channel.recv_ready():
                         try:
-                            data = channel.recv(4096).decode('utf-8', errors='replace')
-                            print(data, end="")
-                        except UnicodeDecodeError as decode_error:
-                            print(f"\n⚠️ UTF-8 decode warning in remaining output: {decode_error}")
-                    break
+                            remaining_data = channel.recv(4096).decode('utf-8', errors='replace')
+                            remaining_output += remaining_data
+                            print(remaining_data, end="")
+                        except UnicodeDecodeError:
+                            pass
 
-                time.sleep(0.5)
-                timeout_counter += 1
+                    # Check exit status
+                    exit_status = channel.recv_exit_status()
+                    print(f"\n📊 Process exit status: {exit_status}")
 
-            if timeout_counter >= max_timeout:
-                print(f"\n⏰ Timeout reached ({max_timeout/2/60:.1f} minutes)")
+                    if exit_status == 0:
+                        print("✅ Flower App completed successfully!")
+                        break
+                    else:
+                        print(f"⚠️ Flower App exited with status {exit_status}")
+                        print("🔍 This might be normal depending on your FL configuration")
+                        break
+
+                # Wait and update counters
+                time.sleep(1)
+                total_runtime += 1
+                if not data_received:
+                    silence_counter += 1
+
+                # Periodic status updates and process checks
+                if total_runtime % check_interval == 0:
+                    print(f"\n⏱️ Runtime: {total_runtime//60}m{total_runtime%60}s, Silence: {silence_counter//60}m{silence_counter%60}s")
+
+                    # Check if FL processes are still running
+                    processes_running = self.check_fl_processes_running()
+                    if not processes_running:
+                        print("🛑 FL processes no longer running - experiment completed or failed")
+                        break
+
+                    # If silent for too long, do detailed process check
+                    if silence_counter > max_silence_time:
+                        print(f"⚠️ No output for {silence_counter//60} minutes - checking process status...")
+
+                        # Check if flwr run process is still active
+                        check_flwr_process = "pgrep -f 'flwr run' || echo 'no-process'"
+                        stdin, stdout, stderr = self.server_ssh.exec_command(check_flwr_process)
+                        flwr_process = stdout.read().decode().strip()
+
+                        if flwr_process == "no-process":
+                            print("🛑 Flower App process no longer running - assuming completion")
+                            break
+                        else:
+                            print(f"✅ Flower App still running (PID: {flwr_process}) - continuing to monitor...")
+                            silence_counter = 0  # Reset silence counter after verification
+
+            # Handle timeout scenarios
+            if total_runtime >= max_total_time:
+                print(f"\n⏰ Maximum runtime reached ({max_total_time//3600}h {(max_total_time%3600)//60}m)")
+                print("🔍 Checking if processes completed successfully...")
+
+                # Final process check
+                if not self.check_fl_processes_running():
+                    print("✅ FL processes completed - experiment finished")
+                else:
+                    print("⚠️ FL processes still running after timeout - manual intervention may be needed")
 
             print("\n" + "=" * 50)
-            print("✅ Flower App execution completed!")
+            print("✅ Flower App monitoring completed!")
             channel.close()
             return True
 
@@ -1062,11 +1417,47 @@ insecure = true
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
+    def check_fl_processes_running(self) -> bool:
+        """Check if FL processes (ServerApp and ClientApps) are still running"""
+        try:
+            # Check ServerApp
+            stdin, stdout, stderr = self.server_ssh.exec_command("pgrep -f 'flwr-serverapp'")
+            serverapp_running = bool(stdout.read().decode().strip())
+
+            # Check ClientApps
+            clientapps_running = 0
+            for ssh in self.ssh_connections:
+                try:
+                    stdin, stdout, stderr = ssh.exec_command("pgrep -f 'flwr-clientapp'")
+                    if stdout.read().decode().strip():
+                        clientapps_running += 1
+                except:
+                    pass
+
+            # Consider FL running if ServerApp is running and at least one ClientApp is running
+            fl_active = serverapp_running and clientapps_running > 0
+
+            if fl_active:
+                print(f"🔄 FL processes active: ServerApp={serverapp_running}, ClientApps={clientapps_running}/{len(self.ssh_connections)}")
+
+            return fl_active
+
+        except Exception as e:
+            print(f"⚠️ Error checking FL processes: {e}")
+            return True  # Assume running on error to avoid premature termination
+
     def cleanup_tmux_sessions(self):
         """Clean up all tmux sessions and processes"""
-        print("\n🧹 Cleaning up tmux sessions...")
+        print("\n🧹 Cleaning up infrastructure and FL components...")
 
-        # Cleanup server (Process Isolation Mode)
+        # First stop any running FL components
+        try:
+            self.stop_serverapp()
+            self.stop_clientapps()
+        except:
+            pass
+
+        # Cleanup server infrastructure (SuperLink)
         if self.server_ssh:
             try:
                 cleanup_commands = [
@@ -1077,18 +1468,19 @@ insecure = true
                 ]
                 for cmd in cleanup_commands:
                     self.server_ssh.exec_command(cmd)
-                print("✓ Server Process Isolation Mode sessions stopped")
+                print("✓ SuperLink infrastructure stopped")
                 self.server_ssh.close()
             except Exception as e:
                 print(f"⚠️ Error cleaning up server: {e}")
 
-        # Cleanup clients (Process Isolation Mode)
+        # Cleanup client infrastructure (SuperNode + SSH tunnels)
         for i, ssh in enumerate(self.ssh_connections):
             try:
-                local_tunnel_port = 9092 + i
+                partition_id = self.clients_config[i].get('partition_id', 0)
+                local_tunnel_port = 9092 + partition_id
                 cleanup_commands = [
-                    f"tmux kill-session -t flower_supernode_{i} 2>/dev/null || true",
-                    f"tmux kill-session -t flower_clientapp_{i} 2>/dev/null || true",
+                    f"tmux kill-session -t flower_supernode_{partition_id} 2>/dev/null || true",
+                    f"tmux kill-session -t flower_clientapp_{partition_id} 2>/dev/null || true",
                     "pkill -f 'flower-supernode' || true",
                     "pkill -f 'flwr-clientapp' || true",
                     f"pkill -f 'ssh.*-L {local_tunnel_port}:{self.server_config['host']}:9092' || true",
@@ -1097,11 +1489,11 @@ insecure = true
                 for cmd in cleanup_commands:
                     ssh.exec_command(cmd)
                 ssh.close()
-                print(f"✓ Client {i+1} Process Isolation Mode sessions and SSH tunnels stopped")
+                print(f"✓ SuperNode infrastructure and SSH tunnel stopped on client {i+1}")
             except Exception as e:
                 print(f"⚠️ Error cleaning up client {i+1}: {e}")
 
-        print("✅ Process Isolation Mode cleanup completed")
+        print("✅ Infrastructure cleanup completed")
 
     def monitor_tmux_sessions(self):
         """Monitor tmux sessions and processes continuously"""
@@ -1221,7 +1613,7 @@ insecure = true
                 break
 
     def run_federated_learning(self, venv_activate: str = None):
-        """Main method to run federated learning with Process Isolation Mode"""
+        """Main method to run federated learning with Process Isolation Mode and Sequential Experiments"""
         print("🚀 Starting Flower Federated Learning with Full Process Isolation Mode")
         print("🔧 Server Process Isolation: SuperLink + ServerApp in separate processes")
         print("🔧 Client Process Isolation: SuperNode + ClientApp in separate processes")
@@ -1229,100 +1621,188 @@ insecure = true
         print("🔗 Using SSH tunnel for secure communication")
         print("=" * 70)
 
-        # Start server
-        if not self.start_flower_server_tmux(venv_activate):
-            print("❌ Failed to start server. Exiting...")
+        # Debug: Show configuration paths
+        print("🔍 Debug: Configuration file paths:")
+        print(f"   Server config file: {self.server_config.get('config_file', 'NOT SET')}")
+        for i, client_config in enumerate(self.clients_config):
+            print(f"   Client {i+1} config file: {client_config.get('config_file', 'NOT SET')}")
+        print("=" * 70)
+
+        # Determine number of experiments
+        num_experiments = self.get_num_experiments(self.server_config, self.clients_config)
+        is_sequential = num_experiments > 1
+
+        if is_sequential:
+            print(f"🔄 Sequential Experiment Mode: {num_experiments} experiments")
+            print("📋 Process: Setup infrastructure → Run experiments → Keep infrastructure running")
+        else:
+            print("🔄 Single Experiment Mode")
+
+        print("=" * 70)
+
+        # Start server infrastructure (SuperLink only)
+        if not self.start_flower_superlink_only(venv_activate):
+            print("❌ Failed to start SuperLink infrastructure. Exiting...")
             return False
 
-        print("⏳ Waiting for server to be ready...")
+        print("⏳ Waiting for SuperLink to be ready...")
         time.sleep(10)
 
-        # Start clients
+        # Start client infrastructure (SuperNode only)
         success_count = 0
         for i, client_config in enumerate(self.clients_config):
-            print(f"Starting client {i+1}/{len(self.clients_config)} on {client_config['host']}...")
+            print(f"Starting SuperNode infrastructure {i+1}/{len(self.clients_config)} on {client_config['host']}...")
             print(f"💡 To manually enter SSH password, connect to {client_config['host']} and run:")
             print(f"   tmux attach -t flower_supernode_{i}")
             print()
 
-            # SSH tunnel mode only
-            success = self.start_flower_client_tmux_with_tunnel(client_config, venv_activate)
+            # Start SuperNode infrastructure only
+            success = self.start_flower_supernode_only(client_config, venv_activate)
 
             if success:
                 success_count += 1
 
             time.sleep(5)
 
-        if success_count > 0:
-            print(f"✅ {success_count}/{len(self.clients_config)} Process Isolation Mode clients started!")
-            print("🔧 Server: SuperLink + ServerApp in separate processes")
-            print("🔧 Each client: SuperNode + ClientApp in separate processes")
-            print("✅ PyTorch DataLoader multiprocessing is now enabled on both server and client sides")
+        if success_count <= 0:
+            print("❌ No SuperNode infrastructure started successfully")
+            return False
 
-            print("⏳ Waiting for all components to connect...")
+        print(f"✅ {success_count}/{len(self.clients_config)} SuperNode infrastructure started!")
+        print("🔧 Infrastructure: SuperLink + SuperNode (stays running)")
+        print("🔧 Per experiment: Fresh ServerApp + ClientApp (restarted each time)")
+        print("✅ PyTorch DataLoader multiprocessing is now enabled on both server and client sides")
+
+        print("⏳ Waiting for all components to connect...")
+        time.sleep(10)
+
+        # Monitor sessions before starting FL
+        self.monitor_tmux_sessions()
+
+        # Run experiments sequentially
+        successful_experiments = 0
+        for experiment_idx in range(num_experiments):
+            print(f"\n{'='*70}")
+            print(f"🧪 Starting Experiment {experiment_idx + 1}/{num_experiments}")
+
+            if is_sequential:
+                # Extract experiment info from the first train label path
+                experiment_info = "Unknown"
+                try:
+                    server_train_labels = self.server_config.get("train_sequential_labels", [])
+                    if server_train_labels and experiment_idx < len(server_train_labels):
+                        # Extract seed from path like "seed01", "seed10", etc.
+                        label_path = server_train_labels[experiment_idx]
+                        if "seed" in label_path:
+                            seed_part = label_path.split("seed")[1].split("/")[0][:2]
+                            experiment_info = f"Seed {seed_part}"
+                except:
+                    pass
+
+                print(f"📊 Cross-validation fold: {experiment_info}")
+                print(f"🔧 Updating config files for experiment {experiment_idx + 1}...")
+
+                # Update server config file
+                if not self.update_server_config_for_experiment(experiment_idx, self.server_config):
+                    print(f"❌ Failed to update server config for experiment {experiment_idx + 1}")
+                    continue
+
+                # Update client config files
+                if not self.update_client_configs_for_experiment(experiment_idx, self.clients_config):
+                    print(f"❌ Failed to update client configs for experiment {experiment_idx + 1}")
+                    continue
+
+                print(f"✅ Config files updated for experiment {experiment_idx + 1}")
+
+                # Wait a moment for config files to be ready
+                time.sleep(3)
+
+            # Update pyproject.toml with correct config files for this experiment
+            print(f"🔧 Updating pyproject.toml for experiment {experiment_idx + 1}...")
+            if not self.update_pyproject_toml(self.server_config, self.clients_config):
+                print("❌ Failed to update pyproject.toml. Continuing anyway...")
+
+            # Wait a moment for pyproject.toml to be ready
+            time.sleep(5)
+
+            # Start fresh ServerApp for this experiment
+            print(f"🔧 Starting fresh ServerApp for experiment {experiment_idx + 1}...")
+            if not self.start_serverapp_for_experiment(venv_activate, experiment_idx):
+                print(f"❌ Failed to start ServerApp for experiment {experiment_idx + 1}")
+                continue
+
+            # Start fresh ClientApps for this experiment
+            print(f"🔧 Starting fresh ClientApps for experiment {experiment_idx + 1}...")
+            clientapp_success_count = 0
+            for client_idx in range(len(self.clients_config)):
+                if self.start_clientapp_for_experiment(client_idx, venv_activate, experiment_idx):
+                    clientapp_success_count += 1
+
+            if clientapp_success_count != len(self.clients_config):
+                print(f"❌ Only {clientapp_success_count}/{len(self.clients_config)} ClientApps started for experiment {experiment_idx + 1}")
+                self.stop_serverapp()
+                self.stop_clientapps()
+                continue
+
+            print(f"✅ Fresh FL components started: 1 ServerApp + {clientapp_success_count} ClientApps")
+
+            # Wait for components to connect
+            print("⏳ Waiting for FL components to connect...")
             time.sleep(10)
 
-            # Monitor sessions before starting FL
-            self.monitor_tmux_sessions()
+            print(f"🌸 Starting Flower App execution for experiment {experiment_idx + 1}...")
 
-            # Run Flower App
-            print("\n🌸 Starting Flower App execution...")
-            if self.run_flower_app(venv_activate):
-                print("✅ Federated learning completed successfully!")
-                print("🎉 Full Process Isolation Mode resolved the multiprocessing issue on both sides!")
-                return True
+            # Run Flower App for this experiment
+            if self.run_flower_app(venv_activate, federation_name="multi-machine"):
+                print(f"✅ Experiment {experiment_idx + 1} completed successfully!")
+                successful_experiments += 1
             else:
-                print("❌ Federated learning execution failed")
-                return False
-        else:
-            print("❌ No Process Isolation Mode clients started successfully")
-            return False
+                print(f"❌ Experiment {experiment_idx + 1} failed")
 
-    def setup_persistent_env_vars(self, ssh_client, client_host: str):
-        """Set up persistent environment variables in .bashrc for easier authentication"""
-        try:
-            print(f"🔧 Setting up persistent environment variables in .bashrc on {client_host}...")
-
-            # Environment variables to add
-            env_vars = [
-                f'export FL_SERVER_HOST="{self.server_config["host"]}"',
-                f'export FL_SERVER_USER="{self.server_config["username"]}"',
-                f'export FL_SERVER_PASS="{self.server_config["password"]}"',
-                f'export FL_PROJECT_DIR="{self.project_dir}"'
-            ]
-
-            # Check if variables already exist in .bashrc
-            check_command = "grep -q 'FL_SERVER_HOST' ~/.bashrc"
-            stdin, stdout, stderr = ssh_client.exec_command(check_command)
-            exit_status = stdout.channel.recv_exit_status()
-
-            if exit_status != 0:  # Variables don't exist, add them
-                print("📝 Adding FL environment variables to .bashrc...")
-
-                bashrc_content = f"""
-
-# Flower Federated Learning environment variables
-# Added by run_multi_machines_tmux.py
-{chr(10).join(env_vars)}
-"""
-
-                append_command = f'cat >> ~/.bashrc << "EOF"{bashrc_content}EOF'
-                stdin, stdout, stderr = ssh_client.exec_command(append_command)
-                append_error = stderr.read().decode()
-
-                if append_error:
-                    print(f"⚠️ Warning adding to .bashrc: {append_error}")
+                # For sequential experiments, ask if user wants to continue
+                if is_sequential and experiment_idx < num_experiments - 1:
+                    print("⚠️ Sequential experiment failed. Infrastructure is still running.")
+                    print("🔧 You can:")
+                    print("   1. Fix the issue and restart the script")
+                    print("   2. Continue with next experiment (the current failure will be recorded)")
+                    # Stop FL components and continue to next experiment
+                    self.stop_serverapp()
+                    self.stop_clientapps()
+                    continue
                 else:
-                    print("✅ Environment variables added to .bashrc")
-                    print("💡 Variables will be available in new shell sessions")
-            else:
-                print("✅ FL environment variables already exist in .bashrc")
+                    # Stop FL components after failed experiment
+                    self.stop_serverapp()
+                    self.stop_clientapps()
+                    break
 
+            # Stop FL components after successful experiment
+            print(f"🛑 Stopping FL components after experiment {experiment_idx + 1}...")
+            self.stop_serverapp()
+            self.stop_clientapps()
+
+            # Add delay between experiments to allow cleanup
+            if is_sequential and experiment_idx < num_experiments - 1:
+                print(f"⏳ Waiting 10 seconds before next experiment...")
+                time.sleep(10)
+
+        print(f"\n{'='*70}")
+        print(f"🎯 Sequential Experiment Summary:")
+        print(f"   Total experiments: {num_experiments}")
+        print(f"   Successful: {successful_experiments}")
+        print(f"   Failed: {num_experiments - successful_experiments}")
+
+        if successful_experiments == num_experiments:
+            print("🎉 All experiments completed successfully!")
+            print("✅ Fresh FL components per experiment resolved multiprocessing and state issues!")
             return True
-
-        except Exception as e:
-            print(f"⚠️ Error setting up environment variables: {e}")
+        elif successful_experiments > 0:
+            print(f"⚠️ {successful_experiments}/{num_experiments} experiments completed successfully")
+            print("💡 Check logs for failed experiments")
+            return True
+        else:
+            print("❌ All experiments failed")
             return False
+
 
 def main():
     """Main function using tmux sessions"""
@@ -1413,9 +1893,9 @@ def main():
         print()
         if runner.run_federated_learning(venv_activate=venv_activate):
             print("🎉 Federated learning completed successfully!")
-            print("✅ Full Process Isolation Mode enabled PyTorch DataLoader with num_workers > 0 on both sides")
+            print("✅ Fresh FL components per experiment resolved multiprocessing and state issues!")
         else:
-            print("❌ Full Process Isolation Mode failed - federated learning cannot proceed")
+            print("❌ Sequential experiments failed - federated learning cannot proceed")
             print("💡 Ensure SSH access between machines and Flower installation is correct")
     except KeyboardInterrupt:
         print("\n🛑 Interrupted by user")
