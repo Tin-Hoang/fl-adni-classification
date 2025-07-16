@@ -17,8 +17,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -47,10 +45,8 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
-    "black>=22.0.0",
-    "isort>=5.10.0",
-    "flake8>=4.0.0",
-    "mypy>=0.950",
+    "mypy>=1.15.0",
+    "ruff>=0.1.0",
 ]
 
 [tool.versioningit]
@@ -72,18 +68,52 @@ rmprefix = "v"
 [tool.hatch.version]
 source = "versioningit"
 
-[tool.black]
-line-length = 100
-target-version = ["py38"]
-include = '\.pyi?$'
+# Tools settings: pre-commit ----------------------------------------------------------------------
+[tool.ruff]
+# https://docs.astral.sh/ruff/configuration/
+line-length = 120
+indent-width = 4
 
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
+[tool.ruff.lint]
+# see: https://docs.astral.sh/ruff/rules
+select = [
+     "F", # Pyflakes
+     "E", # Pycodestyle
+     "W", # Pycodestyle
+     "I", # Isort
+     "B", # Flake8-bugbear
+     "C4", # Flake8-comprehensions
+]
+ignore = [
+    "E731", # Do not assign a lambda expression, use a def
+    "E741", # Do not use variables named 'I', 'O', or 'l'
+    "C408", # Unnecessary <dict/list/tuple> call - rewrite as a literal
+    "W191", # Indentation contains tabs (incompatible with `format.indent-style="tab"`)
+    "C401", # Unnecessary generator (rewrite as a `set` comprehension)
+    "A005", # Unnecessary `any` type
+    "ANN401",  # any-type
+    "B008", # Unnecessary `self` parameter
+    "C901",  # complex-structure
+    "EM101",  # Raw string in exception
+    "EM102",  # F-string in exception
+    "FA102",  # Future required type annotation
+    "FIX002",  # Line contains todo
+    "N815",  # Mixed-case variable in class scope
+    "PLR0911",  # Too many return statements
+    "PLR0913",  # Too many arguments
+    "RUF001",  # Ambiguous unicode character string
+    "S105", # Missing docstring in magic method
+]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
