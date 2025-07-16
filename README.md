@@ -114,8 +114,8 @@ fl:
   multi_machine:
     # Server machine configuration
     server:
-      host: "otter82.eps.surrey.ac.uk"      # Server hostname/IP
-      username: "th01167"                    # SSH username
+      host: "<your_server_hostname>"      # Server hostname/IP
+      username: "<your_username>"                    # SSH username
       password: null                         # Use FL_PASSWORD env var
       port: 9092                            # Flower server port
       config_file: "configs/experiment/fl_server.yaml"  # Server config path
@@ -131,8 +131,8 @@ fl:
 
     # Client machines configuration
     clients:
-      - host: "otter77.eps.surrey.ac.uk"    # Client 1 hostname/IP
-        username: "th01167"                 # SSH username
+      - host: "<client1_hostname>"    # Client 1 hostname/IP
+        username: "<your_username>"                 # SSH username
         password: null                      # Use FL_PASSWORD env var
         partition_id: 0                     # Unique client ID
         project_dir: null                   # Use global project_dir
@@ -147,8 +147,8 @@ fl:
           - "data/ADNI/LABELS/seed10/client_1_val.csv"
           - "data/ADNI/LABELS/seed42/client_1_val.csv"
 
-      - host: "otter78.eps.surrey.ac.uk"    # Client 2 configuration
-        username: "th01167"
+      - host: "<client2_hostname>"    # Client 2 configuration
+        username: "<your_username>"
         password: null
         partition_id: 1
         project_dir: null
@@ -164,9 +164,9 @@ fl:
           - "data/ADNI/LABELS/seed42/client_2_val.csv"
 
     # Project configuration (shared across all machines)
-    project_dir: "/user/HS402/th01167/Surrey/fl-adni-classification"
-    venv_path: "/user/HS402/th01167/.venv/master/bin/python"
-    venv_activate: "/user/HS402/th01167/.venv/master/bin/activate"
+    project_dir: "<your_project_dir>/fl-adni-classification"
+    venv_path: "<your_venv_path>/bin/python"
+    venv_activate: "<your_venv_path>/bin/activate"
 
     # SSH configuration
     ssh:
@@ -250,8 +250,12 @@ The configuration system is organized into five main sections:
 #### 1. Data Configuration (`data:`)
 - **Dataset paths**: `train_csv_path`, `val_csv_path`, `img_dir`
 - **Dataset types**: `normal`, `cache`, `smartcache`, `persistent`
+  - `normal`: Normal dataset (default)
+  - `cache`: Cache dataset reference: https://docs.monai.io/en/stable/data.html#monai.data.CacheDataset
+  - `smartcache`: Smart cache dataset reference: https://docs.monai.io/en/stable/data.html#monai.data.SmartCacheDataset
+  - `persistent`: Persistent dataset reference: https://docs.monai.io/en/stable/data.html#monai.data.PersistentDataset
 - **Image preprocessing**: `resize_size`, `resize_mode`, `spacing_size`
-- **Classification modes**: `CN_MCI_AD` (3-class) or `CN_AD` (2-class)
+- **Classification modes**: `CN_MCI_AD` (3-class) or `CN_AD` (2-class). For `CN_AD` mode, users can optionally convert MCI samples to AD samples by DX_bl column to include only specific MCI subtypes: SMC (Significant Memory Concern), EMCI (Early MCI), or LMCI (Late MCI) with `mci_subtype_filter` parameter.
 - **Caching options**: `cache_rate`, `cache_num_workers`, `cache_dir`
 
 #### 2. Model Configuration (`model:`)
@@ -267,10 +271,10 @@ The configuration system is organized into five main sections:
 - **Checkpointing**: `save_best`, `save_latest`, `save_regular`, `save_frequency`
 
 #### 4. Federated Learning Configuration (`fl:`)
-- **FL strategies**: `fedavg`, `fedprox`, `secagg`
+- **FL strategies**: `fedavg`, `fedprox`, `secagg`, `secaggplus`
 - **Round configuration**: `num_rounds`, `local_epochs`, `evaluate_frequency`
 - **Client selection**: `fraction_fit`, `min_fit_clients`, `min_available_clients`
-- **Strategy-specific**: `fedprox_mu`, `secagg_noise_multiplier`
+- **Strategy-specific**: `fedprox_mu`, `secagg_num_shares`, `secagg_reconstruction_threshold`, `secagg_max_weight`, `secagg_timeout`, `secagg_clipping_range`, `secagg_quantization_range`
 
 #### 5. Weights & Biases Configuration (`wandb:`)
 - **Experiment tracking**: `use_wandb`, `project`, `entity`
@@ -282,10 +286,10 @@ The configuration system is organized into five main sections:
 #### Dataset Caching
 ```yaml
 data:
-  dataset_type: "smartcache"  # Intelligent caching
-  cache_rate: 0.5  # Cache 50% of data
+  dataset_type: "smartcache"
+  cache_rate: 0.5
   cache_num_workers: 8
-  transform_device: "cuda"  # GPU transforms
+  transform_device: "cuda"
 ```
 
 #### Focal Loss and Class Weighting for Class Imbalance
@@ -305,17 +309,24 @@ training:
   gradient_accumulation_steps: 2
 ```
 
-
 ## Data Format
 
 The input data should be:
 - 3D MRI images in .nii or .nii.gz format
 - A CSV label file containing metadata with the following columns:
-  - image_id
-  - subject_id
-  - DX (AD, MCI, CN)
-  - sex
-  - age
+  - `image_id`: The ID of the image in the ADNI database (without 'I' prefix)
+  - `subject_id`: The ID of the subject in the ADNI database
+  - `DX`: Diagnosis group (AD, MCI, CN)
+  - `DX_bl`: (optional) for filtering MCI samples to only include specific MCI subtypes: SMC (Significant Memory Concern), EMCI (Early MCI), or LMCI (Late MCI)
+
+Images should be organized in the following structure
+(ADNI downloaded data normally should follow this structure already):
+```
+<root_img_dir>/
+└── <subject_id>/
+    └── <intermediate_metadata_info (may more than one sublevel)>/
+        └── ADNI_<subject_id>_<metadata_info>_I<image_id>.nii.gz
+```
 
 ## ADNI MRI Preprocessing
 
