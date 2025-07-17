@@ -1,11 +1,10 @@
 [build-system]
-requires = ["hatchling", "versioningit"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "adni_classification"
-dynamic = ["version"]
-description = "ADNI MRI Classification using MONAI and PyTorch"
+name = "fl-adni-classification"
+description = "Federated Learning for ADNI MRI Classification using Flower and MONAI"
 readme = "README.md"
 version = "0.4.0"
 requires-python = ">=3.10"
@@ -48,27 +47,8 @@ dev = [
     "pytest-cov>=3.0.0",
     "mypy>=1.15.0",
     "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
 ]
-
-[tool.versioningit]
-method = "pep440"
-default-version = "0.1.0"
-
-[tool.versioningit.format]
-distance = "{base_version}.post{distance}+{vcs}{rev}"
-dirty = "{base_version}+d{build_date:%Y%m%d}"
-distance-dirty = "{base_version}.post{distance}+{vcs}{rev}.d{build_date:%Y%m%d}"
-
-[tool.versioningit.vcs]
-method = "git"
-default-tag = "0.1.0"
-
-[tool.versioningit.tag2version]
-rmprefix = "v"
-
-[tool.hatch.version]
-source = "versioningit"
-default-version = "0.1.0+unknown"
 
 # Tools settings: pre-commit ----------------------------------------------------------------------
 [tool.ruff]
@@ -157,6 +137,25 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "--cov=adni_classification --cov-report=term-missing"
 
+[tool.bandit]
+exclude_dirs = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "docs",
+    "configs",
+    "data",
+    "scripts",
+    "models",
+    "notebooks",
+    "tests",
+    "outputs",
+    "wandb"
+]
+skips = ["B101", "B601"]  # Skip assert_used and shell_injection_process_args
+
 [tool.hatch.build.targets.wheel]
 packages = ["adni_classification", "adni_flwr"]
 
@@ -168,12 +167,12 @@ packages = ["adni_classification", "adni_flwr"]
 publisher = "tin-hoang"
 
 [tool.flwr.app.components]
-serverapp = "adni_flwr.server_app:app"
-clientapp = "adni_flwr.client_app:app"
+serverapp = "adni_flwr.server_app:secagg_plus_app"
+clientapp = "adni_flwr.client_app:secagg_plus_app"
 
 [tool.flwr.app.config]
-client-config-files = "configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-fedprox/client1.yaml,configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-fedprox/client2.yaml,configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-fedprox/client3.yaml"
-server-config-file = "configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-fedprox/fl_server.yaml"
+client-config-files = "configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus/client1.yaml,configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus/client2.yaml,configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus/client3.yaml"
+server-config-file = "configs/fl-rosanna-3T_P1-trainval_1035images-2classes-3clients-secaggplus/fl_server.yaml"
 
 [tool.flwr.federations]
 default = "local-simulation-gpu"
