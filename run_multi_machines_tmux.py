@@ -155,9 +155,9 @@ class FlowerMultiMachineTmuxRunner:
                 # Update wandb run_name: properly remove existing seed suffix and add new one
                 # Use a more precise regex that captures everything before the -seed pattern
                 run_name_update_command = (
-                    f'cd {self.project_dir} && sed -i '
+                    f"cd {self.project_dir} && sed -i "
                     f'\'s|^\\s*run_name:\\s*"\\(.*\\)-seed[0-9]\\+".*|  run_name: "\\1-{seed_id}"|\' '
-                    f'{config_file_path}'
+                    f"{config_file_path}"
                 )
                 stdin, stdout, stderr = ssh_client.exec_command(run_name_update_command)
                 run_name_error = stderr.read().decode()
@@ -167,9 +167,9 @@ class FlowerMultiMachineTmuxRunner:
 
                 # Update wandb notes: properly remove existing seed suffix and add new one
                 notes_update_command = (
-                    f'cd {self.project_dir} && sed -i '
+                    f"cd {self.project_dir} && sed -i "
                     f'\'s|^\\s*notes:\\s*"\\(.*\\)-seed[0-9]\\+".*|  notes: "\\1-{seed_id}"|\' '
-                    f'{config_file_path}'
+                    f"{config_file_path}"
                 )
                 stdin, stdout, stderr = ssh_client.exec_command(notes_update_command)
                 notes_error = stderr.read().decode()

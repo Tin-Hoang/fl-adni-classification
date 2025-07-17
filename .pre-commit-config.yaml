@@ -1,0 +1,135 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-docstring-first
+      - id: requirements-txt-fixer
+
+  # Ruff for linting and formatting (replaces black, isort, flake8, etc.)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      # Linter
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        exclude: |
+          (?x)^(
+              \.git/.*|
+              \.venv/.*|
+              __pycache__/.*|
+              .*\.egg-info/.*|
+              build/.*|
+              dist/.*|
+              docs/.*|
+              configs/.*|
+              data/.*|
+              scripts/.*|
+              models/.*|
+              notebooks/.*|
+              outputs/.*|
+              wandb/.*
+          )$
+      # Formatter
+      - id: ruff-format
+        exclude: |
+          (?x)^(
+              \.git/.*|
+              \.venv/.*|
+              __pycache__/.*|
+              .*\.egg-info/.*|
+              build/.*|
+              dist/.*|
+              docs/.*|
+              configs/.*|
+              data/.*|
+              scripts/.*|
+              models/.*|
+              notebooks/.*|
+              outputs/.*|
+              wandb/.*
+          )$
+
+  # MyPy for type checking
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies: [types-PyYAML, types-requests]
+  #       exclude: |
+  #         (?x)^(
+  #             \.git/.*|
+  #             \.venv/.*|
+  #             __pycache__/.*|
+  #             .*\.egg-info/.*|
+  #             build/.*|
+  #             dist/.*|
+  #             docs/.*|
+  #             configs/.*|
+  #             data/.*|
+  #             scripts/.*|
+  #             models/.*|
+  #             notebooks/.*|
+  #             tests/.*|
+  #             outputs/.*|
+  #             wandb/.*
+  #         )$
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
+        exclude: |
+          (?x)^(
+              \.git/.*|
+              \.venv/.*|
+              __pycache__/.*|
+              .*\.egg-info/.*|
+              build/.*|
+              dist/.*|
+              docs/.*|
+              configs/.*|
+              data/.*|
+              scripts/.*|
+              models/.*|
+              notebooks/.*|
+              tests/.*|
+              outputs/.*|
+              wandb/.*
+          )$
+
+# Global settings
+default_language_version:
+  python: python3.10
+
+# Files to exclude globally
+exclude: |
+  (?x)^(
+      \.git/.*|
+      \.venv/.*|
+      __pycache__/.*|
+      .*\.egg-info/.*|
+      build/.*|
+      dist/.*|
+      docs/.*|
+      configs/.*|
+      data/.*|
+      scripts/.*|
+      models/.*|
+      notebooks/.*|
+      outputs/.*|
+      wandb/.*
+  )$

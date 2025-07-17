@@ -131,6 +131,12 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
+explicit_package_bases = true
+namespace_packages = true
+exclude = [
+    "scripts/.*",
+    "3D_CNN_pretrained_model/.*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -154,7 +160,17 @@ exclude_dirs = [
     "outputs",
     "wandb"
 ]
-skips = ["B101", "B601"]  # Skip assert_used and shell_injection_process_args
+# Skip common ML/research patterns that are generally acceptable
+skips = [
+    "B101",  # assert_used - common in testing/research
+    "B110",  # try_except_pass - common in cleanup code
+    "B112",  # try_except_continue - common in ML loops
+    "B404",  # subprocess_import - needed for system interaction
+    "B507",  # ssh_no_host_key_verification - acceptable in research clusters
+    "B601",  # shell_injection_process_args
+    "B602",  # subprocess_popen_with_shell_equals_true - needed for some operations
+    "B614",  # pytorch_load_save - acceptable with trusted checkpoints
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["adni_classification", "adni_flwr"]

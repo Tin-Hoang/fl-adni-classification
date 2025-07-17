@@ -825,8 +825,7 @@ class StrategyAwareClient(NumPyClient):
 
         print(
             f"Initialized {self.client_strategy.get_strategy_name()} client with config: "
-            f"{self.config.wandb.run_name
-               if hasattr(self.config, 'wandb') and hasattr(self.config.wandb, 'run_name') else 'unknown'}"
+            f"{self.config.wandb.run_name if hasattr(self.config, 'wandb') else 'unknown'}"
         )
         print(f"Train dataset size: {len(self.train_loader.dataset)}")
         print(f"Validation dataset size: {len(self.val_loader.dataset)}")

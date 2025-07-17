@@ -109,7 +109,7 @@ class SecAggStrategy(FLStrategyBase):
         """
         # Create deterministic seed from client_id and round
         seed_str = f"{client_id}_{round_num}_{self.noise_multiplier}"
-        seed = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2**32)
+        seed = int(hashlib.md5(seed_str.encode(), usedforsecurity=False).hexdigest(), 16) % (2**32)
 
         # Set numpy random seed for reproducibility
         np.random.seed(seed)
@@ -377,7 +377,7 @@ class SecAggClient(ClientStrategyBase):
         """
         # Create deterministic seed from client_id and round
         seed_str = f"{self.client_id}_{round_num}_{self.noise_multiplier}"
-        seed = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2**32)
+        seed = int(hashlib.md5(seed_str.encode(), usedforsecurity=False).hexdigest(), 16) % (2**32)
 
         # Set numpy random seed for reproducibility
         np.random.seed(seed)
