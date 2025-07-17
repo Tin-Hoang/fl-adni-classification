@@ -17,15 +17,13 @@ Usage:
 - Script handles config updates automatically for sequential experiments
 """
 
-import time
-import signal
-import sys
-import subprocess
 import os
-import threading
-import codecs
-from typing import List, Dict, Optional
+import signal
+import subprocess
+import sys
+import time
 from datetime import datetime
+from typing import Dict, List, Optional
 
 
 class FlowerLocalSimulationRunner:
@@ -41,7 +39,9 @@ class FlowerLocalSimulationRunner:
         """Generate timestamp string for log files"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def update_config_file(self, config_file_path: str, train_csv_path: str, val_csv_path: str, experiment_idx: int) -> bool:
+    def update_config_file(
+        self, config_file_path: str, train_csv_path: str, val_csv_path: str, experiment_idx: int
+    ) -> bool:
         """Update a config file with new data paths for sequential experiments"""
         try:
             print(f"📝 Updating config file: {config_file_path}")
@@ -55,14 +55,14 @@ class FlowerLocalSimulationRunner:
                 # Try to find similar files for debugging
                 config_dir = os.path.dirname(full_path)
                 if os.path.exists(config_dir):
-                    yaml_files = [f for f in os.listdir(config_dir) if f.endswith('.yaml')]
+                    yaml_files = [f for f in os.listdir(config_dir) if f.endswith(".yaml")]
                     print(f"🔍 Available config files in {config_dir}: {yaml_files}")
                 return False
 
             print(f"✅ Config file found: {full_path}")
 
             # Read current config file
-            with open(full_path, 'r') as f:
+            with open(full_path, "r") as f:
                 config_content = f.read()
 
             # Extract seed ID from the train_csv_path for wandb naming
@@ -70,7 +70,8 @@ class FlowerLocalSimulationRunner:
             try:
                 # Look for pattern like "seed01", "seed10", "seed42", etc.
                 import re
-                seed_match = re.search(r'seed(\d+)', train_csv_path)
+
+                seed_match = re.search(r"seed(\d+)", train_csv_path)
                 if seed_match:
                     seed_id = f"seed{seed_match.group(1)}"
                     print(f"🔍 Extracted seed ID: {seed_id}")
@@ -84,18 +85,12 @@ class FlowerLocalSimulationRunner:
 
             # Update train_csv_path line
             config_content = re.sub(
-                r'^(\s*train_csv_path:\s*).*$',
-                f'\\1"{train_csv_path}"',
-                config_content,
-                flags=re.MULTILINE
+                r"^(\s*train_csv_path:\s*).*$", f'\\1"{train_csv_path}"', config_content, flags=re.MULTILINE
             )
 
             # Update val_csv_path line
             config_content = re.sub(
-                r'^(\s*val_csv_path:\s*).*$',
-                f'\\1"{val_csv_path}"',
-                config_content,
-                flags=re.MULTILINE
+                r"^(\s*val_csv_path:\s*).*$", f'\\1"{val_csv_path}"', config_content, flags=re.MULTILINE
             )
 
             # Update wandb run_name and notes with seed ID
@@ -104,24 +99,18 @@ class FlowerLocalSimulationRunner:
 
                 # Update wandb run_name: properly remove existing seed suffix and add new one
                 def replace_run_name(match):
-                    return f'{match.group(1)}{match.group(2)}-{seed_id}{match.group(3)}'
+                    return f"{match.group(1)}{match.group(2)}-{seed_id}{match.group(3)}"
 
                 config_content = re.sub(
-                    r'^(\s*run_name:\s*")(.*)-seed\d+(".*?)$',
-                    replace_run_name,
-                    config_content,
-                    flags=re.MULTILINE
+                    r'^(\s*run_name:\s*")(.*)-seed\d+(".*?)$', replace_run_name, config_content, flags=re.MULTILINE
                 )
 
                 # Update wandb notes: properly remove existing seed suffix and add new one
                 def replace_notes(match):
-                    return f'{match.group(1)}{match.group(2)}-{seed_id}{match.group(3)}'
+                    return f"{match.group(1)}{match.group(2)}-{seed_id}{match.group(3)}"
 
                 config_content = re.sub(
-                    r'^(\s*notes:\s*")(.*)-seed\d+(".*?)$',
-                    replace_notes,
-                    config_content,
-                    flags=re.MULTILINE
+                    r'^(\s*notes:\s*")(.*)-seed\d+(".*?)$', replace_notes, config_content, flags=re.MULTILINE
                 )
 
                 # Extract numeric seed value from seed_id (e.g., "seed01" -> "1", "seed42" -> "42")
@@ -131,14 +120,9 @@ class FlowerLocalSimulationRunner:
 
                     # Update training.seed field
                     def replace_seed(match):
-                        return f'{match.group(1)}{numeric_seed}'
+                        return f"{match.group(1)}{numeric_seed}"
 
-                    config_content = re.sub(
-                        r'^(\s*seed:\s*)\d+.*$',
-                        replace_seed,
-                        config_content,
-                        flags=re.MULTILINE
-                    )
+                    config_content = re.sub(r"^(\s*seed:\s*)\d+.*$", replace_seed, config_content, flags=re.MULTILINE)
                     print(f"✅ Updated training.seed to: {numeric_seed}")
 
                 except ValueError as e:
@@ -149,13 +133,13 @@ class FlowerLocalSimulationRunner:
                 print("⚠️ Skipping wandb update due to unknown seed ID")
 
             # Write updated content back
-            with open(full_path, 'w') as f:
+            with open(full_path, "w") as f:
                 f.write(config_content)
 
             # Verify the changes were made
-            verification_patterns = ['train_csv_path', 'val_csv_path', 'run_name', 'notes']
+            verification_patterns = ["train_csv_path", "val_csv_path", "run_name", "notes"]
             for pattern in verification_patterns:
-                matches = re.findall(f'^.*{pattern}:.*$', config_content, flags=re.MULTILINE)
+                matches = re.findall(f"^.*{pattern}:.*$", config_content, flags=re.MULTILINE)
                 if matches:
                     print(f"   {matches[0].strip()}")
 
@@ -165,6 +149,7 @@ class FlowerLocalSimulationRunner:
         except Exception as e:
             print(f"❌ Error updating config file {config_file_path}: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -185,12 +170,7 @@ class FlowerLocalSimulationRunner:
             train_csv_path = train_labels[experiment_idx]
             val_csv_path = val_labels[experiment_idx]
 
-            return self.update_config_file(
-                config_file,
-                train_csv_path,
-                val_csv_path,
-                experiment_idx
-            )
+            return self.update_config_file(config_file, train_csv_path, val_csv_path, experiment_idx)
 
         except Exception as e:
             print(f"❌ Error updating server config for experiment {experiment_idx}: {e}")
@@ -217,12 +197,7 @@ class FlowerLocalSimulationRunner:
                 train_csv_path = train_labels[experiment_idx]
                 val_csv_path = val_labels[experiment_idx]
 
-                if self.update_config_file(
-                    config_file,
-                    train_csv_path,
-                    val_csv_path,
-                    experiment_idx
-                ):
+                if self.update_config_file(config_file, train_csv_path, val_csv_path, experiment_idx):
                     success_count += 1
 
             except Exception as e:
@@ -248,11 +223,12 @@ class FlowerLocalSimulationRunner:
                 try:
                     server_config_path = os.path.join(self.project_dir, server_config["config_file"])
                     if os.path.exists(server_config_path):
-                        with open(server_config_path, 'r') as f:
+                        with open(server_config_path, "r") as f:
                             server_config_content = f.read()
 
                         # Extract strategy value from YAML line like "strategy: fedavg" or "strategy: \"secagg+\""
                         import re
+
                         strategy_match = re.search(r'strategy:\s*["\']?([^"\']+)["\']?', server_config_content)
                         if strategy_match:
                             strategy = strategy_match.group(1).strip().lower()
@@ -271,14 +247,14 @@ class FlowerLocalSimulationRunner:
                 print(f"📊 Using standard components for strategy: {strategy}")
 
             # Read current pyproject.toml
-            with open(pyproject_path, 'r') as f:
+            with open(pyproject_path, "r") as f:
                 content = f.read()
 
             if not content.strip():
                 print("❌ pyproject.toml is empty")
                 return False
 
-            lines = content.split('\n')
+            lines = content.split("\n")
             updated_lines = []
             in_app_components = False
             in_app_config = False
@@ -338,15 +314,15 @@ class FlowerLocalSimulationRunner:
                 # Update options.num-supernodes for local simulation
                 elif in_federation_config and line.strip().startswith("options.num-supernodes"):
                     num_clients = len(clients_config)
-                    updated_lines.append(f'options.num-supernodes = {num_clients}')
+                    updated_lines.append(f"options.num-supernodes = {num_clients}")
                     print(f"📝 Updated options.num-supernodes: {num_clients}")
 
                 else:
                     updated_lines.append(line)
 
             # Write updated content back
-            updated_content = '\n'.join(updated_lines)
-            with open(pyproject_path, 'w') as f:
+            updated_content = "\n".join(updated_lines)
+            with open(pyproject_path, "w") as f:
                 f.write(updated_content)
 
             print("✅ Successfully updated pyproject.toml")
@@ -355,6 +331,7 @@ class FlowerLocalSimulationRunner:
         except Exception as e:
             print(f"❌ Error updating pyproject.toml: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -411,7 +388,7 @@ class FlowerLocalSimulationRunner:
                 return False
 
             # Read current content
-            with open(pyproject_path, 'r') as f:
+            with open(pyproject_path, "r") as f:
                 content = f.read()
 
             if not content.strip():
@@ -429,7 +406,7 @@ class FlowerLocalSimulationRunner:
             # Check if federation configuration exists
             federation_section = f"[tool.flwr.federations.{federation_name}]"
             if federation_section not in content:
-                print(f"📝 Adding federation configuration for local GPU simulation...")
+                print("📝 Adding federation configuration for local GPU simulation...")
 
                 # Add federation configuration for local simulation with GPU resources
                 federation_config = f"""
@@ -442,7 +419,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
 """
 
                 # Append to the file
-                with open(pyproject_path, 'a') as f:
+                with open(pyproject_path, "a") as f:
                     f.write(federation_config)
 
                 print(f"✅ Added federation '{federation_name}' configuration to pyproject.toml")
@@ -451,7 +428,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                 print(f"✅ Federation '{federation_name}' configuration already exists")
 
                 # Update existing configuration with correct GPU allocation
-                lines = content.split('\n')
+                lines = content.split("\n")
                 updated_lines = []
                 in_federation_section = False
 
@@ -472,8 +449,8 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                         updated_lines.append(line)
 
                 # Write updated content back
-                updated_content = '\n'.join(updated_lines)
-                with open(pyproject_path, 'w') as f:
+                updated_content = "\n".join(updated_lines)
+                with open(pyproject_path, "w") as f:
                     f.write(updated_content)
 
             return True
@@ -481,15 +458,21 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
         except Exception as e:
             print(f"⚠️ Error checking federation configuration: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
-            print(f"📋 Please manually add this to your pyproject.toml:")
+            print("📋 Please manually add this to your pyproject.toml:")
             print(f"    [tool.flwr.federations.{federation_name}]")
             print(f"    options.num-supernodes = {len(self.clients_config)}")
-            print(f"    options.backend.client-resources.num-cpus = 8")
-            print(f"    options.backend.client-resources.num-gpus = {round(1.0 / len(self.clients_config), 2) if len(self.clients_config) > 0 else 0.5}")
+            print("    options.backend.client-resources.num-cpus = 8")
+            print(
+                f"    options.backend.client-resources.num-gpus = "
+                f"{round(1.0 / len(self.clients_config), 2) if len(self.clients_config) > 0 else 0.5}"
+            )
             return False
 
-    def run_flower_app(self, venv_activate: Optional[str] = None, federation_name: str = "local-simulation-gpu") -> bool:
+    def run_flower_app(
+        self, venv_activate: Optional[str] = None, federation_name: str = "local-simulation-gpu"
+    ) -> bool:
         """Run the Flower App locally with intelligent monitoring"""
         try:
             print(f"🚀 Running Flower App locally on federation '{federation_name}'...")
@@ -505,7 +488,10 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
 
             # Prepare command
             if venv_activate:
-                run_command = f"bash -c 'source {venv_activate} && cd {self.project_dir} && flwr run . {federation_name} --stream'"
+                run_command = (
+                    f"bash -c 'source {venv_activate} && cd {self.project_dir} && "
+                    f"flwr run . {federation_name} --stream'"
+                )
             else:
                 run_command = f"cd {self.project_dir} && flwr run . {federation_name} --stream"
 
@@ -526,14 +512,14 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1,
-                cwd=self.project_dir
+                cwd=self.project_dir,
             )
 
             self.current_process = process
 
             # Stream output in real-time and save to log
             output_buffer = ""
-            with open(log_file, 'w') as log_f:
+            with open(log_file, "w") as log_f:
                 try:
                     completion_detected = False
                     for line in process.stdout:
@@ -543,11 +529,20 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                         log_f.flush()
 
                         # Check for completion indicators
-                        if any(phrase in line.lower() for phrase in [
-                            "run finished", "completed successfully", "experiment completed",
-                            "training finished", "federation completed", "fl training completed",
-                            "losses_distributed", "metrics_distributed", "secagg+ workflow completed successfully"
-                        ]):
+                        if any(
+                            phrase in line.lower()
+                            for phrase in [
+                                "run finished",
+                                "completed successfully",
+                                "experiment completed",
+                                "training finished",
+                                "federation completed",
+                                "fl training completed",
+                                "losses_distributed",
+                                "metrics_distributed",
+                                "secagg+ workflow completed successfully",
+                            ]
+                        ):
                             print("\n🎉 Detected completion signal!")
                             completion_detected = True
                             break
@@ -595,6 +590,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
         except Exception as e:
             print(f"❌ Error running Flower App: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
         finally:
@@ -609,11 +605,11 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                 self.current_process.terminate()
                 self.current_process.wait(timeout=5)
                 print("✓ Current process terminated")
-            except:
+            except Exception:
                 try:
                     self.current_process.kill()
                     print("✓ Current process killed")
-                except:
+                except Exception:
                     pass
 
         print("✅ Cleanup completed")
@@ -629,7 +625,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
         print("🔍 Debug: Configuration file paths:")
         print(f"   Server config file: {self.server_config.get('config_file', 'NOT SET')}")
         for i, client_config in enumerate(self.clients_config):
-            print(f"   Client {i+1} config file: {client_config.get('config_file', 'NOT SET')}")
+            print(f"   Client {i + 1} config file: {client_config.get('config_file', 'NOT SET')}")
         print("=" * 70)
 
         # Determine number of experiments
@@ -647,7 +643,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
         # Run experiments sequentially
         successful_experiments = 0
         for experiment_idx in range(num_experiments):
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"🧪 Starting Experiment {experiment_idx + 1}/{num_experiments}")
 
             if is_sequential:
@@ -661,7 +657,7 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
                         if "seed" in label_path:
                             seed_part = label_path.split("seed")[1].split("/")[0][:2]
                             experiment_info = f"Seed {seed_part}"
-                except:
+                except Exception:
                     pass
 
                 print(f"📊 Cross-validation fold: {experiment_info}")
@@ -709,11 +705,11 @@ options.backend.client-resources.num-gpus = {gpu_per_client}
 
             # Add delay between experiments to allow cleanup
             if is_sequential and experiment_idx < num_experiments - 1:
-                print(f"⏳ Waiting 5 seconds before next experiment...")
+                print("⏳ Waiting 5 seconds before next experiment...")
                 time.sleep(5)
 
-        print(f"\n{'='*70}")
-        print(f"🎯 Sequential Experiment Summary:")
+        print(f"\n{'=' * 70}")
+        print("🎯 Sequential Experiment Summary:")
         print(f"   Total experiments: {num_experiments}")
         print(f"   Successful: {successful_experiments}")
         print(f"   Failed: {num_experiments - successful_experiments}")
@@ -744,28 +740,23 @@ Examples:
   python run_local_simulation.py config.yaml --venv-activate /path/to/venv/bin/activate
 
 Note: Run this script in your own tmux session if you want session persistence.
-        """
+        """,
     )
-    parser.add_argument(
-        "config_file",
-        help="Path to YAML configuration file (e.g., fl_server.yaml)"
-    )
-    parser.add_argument(
-        "--venv-activate",
-        help="Path to virtual environment activation script (optional)"
-    )
+    parser.add_argument("config_file", help="Path to YAML configuration file (e.g., fl_server.yaml)")
+    parser.add_argument("--venv-activate", help="Path to virtual environment activation script (optional)")
 
     args = parser.parse_args()
 
     # Load configuration
     try:
         print(f"📄 Loading configuration from {args.config_file}...")
-        from multi_config import load_config_from_yaml, get_server_config_dict, get_clients_config_dict
+        from multi_config import get_clients_config_dict, get_server_config_dict, load_config_from_yaml
+
         config = load_config_from_yaml(args.config_file)
 
         # For local simulation, we can work with minimal configuration
-        project_dir = getattr(config.fl, 'project_dir', os.getcwd())
-        if hasattr(config.fl, 'multi_machine') and config.fl.multi_machine:
+        project_dir = getattr(config.fl, "project_dir", os.getcwd())
+        if hasattr(config.fl, "multi_machine") and config.fl.multi_machine:
             project_dir = config.fl.multi_machine.project_dir
 
     except FileNotFoundError as e:
@@ -776,6 +767,7 @@ Note: Run this script in your own tmux session if you want session persistence.
     except Exception as e:
         print(f"❌ Error loading configuration: {e}")
         import traceback
+
         print(f"🔍 Traceback: {traceback.format_exc()}")
         return
 
@@ -832,6 +824,7 @@ Note: Run this script in your own tmux session if you want session persistence.
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         print(f"🔍 Traceback: {traceback.format_exc()}")
     finally:
         runner.cleanup_processes()

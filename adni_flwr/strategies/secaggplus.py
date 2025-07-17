@@ -1,30 +1,22 @@
 """Real Secure Aggregation (SecAgg+) strategy implementation using Flower's built-in SecAgg."""
 
-import os
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, Any, List, Tuple, Optional, Union
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from flwr.common import Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, ndarrays_to_parameters, FitIns, EvaluateIns, Context
-from flwr.server.strategy import FedAvg
+from flwr.client import NumPyClient
+from flwr.common import Context, EvaluateIns, FitIns, FitRes, Parameters, ndarrays_to_parameters
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
+from flwr.server.strategy import FedAvg
 from flwr.server.workflow import SecAggPlusWorkflow
-from flwr.client import NumPyClient
-from flwr.client.mod import secaggplus_mod
+from torch.utils.data import DataLoader
 
-from .base import FLStrategyBase, ClientStrategyBase
 from adni_classification.config.config import Config
-from adni_flwr.task import set_params, get_params, safe_parameters_to_ndarrays, load_data, test_with_predictions, create_criterion
-from adni_classification.utils.visualization import plot_confusion_matrix
+from adni_flwr.task import get_params, load_data, safe_parameters_to_ndarrays, set_params, test_with_predictions
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+from .base import ClientStrategyBase, FLStrategyBase
 
 
 class SecAggPlusStrategy(FLStrategyBase):
@@ -41,7 +33,7 @@ class SecAggPlusStrategy(FLStrategyBase):
         timeout: Optional[float] = None,
         clipping_range: float = 1.0,
         quantization_range: int = 2**20,
-        **kwargs
+        **kwargs,
     ):
         """Initialize SecAgg+ strategy.
 
@@ -69,25 +61,27 @@ class SecAggPlusStrategy(FLStrategyBase):
 
         # Validate SecAgg parameters
         if self.num_shares < self.reconstruction_threshold:
-            raise ValueError(f"num_shares ({num_shares}) must be >= reconstruction_threshold ({reconstruction_threshold})")
+            raise ValueError(
+                f"num_shares ({num_shares}) must be >= reconstruction_threshold ({reconstruction_threshold})"
+            )
 
         if self.reconstruction_threshold < 1:
             raise ValueError(f"reconstruction_threshold ({reconstruction_threshold}) must be >= 1")
 
         # Extract specific parameters for FedAvg
         fedavg_params = {
-            'fraction_fit': getattr(config.fl, 'fraction_fit', 1.0),
-            'fraction_evaluate': getattr(config.fl, 'fraction_evaluate', 1.0),
-            'min_fit_clients': getattr(config.fl, 'min_fit_clients', 2),
-            'min_evaluate_clients': getattr(config.fl, 'min_evaluate_clients', 2),
-            'min_available_clients': getattr(config.fl, 'min_available_clients', 2),
+            "fraction_fit": getattr(config.fl, "fraction_fit", 1.0),
+            "fraction_evaluate": getattr(config.fl, "fraction_evaluate", 1.0),
+            "min_fit_clients": getattr(config.fl, "min_fit_clients", 2),
+            "min_evaluate_clients": getattr(config.fl, "min_evaluate_clients", 2),
+            "min_available_clients": getattr(config.fl, "min_available_clients", 2),
         }
 
         # Add aggregation functions if provided
-        if 'evaluate_metrics_aggregation_fn' in kwargs:
-            fedavg_params['evaluate_metrics_aggregation_fn'] = kwargs['evaluate_metrics_aggregation_fn']
-        if 'fit_metrics_aggregation_fn' in kwargs:
-            fedavg_params['fit_metrics_aggregation_fn'] = kwargs['fit_metrics_aggregation_fn']
+        if "evaluate_metrics_aggregation_fn" in kwargs:
+            fedavg_params["evaluate_metrics_aggregation_fn"] = kwargs["evaluate_metrics_aggregation_fn"]
+        if "fit_metrics_aggregation_fn" in kwargs:
+            fedavg_params["fit_metrics_aggregation_fn"] = kwargs["fit_metrics_aggregation_fn"]
 
         # Initialize standard FedAvg strategy for basic aggregation
         self.fedavg_strategy = FedAvg(**fedavg_params)
@@ -108,7 +102,7 @@ class SecAggPlusStrategy(FLStrategyBase):
             quantization_range=self.quantization_range,
         )
 
-        print(f"SecAgg+ initialized with parameters:")
+        print("SecAgg+ initialized with parameters:")
         print(f"  - num_shares: {self.num_shares}")
         print(f"  - reconstruction_threshold: {self.reconstruction_threshold}")
         print(f"  - max_weight: {self.max_weight}")
@@ -161,22 +155,16 @@ class SecAggPlusStrategy(FLStrategyBase):
 
         # Log client training metrics
         if self.wandb_logger:
-            for client_proxy, fit_res in results:
+            for _client_proxy, fit_res in results:
                 client_metrics = fit_res.metrics
                 if client_metrics:
                     client_id = fit_res.metrics.get("client_id", "unknown")
                     metrics_to_log = {k: v for k, v in client_metrics.items() if k != "client_id"}
-                    self.wandb_logger.log_metrics(
-                        metrics_to_log,
-                        prefix=f"client_{client_id}/fit",
-                        step=server_round
-                    )
+                    self.wandb_logger.log_metrics(metrics_to_log, prefix=f"client_{client_id}/fit", step=server_round)
 
         # Use the standard FedAvg aggregation for post-processing
         # (The actual SecAgg+ aggregation is handled by the workflow)
-        aggregated_parameters, metrics = self.fedavg_strategy.aggregate_fit(
-            server_round, results, failures
-        )
+        aggregated_parameters, metrics = self.fedavg_strategy.aggregate_fit(server_round, results, failures)
 
         if aggregated_parameters is None:
             return None, {}
@@ -202,11 +190,7 @@ class SecAggPlusStrategy(FLStrategyBase):
 
         # Log aggregated fit metrics with SecAgg+ specific information
         if self.wandb_logger and secagg_metrics:
-            self.wandb_logger.log_metrics(
-                secagg_metrics,
-                prefix="server",
-                step=server_round
-            )
+            self.wandb_logger.log_metrics(secagg_metrics, prefix="server", step=server_round)
 
         # Print server model's current metrics
         print(f"Server model metrics after round {server_round} (SecAgg+):")
@@ -214,7 +198,10 @@ class SecAggPlusStrategy(FLStrategyBase):
             print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
-        if self.config.training.checkpoint.save_regular and server_round % self.config.training.checkpoint.save_frequency == 0:
+        if (
+            self.config.training.checkpoint.save_regular
+            and server_round % self.config.training.checkpoint.save_frequency == 0
+        ):
             self._save_checkpoint(self.model.state_dict(), server_round)
 
         return aggregated_parameters, secagg_metrics
@@ -228,12 +215,12 @@ class SecAggPlusStrategy(FLStrategyBase):
         print(f"SecAgg+ Strategy: First few parameter shapes: {[arr.shape for arr in ndarrays[:5]]}")
         return ndarrays_to_parameters(ndarrays)
 
-    def configure_fit(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, FitIns]]:
+    def configure_fit(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, FitIns]]:
         """Configure the next round of training."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_fit(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_fit(server_round, parameters, client_manager)
 
         # Add server_round and SecAgg+ parameters to the config for each client
         updated_instructions = []
@@ -246,21 +233,18 @@ class SecAggPlusStrategy(FLStrategyBase):
             config["reconstruction_threshold"] = self.reconstruction_threshold
 
             # Create new FitIns with updated config
-            updated_fit_ins = FitIns(
-                parameters=fit_ins.parameters,
-                config=config
-            )
+            updated_fit_ins = FitIns(parameters=fit_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_fit_ins))
 
         # Add WandB run ID to instructions
         return self.add_wandb_config_to_instructions(updated_instructions)
 
-    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
+    def configure_evaluate(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_evaluate(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_evaluate(server_round, parameters, client_manager)
 
         # Add server_round to the config for each client
         updated_instructions = []
@@ -270,10 +254,7 @@ class SecAggPlusStrategy(FLStrategyBase):
             config["server_round"] = server_round
 
             # Create new EvaluateIns with updated config
-            updated_evaluate_ins = EvaluateIns(
-                parameters=evaluate_ins.parameters,
-                config=config
-            )
+            updated_evaluate_ins = EvaluateIns(parameters=evaluate_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_evaluate_ins))
 
         # Add WandB run ID to instructions
@@ -312,7 +293,7 @@ class SecAggPlusClient(ClientStrategyBase):
         criterion: nn.Module,
         device: torch.device,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-        **kwargs
+        **kwargs,
     ):
         """Initialize SecAgg+ client strategy.
 
@@ -328,7 +309,7 @@ class SecAggPlusClient(ClientStrategyBase):
         super().__init__(config, model, optimizer, criterion, device, scheduler, **kwargs)
 
         # Client ID must be explicitly set - FAIL FAST if not specified
-        if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
+        if not hasattr(config.fl, "client_id") or config.fl.client_id is None:
             raise ValueError(
                 "ERROR: 'client_id' not specified in client config. "
                 "You must explicitly set 'client_id' in the FL config section. "
@@ -379,13 +360,7 @@ class SecAggPlusClient(ClientStrategyBase):
         else:
             print(f"Warning: SecAgg+ not enabled for client {self.client_id}, round {self.current_round}")
 
-    def train_epoch(
-        self,
-        train_loader: DataLoader,
-        epoch: int,
-        total_epochs: int,
-        **kwargs
-    ) -> Tuple[float, float]:
+    def train_epoch(self, train_loader: DataLoader, epoch: int, total_epochs: int, **kwargs) -> Tuple[float, float]:
         """Train the model for one epoch using SecAgg+.
 
         Args:
@@ -440,7 +415,7 @@ class SecAggPlusClient(ClientStrategyBase):
 
         # Step the scheduler only once per FL round (after the last local epoch)
         if self.scheduler is not None and epoch == total_epochs - 1:  # Only on last local epoch
-            current_lr_before = self.optimizer.param_groups[0]['lr']
+            current_lr_before = self.optimizer.param_groups[0]["lr"]
 
             # Handle ReduceLROnPlateau scheduler which requires validation loss
             if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -448,9 +423,12 @@ class SecAggPlusClient(ClientStrategyBase):
             else:
                 self.scheduler.step()
 
-            current_lr_after = self.optimizer.param_groups[0]['lr']
+            current_lr_after = self.optimizer.param_groups[0]["lr"]
             if current_lr_before != current_lr_after:
-                print(f"FL Round {getattr(self, 'current_fl_round', '?')}: LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
+                print(
+                    f"FL Round {getattr(self, 'current_fl_round', '?')}: "
+                    f"LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}"
+                )
 
         return avg_loss, avg_accuracy
 
@@ -510,9 +488,7 @@ class SecAggPlusFlowerClient(NumPyClient):
         total_accuracy = 0.0
 
         for epoch in range(num_epochs):
-            loss, accuracy = self.client_strategy.train_epoch(
-                self.train_loader, epoch, num_epochs
-            )
+            loss, accuracy = self.client_strategy.train_epoch(self.train_loader, epoch, num_epochs)
             total_loss += loss
             total_accuracy += accuracy
 
@@ -524,10 +500,12 @@ class SecAggPlusFlowerClient(NumPyClient):
 
         # Get custom metrics
         custom_metrics = self.client_strategy.get_custom_metrics()
-        custom_metrics.update({
-            "train_loss": avg_loss,
-            "train_accuracy": avg_accuracy,
-        })
+        custom_metrics.update(
+            {
+                "train_loss": avg_loss,
+                "train_accuracy": avg_accuracy,
+            }
+        )
 
         return updated_params, len(self.train_loader.dataset), custom_metrics
 
@@ -544,7 +522,7 @@ class SecAggPlusFlowerClient(NumPyClient):
             test_loader=self.val_loader,
             criterion=self.client_strategy.criterion,
             device=self.client_strategy.device,
-            mixed_precision=self.client_strategy.mixed_precision
+            mixed_precision=self.client_strategy.mixed_precision,
         )
 
         # Prepare metrics
@@ -556,6 +534,7 @@ class SecAggPlusFlowerClient(NumPyClient):
         # Add predictions and labels for confusion matrix if available
         if predictions is not None and labels is not None:
             import json
+
             metrics["predictions_json"] = json.dumps(predictions)
             metrics["labels_json"] = json.dumps(labels)
 
@@ -566,9 +545,14 @@ class SecAggPlusFlowerClient(NumPyClient):
         return self
 
 
-def create_secagg_plus_client_fn(config: Config, model: nn.Module, optimizer: torch.optim.Optimizer,
-                                criterion: nn.Module, device: torch.device,
-                                scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None):
+def create_secagg_plus_client_fn(
+    config: Config,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+):
     """Create a client function for SecAgg+ that can be used with Flower's ClientApp.
 
     Args:
@@ -582,22 +566,15 @@ def create_secagg_plus_client_fn(config: Config, model: nn.Module, optimizer: to
     Returns:
         Client function compatible with Flower's ClientApp
     """
+
     def client_fn(context: Context):
         """Client function that creates a SecAgg+ client."""
         # Load data for this client
-        train_loader, val_loader = load_data(
-            config=config,
-            batch_size=config.training.batch_size
-        )
+        train_loader, val_loader = load_data(config=config, batch_size=config.training.batch_size)
 
         # Create SecAgg+ client strategy
         client_strategy = SecAggPlusClient(
-            config=config,
-            model=model,
-            optimizer=optimizer,
-            criterion=criterion,
-            device=device,
-            scheduler=scheduler
+            config=config, model=model, optimizer=optimizer, criterion=criterion, device=device, scheduler=scheduler
         )
 
         # Create and return Flower client

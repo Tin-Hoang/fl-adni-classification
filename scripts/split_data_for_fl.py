@@ -30,7 +30,8 @@ Command-line Arguments:
                        Choices: DEBUG, INFO, WARNING, ERROR. Defaults to INFO.
 
 Use Cases:
-    1. Two-way split (train, validation): Provide only --train-ratio. The remaining data will be the validation set (ratio 1.0 - train-ratio).
+    1. Two-way split (train, validation): Provide only --train-ratio.
+       The remaining data will be the validation set (ratio 1.0 - train-ratio).
        Example: python script_name.py data.csv --train-ratio 0.8
 
     2. Three-way split (train, validation, test): Provide --train-ratio, --val-ratio, and --test-ratio.
@@ -40,15 +41,15 @@ Use Cases:
 """
 
 import argparse
+import datetime
 import logging
 import os
-import datetime
-from pathlib import Path
-from typing import Dict, List, Set, Tuple
-
-import pandas as pd
-import numpy as np
 from collections import Counter
+from pathlib import Path
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
 
 # Configure basic logging (will be enhanced in main)
 logging.basicConfig(
@@ -215,7 +216,8 @@ class FederatedDataSplitter:
                 all_val_df = pd.concat([all_val_df, val_df])
                 all_test_df = pd.concat([all_test_df, test_df])
 
-                logger.info(f"Client {client_id}: {len(train_df)} train, {len(val_df)} validation, {len(test_df)} test records")
+                logger.info(f"Client {client_id}: {len(train_df)} train, {len(val_df)} validation, "
+                            f"{len(test_df)} test records")
 
                 # Save to CSV with original filename prefix and record count
                 train_path = self.output_dir / f"{self.csv_basename}_client_{client_id}_train_{len(train_df)}images.csv"

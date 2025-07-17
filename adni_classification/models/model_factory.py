@@ -1,14 +1,14 @@
 """Model factory for ADNI classification."""
 
-from typing import Dict, Any, Type
 import os
+from typing import Any, Dict, Type
 
 from adni_classification.models.base_model import BaseModel
-from adni_classification.models.resnet3d import ResNet3D
 from adni_classification.models.densenet3d import DenseNet3D
-from adni_classification.models.simple_cnn import Simple3DCNN
-from adni_classification.models.securefed_cnn import SecureFedCNN
+from adni_classification.models.resnet3d import ResNet3D
 from adni_classification.models.rosanna_cnn import RosannaCNN
+from adni_classification.models.securefed_cnn import SecureFedCNN
+from adni_classification.models.simple_cnn import Simple3DCNN
 
 
 class ModelFactory:

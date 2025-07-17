@@ -1,8 +1,9 @@
 """3D ResNet model for ADNI classification."""
 
-from typing import Optional, Dict, List, Tuple
-import torch
+from typing import Dict, List, Optional
+
 import monai.networks.nets as monai_nets
+import torch
 
 from adni_classification.models.base_model import BaseModel
 

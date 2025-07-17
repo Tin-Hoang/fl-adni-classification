@@ -1,7 +1,8 @@
 # Flower Multi-Machine Configuration Utilities
 # This module provides utilities for working with the unified FL configuration
 
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from adni_classification.config.config import Config
 from adni_classification.config.fl_config import MultiMachineConfig
 

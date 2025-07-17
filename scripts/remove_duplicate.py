@@ -14,13 +14,13 @@ Finally, the script cleans up by removing any directories that become empty afte
 files are deleted.
 """
 
+import logging
 import os
 import re
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Set
-import logging
-from collections import defaultdict
+from typing import Dict, List, Set
 
 # Configure logging
 logging.basicConfig(
@@ -304,7 +304,8 @@ class DuplicateRemover:
             if other_files_exist:
                 for file in files:
                     if file.preprocess_desc in ["Calibration_Scan", "Cal_8HRBRAIN"]:
-                        logger.warning(f"Removing {file.preprocess_desc} file because other subfolders exist: {file.filepath}")
+                        logger.warning(f"Removing {file.preprocess_desc} file because other "
+                                       f"subfolders exist: {file.filepath}")
                         try:
                             os.remove(file.filepath)
                             self.removed_files.add(file.filepath)
@@ -322,7 +323,8 @@ class DuplicateRemover:
             if accelerated_sagittal_mprage_exists:
                 for file in files:
                     if file.preprocess_desc == "Accelerated_Sagittal_MPRAGE_ND":
-                        logger.warning(f"Removing Accelerated_Sagittal_MPRAGE_ND file because Accelerated_Sagittal_MPRAGE exists: {file.filepath}")
+                        logger.warning(f"Removing Accelerated_Sagittal_MPRAGE_ND file because "
+                                       f"Accelerated_Sagittal_MPRAGE exists: {file.filepath}")
                         try:
                             os.remove(file.filepath)
                             self.removed_files.add(file.filepath)
@@ -333,8 +335,10 @@ class DuplicateRemover:
                 files = files_to_keep_after_nd
 
             # Existing logic: Prioritize Accelerated_Sagittal_MPRAGE over REPE/SENS
-            # This logic was already there, but we might need to re-evaluate if accelerated_sagittal_mprage_exists variable name is clear enough now.
-            # Keeping it as is for now, as it checks for the presence of the desired type among the current set of files.
+            # This logic was already there, but we might need to re-evaluate if
+            # accelerated_sagittal_mprage_exists variable name is clear enough now.
+            # Keeping it as is for now, as it checks for the presence of the desired type
+            # among the current set of files.
             accelerated_sagittal_mprage_exists_for_mprage_prioritization = any(
                 file.preprocess_desc == "Accelerated_Sagittal_MPRAGE" for file in files
             )
@@ -343,7 +347,8 @@ class DuplicateRemover:
             if accelerated_sagittal_mprage_exists_for_mprage_prioritization:
                 for file in files:
                     if file.preprocess_desc in ["MPRAGE_REPE", "MPRAGE_SENS"]:
-                        logger.warning(f"Removing {file.preprocess_desc} file due to Accelerated_Sagittal_MPRAGE priority: {file.filepath}")
+                        logger.warning(f"Removing {file.preprocess_desc} file due to "
+                                       f"Accelerated_Sagittal_MPRAGE priority: {file.filepath}")
                         try:
                             os.remove(file.filepath)
                             self.removed_files.add(file.filepath)
@@ -364,7 +369,8 @@ class DuplicateRemover:
                 remaining_parent_dirs = set(file.parent_dir for file in files)
                 if len(remaining_parent_dirs) > 1:
                     logger.warning(
-                        f"Subject {subject_id} still contains {len(remaining_parent_dirs)} subfolders after processing: {list(remaining_parent_dirs)}. "
+                        f"Subject {subject_id} still contains {len(remaining_parent_dirs)} "
+                        f"subfolders after processing: {list(remaining_parent_dirs)}. "
                         "Please verify manually."
                     )
 

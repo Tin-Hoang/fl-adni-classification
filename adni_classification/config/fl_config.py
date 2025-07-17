@@ -1,11 +1,12 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
 import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class SSHConfig:
     """SSH connection configuration for multi-machine FL."""
+
     timeout: int = 30
     banner_timeout: int = 30
     auth_timeout: int = 30
@@ -14,6 +15,7 @@ class SSHConfig:
 @dataclass
 class ClientMachineConfig:
     """Individual client machine configuration."""
+
     host: str
     username: str
     password: Optional[str] = None
@@ -28,6 +30,7 @@ class ClientMachineConfig:
 @dataclass
 class ServerMachineConfig:
     """Server machine configuration."""
+
     host: str
     username: str
     password: Optional[str] = None
@@ -41,6 +44,7 @@ class ServerMachineConfig:
 @dataclass
 class MultiMachineConfig:
     """Multi-machine configuration for distributed FL."""
+
     server: Optional[ServerMachineConfig] = None
     clients: List[ClientMachineConfig] = field(default_factory=list)
     project_dir: Optional[str] = None
@@ -56,7 +60,7 @@ class MultiMachineConfig:
             "host": self.server.host,
             "username": self.server.username,
             "password": self.server.password or os.getenv("FL_PASSWORD"),
-            "port": self.server.port
+            "port": self.server.port,
         }
         if self.server.config_file:
             config_dict["config_file"] = self.server.config_file
@@ -77,7 +81,7 @@ class MultiMachineConfig:
                 "username": client.username,
                 "password": client.password or os.getenv("FL_PASSWORD"),
                 "project_dir": client.project_dir or self.project_dir,
-                "partition_id": client.partition_id
+                "partition_id": client.partition_id,
             }
             if client.config_file:
                 client_dict["config_file"] = client.config_file
@@ -94,6 +98,7 @@ class MultiMachineConfig:
 @dataclass
 class FLConfig:
     """Federated Learning configuration."""
+
     num_rounds: int = 10
     strategy: str = "fedavg"  # fedavg, fedprox, secagg, secagg+, secaggplus
     fraction_fit: float = 1.0
@@ -114,12 +119,12 @@ class FLConfig:
     secagg_dropout_rate: float = 0.0
 
     # SecAgg+ (real secure aggregation) specific parameters
-    secagg_num_shares: int = 3                     # Number of secret shares for each client
-    secagg_reconstruction_threshold: int = 3       # Minimum shares needed for reconstruction
-    secagg_max_weight: int = 16777216             # Maximum weight value (2^24)
-    secagg_timeout: Optional[float] = 30.0         # Timeout for SecAgg operations (seconds)
-    secagg_clipping_range: float = 1.0            # Range for gradient clipping
-    secagg_quantization_range: int = 1048576      # Range for quantization (2^20)
+    secagg_num_shares: int = 3  # Number of secret shares for each client
+    secagg_reconstruction_threshold: int = 3  # Minimum shares needed for reconstruction
+    secagg_max_weight: int = 16777216  # Maximum weight value (2^24)
+    secagg_timeout: Optional[float] = 30.0  # Timeout for SecAgg operations (seconds)
+    secagg_clipping_range: float = 1.0  # Range for gradient clipping
+    secagg_quantization_range: int = 1048576  # Range for quantization (2^20)
 
     # Client ID (used for client applications)
     client_id: Optional[int] = None

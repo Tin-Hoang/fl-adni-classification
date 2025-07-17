@@ -1,11 +1,12 @@
+from typing import Any, Optional
+
 import torch
-from typing import Optional, Any
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
+    ExponentialLR,
+    MultiStepLR,
     ReduceLROnPlateau,
     StepLR,
-    MultiStepLR,
-    ExponentialLR,
 )
 
 
@@ -31,11 +32,11 @@ def get_scheduler(scheduler_type: str, optimizer: torch.optim.Optimizer, num_epo
         return MultiStepLR(optimizer, milestones=[30, 60, 90], gamma=0.1)
     elif scheduler_type == "plateau":
         # Reduce on plateau scheduler (reduce LR when validation metric plateaus)
-        return ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-6)
+        return ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, verbose=True, min_lr=1e-6)
     elif scheduler_type == "exponential":
         # Exponential scheduler (reduce LR by gamma each epoch)
         return ExponentialLR(optimizer, gamma=0.95)
     else:
         # No scheduler
-        print(f"[Warning] No learning rate scheduler specified, using no scheduler")
+        print("[Warning] No learning rate scheduler specified, using no scheduler")
         return None

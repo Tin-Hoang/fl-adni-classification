@@ -4,9 +4,9 @@ This module provides a base class with common functionality for all ADNI dataset
 """
 
 import os
+from typing import Any, Dict, List, Optional, Union
+
 import pandas as pd
-from typing import Dict, Any, Optional, List, Union
-import torch
 
 
 class ADNIBaseDataset:
@@ -46,7 +46,7 @@ class ADNIBaseDataset:
         img_dir: str,
         classification_mode: str = "CN_MCI_AD",
         mci_subtype_filter: Optional[Union[str, List[str]]] = None,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """Initialize the base dataset.
 
@@ -88,7 +88,7 @@ class ADNIBaseDataset:
                 raise ValueError("mci_subtype_filter can only be used with classification_mode='CN_AD'")
 
         if self.verbose:
-            print("="*80)
+            print("=" * 80)
             print(f"Initializing dataset with CSV path: {csv_path} and image directory: {img_dir}")
             if self.mci_subtype_filter is not None:
                 subtypes_str = ", ".join(self.mci_subtype_filter)
@@ -105,12 +105,12 @@ class ADNIBaseDataset:
             # Binary classification - CN=0, AD=1, MCI->AD=1
             self.label_map = {"CN": 0, "MCI": 1, "AD": 1, "Dementia": 1}
             if self.verbose:
-                print(f"Using binary classification mode (CN_AD): CN=0, MCI->AD=1, AD/Dementia=1")
+                print("Using binary classification mode (CN_AD): CN=0, MCI->AD=1, AD/Dementia=1")
         else:  # Default: "CN_MCI_AD"
             # 3-class classification - CN=0, MCI=1, AD=2
             self.label_map = {"CN": 0, "MCI": 1, "AD": 2, "Dementia": 2}
             if self.verbose:
-                print(f"Using 3-class classification mode (CN_MCI_AD): CN=0, MCI=1, AD/Dementia=2")
+                print("Using 3-class classification mode (CN_MCI_AD): CN=0, MCI=1, AD/Dementia=2")
 
         # Filter out rows with missing labels and standardize data
         self._standardize_data()
@@ -151,12 +151,12 @@ class ADNIBaseDataset:
 
             # Print first 3 images with their label groups
             print("First 3 images with label groups:")
-            for i, (idx, row) in enumerate(self.data.head(3).iterrows()):
+            for i, (_, row) in enumerate(self.data.head(3).iterrows()):
                 image_id = row["Image Data ID"]
                 group = row["Group"]
                 label = self.label_map[group]
                 file_path = self.image_paths[image_id]
-                print(f"{i+1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
+                print(f"{i + 1}. ID: {image_id}, Label: {group} ({label}), File: {os.path.basename(file_path)}")
 
     def _create_data_list(self) -> List[Dict[str, Any]]:
         """Create a list of data dictionaries for Dataset.
@@ -170,10 +170,12 @@ class ADNIBaseDataset:
             label = self.label_map[row["Group"]]
             image_path = self.image_paths[image_id]
 
-            data_list.append({
-                "image": image_path,
-                "label": label,
-            })
+            data_list.append(
+                {
+                    "image": image_path,
+                    "label": label,
+                }
+            )
         return data_list
 
     def _detect_csv_format(self) -> str:
@@ -195,7 +197,10 @@ class ADNIBaseDataset:
                 print("- 'Image Data ID' column for image identifiers (with 'I' prefix)")
             return "original"
         else:
-            raise ValueError("Unknown CSV format. CSV must have either 'Group' and 'Image Data ID' columns (original format) or 'DX' and 'image_id' columns (alternative format).")
+            raise ValueError(
+                "Unknown CSV format. CSV must have either 'Group' and 'Image Data ID' columns "
+                "(original format) or 'DX' and 'image_id' columns (alternative format)."
+            )
 
     def _standardize_data(self) -> None:
         """Standardize the data based on the detected CSV format."""
@@ -231,7 +236,10 @@ class ADNIBaseDataset:
                         print(f"  {dx_bl}: {count}")
 
                     subtypes_str = ", ".join(self.mci_subtype_filter)
-                    print(f"Applied MCI subtype filtering: {len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples")
+                    print(
+                        f"Applied MCI subtype filtering: "
+                        f"{len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples"
+                    )
         else:  # alternative format
             # Map DX column values to standard Group values
             dx_to_group = {"Dementia": "AD", "MCI": "MCI", "CN": "CN"}
@@ -267,7 +275,10 @@ class ADNIBaseDataset:
                         print(f"  {dx_bl}: {count}")
 
                     subtypes_str = ", ".join(self.mci_subtype_filter)
-                    print(f"Applied MCI subtype filtering: {len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples")
+                    print(
+                        f"Applied MCI subtype filtering: "
+                        f"{len(mci_data)} MCI samples -> {len(filtered_mci_data)} [{subtypes_str}] samples"
+                    )
 
             # Create standardized columns
             self.data["Group"] = self.data["DX"].map(dx_to_group)
@@ -278,13 +289,15 @@ class ADNIBaseDataset:
             # Add 'I' prefix to image_id to create Image Data ID if not already prefixed
             # Also strip any decimal points (e.g., "42832.0" -> "42832")
             self.data["Image Data ID"] = self.data["image_id"].apply(
-                lambda x: f"I{x.split('.')[0]}" if not x.startswith('I') else x.split('.')[0]
+                lambda x: f"I{x.split('.')[0]}" if not x.startswith("I") else x.split(".")[0]
             )
 
         # Verify that we have data after filtering
         if len(self.data) == 0:
-            raise ValueError(f"No valid data found in {self.csv_path} after filtering. "
-                             f"Check that the CSV contains the expected columns and values.")
+            raise ValueError(
+                f"No valid data found in {self.csv_path} after filtering. "
+                f"Check that the CSV contains the expected columns and values."
+            )
 
         if self.verbose:
             # Print summary of the standardized data
@@ -308,7 +321,15 @@ class ADNIBaseDataset:
             class_counts = self.data["Group"].map(self.label_map).value_counts().sort_index()
             print(f"Label distribution for {self.classification_mode} mode:")
             for label, count in class_counts.items():
-                class_name = "CN" if label == 0 else "AD" if (label == 1 and self.classification_mode == "CN_AD") else "MCI" if (label == 1 and self.classification_mode == "CN_MCI_AD") else "AD"
+                class_name = (
+                    "CN"
+                    if label == 0
+                    else "AD"
+                    if (label == 1 and self.classification_mode == "CN_AD")
+                    else "MCI"
+                    if (label == 1 and self.classification_mode == "CN_MCI_AD")
+                    else "AD"
+                )
                 print(f"  Class {label} ({class_name}): {count}")
                 if self.classification_mode == "CN_AD" and label == 1 and self.mci_subtype_filter is not None:
                     subtypes_str = ", ".join(self.mci_subtype_filter)
@@ -329,14 +350,14 @@ class ADNIBaseDataset:
         # Walk through the directory tree
         for root, _, files in os.walk(root_dir):
             for file in files:
-                if file.endswith('.nii') or file.endswith('.nii.gz'):
+                if file.endswith(".nii") or file.endswith(".nii.gz"):
                     file_path = os.path.join(root, file)
                     parent_dir = os.path.basename(root)
 
                     # For alternative format, prioritize the parent directory ID
                     if self.csv_format == "alternative":
                         # Try to get image ID from parent directory first for alternative format
-                        if parent_dir.startswith('I') and parent_dir[1:].isdigit():
+                        if parent_dir.startswith("I") and parent_dir[1:].isdigit():
                             image_id = parent_dir
                         elif parent_dir.isdigit():
                             image_id = f"I{parent_dir}"
@@ -349,7 +370,7 @@ class ADNIBaseDataset:
 
                         # If not found in filename, try parent directory
                         if image_id is None:
-                            if parent_dir.startswith('I') and parent_dir[1:].isdigit():
+                            if parent_dir.startswith("I") and parent_dir[1:].isdigit():
                                 image_id = parent_dir
 
                     # Skip if no image ID found
@@ -362,7 +383,7 @@ class ADNIBaseDataset:
 
                     # Add to the mapping - if both .nii and .nii.gz exist for same ID,
                     # prioritize .nii.gz as it's likely the more recent/compressed version
-                    if image_id not in image_paths or file.endswith('.nii.gz'):
+                    if image_id not in image_paths or file.endswith(".nii.gz"):
                         image_paths[image_id] = file_path
 
         return image_paths
@@ -377,16 +398,16 @@ class ADNIBaseDataset:
             The extracted Image ID or None if not found
         """
         # Remove .nii.gz or .nii extension before splitting
-        if filename.endswith('.nii.gz'):
+        if filename.endswith(".nii.gz"):
             filename = filename[:-7]  # Remove .nii.gz
-        elif filename.endswith('.nii'):
+        elif filename.endswith(".nii"):
             filename = filename[:-4]  # Remove .nii
 
-        parts = filename.split('_')
+        parts = filename.split("_")
 
         # First try to find an ID that starts with 'I' followed by digits
         for part in reversed(parts):
-            if part.startswith('I') and part[1:].isdigit():
+            if part.startswith("I") and part[1:].isdigit():
                 return part
 
         # If not found, look for a part that's just digits (for alternative format)

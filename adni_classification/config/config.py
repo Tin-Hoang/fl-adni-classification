@@ -1,17 +1,19 @@
 """Configuration management for ADNI classification."""
 
-import os
 import datetime
+import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Union, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
+
 from .fl_config import FLConfig
 
 
 @dataclass
 class DataConfig:
     """Data configuration."""
+
     train_csv_path: str
     val_csv_path: str
     img_dir: str
@@ -26,13 +28,19 @@ class DataConfig:
     use_multiprocessing_transforms: bool = False  # Whether to use multiprocessing-safe transforms
     transform_device: Optional[str] = None  # Device to use for transforms (e.g., "cuda" or "cpu")
     multiprocessing_context: str = "spawn"  # Options: "spawn", "fork", "forkserver"
-    classification_mode: str = "CN_MCI_AD"  # Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
-    mci_subtype_filter: Optional[Union[str, List[str]]] = None  # Optional filter for MCI subtypes in CN_AD mode. Can be a single subtype (str) or list of subtypes (List[str]). Valid subtypes: "SMC", "EMCI", "LMCI"
+    classification_mode: str = (
+        "CN_MCI_AD"  # Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
+    )
+    mci_subtype_filter: Optional[Union[str, List[str]]] = (
+        None  # Optional filter for MCI subtypes in CN_AD mode.
+        # Can be a single subtype (str) or list of subtypes (List[str]). Valid subtypes: "SMC", "EMCI", "LMCI"
+    )
 
 
 @dataclass
 class ModelConfig:
     """Model configuration."""
+
     name: str
     num_classes: int = 3
     pretrained_checkpoint: Optional[str] = None
@@ -50,6 +58,7 @@ class ModelConfig:
 @dataclass
 class CheckpointConfig:
     """Checkpoint configuration."""
+
     save_best: bool = True
     save_latest: bool = True
     save_regular: bool = False
@@ -59,6 +68,7 @@ class CheckpointConfig:
 @dataclass
 class TrainingConfig:
     """Training configuration."""
+
     batch_size: int
     num_epochs: int
     learning_rate: float
@@ -84,6 +94,7 @@ class TrainingConfig:
 @dataclass
 class WandbConfig:
     """Weights & Biases configuration."""
+
     use_wandb: bool
     project: str
     entity: Optional[str] = None
@@ -98,6 +109,7 @@ class WandbConfig:
 @dataclass
 class Config:
     """Main configuration class."""
+
     data: DataConfig
     model: ModelConfig
     training: TrainingConfig
@@ -126,7 +138,7 @@ class Config:
         multi_machine_config = None
 
         if multi_machine_dict:
-            from .fl_config import MultiMachineConfig, ServerMachineConfig, ClientMachineConfig, SSHConfig
+            from .fl_config import ClientMachineConfig, MultiMachineConfig, ServerMachineConfig, SSHConfig
 
             # Parse server config
             server_config = None
@@ -140,7 +152,7 @@ class Config:
                     config_file=server_data.get("config_file"),
                     sequential_experiment=server_data.get("sequential_experiment", False),
                     train_sequential_labels=server_data.get("train_sequential_labels"),
-                    val_sequential_labels=server_data.get("val_sequential_labels")
+                    val_sequential_labels=server_data.get("val_sequential_labels"),
                 )
 
             # Parse client configs
@@ -156,7 +168,7 @@ class Config:
                         config_file=client_data.get("config_file"),
                         sequential_experiment=client_data.get("sequential_experiment", False),
                         train_sequential_labels=client_data.get("train_sequential_labels"),
-                        val_sequential_labels=client_data.get("val_sequential_labels")
+                        val_sequential_labels=client_data.get("val_sequential_labels"),
                     )
                     client_configs.append(client_config)
 
@@ -172,7 +184,7 @@ class Config:
                 project_dir=multi_machine_dict.get("project_dir"),
                 venv_path=multi_machine_dict.get("venv_path"),
                 venv_activate=multi_machine_dict.get("venv_activate"),
-                ssh=ssh_config
+                ssh=ssh_config,
             )
 
         fl_config = FLConfig(**fl_dict, multi_machine=multi_machine_config)
@@ -266,7 +278,7 @@ class Config:
                     "timeout": self.fl.multi_machine.ssh.timeout,
                     "banner_timeout": self.fl.multi_machine.ssh.banner_timeout,
                     "auth_timeout": self.fl.multi_machine.ssh.auth_timeout,
-                }
+                },
             }
 
             # Add server config if present

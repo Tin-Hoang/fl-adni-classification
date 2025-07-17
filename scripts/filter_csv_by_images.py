@@ -54,12 +54,11 @@ Examples:
 """
 
 import argparse
-import csv
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Tuple
 
 import pandas as pd
 

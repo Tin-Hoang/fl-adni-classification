@@ -1,10 +1,10 @@
 """Utilities for pretrained CNN model preprocessing and normalization."""
 
-import torch
+from typing import List, Union
+
 import numpy as np
-from torchvision import transforms
+import torch
 from scipy import ndimage
-from typing import Union, Tuple, List
 
 
 def normalize_intensity(img_tensor: torch.Tensor, normalization: str = "mean") -> torch.Tensor:
@@ -55,11 +55,7 @@ def resize_data_volume_by_scale(data: np.ndarray, scale: Union[float, List[float
     return ndimage.interpolation.zoom(data, scale_list, order=0)
 
 
-def img_processing(
-    image: np.ndarray,
-    scaling: float = 0.5,
-    final_size: List[int] = [96, 96, 73]
-) -> np.ndarray:
+def img_processing(image: np.ndarray, scaling: float = 0.5, final_size: List[int] = None) -> np.ndarray:
     """Process image with scaling and resizing.
 
     Args:
@@ -70,6 +66,9 @@ def img_processing(
     Returns:
         Processed image
     """
+    if final_size is None:
+        final_size = [96, 96, 73]
+
     # First resize with scaling factor
     image = resize_data_volume_by_scale(image, scale=scaling)
 
@@ -115,9 +114,9 @@ class PretrainedDataTransform:
     def __init__(
         self,
         scaling: float = 0.5,
-        final_size: List[int] = [96, 96, 73],
+        final_size: List[int] = None,
         normalization: str = "mean",
-        preprocessing: bool = True
+        preprocessing: bool = True,
     ):
         """Initialize transform.
 
@@ -127,6 +126,9 @@ class PretrainedDataTransform:
             normalization: Normalization method
             preprocessing: Whether to apply image processing
         """
+        if final_size is None:
+            final_size = [96, 96, 73]
+
         self.scaling = scaling
         self.final_size = final_size
         self.normalization = normalization

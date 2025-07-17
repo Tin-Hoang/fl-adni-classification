@@ -1,13 +1,14 @@
 """Visualization utilities for ADNI classification."""
 
 import os
+from typing import Any, List, Optional
+
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from torch.utils.data import DataLoader
-from typing import Dict, Any, List, Tuple, Optional
 import seaborn as sns
+import torch
 from sklearn.metrics import confusion_matrix
+from torch.utils.data import DataLoader
 
 
 def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Optional[str] = None) -> None:
@@ -24,7 +25,7 @@ def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Opt
     labels = batch["label"]
 
     # Create figure
-    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5*num_samples))
+    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5 * num_samples))
 
     # Map label indices to class names
     label_names = {0: "CN", 1: "MCI", 2: "AD"}
@@ -42,17 +43,17 @@ def visualize_batch(dataloader: DataLoader, num_samples: int = 5, save_path: Opt
         mid_x = img.shape[2] // 2
 
         # Plot the slices
-        axes[i, 0].imshow(img[mid_z, :, :], cmap='gray')
-        axes[i, 0].set_title(f'Sample {i+1}, Label: {label_name} ({label_idx}), Z-slice {mid_z}')
-        axes[i, 0].axis('off')
+        axes[i, 0].imshow(img[mid_z, :, :], cmap="gray")
+        axes[i, 0].set_title(f"Sample {i + 1}, Label: {label_name} ({label_idx}), Z-slice {mid_z}")
+        axes[i, 0].axis("off")
 
-        axes[i, 1].imshow(img[:, mid_y, :], cmap='gray')
-        axes[i, 1].set_title(f'Y-slice {mid_y}')
-        axes[i, 1].axis('off')
+        axes[i, 1].imshow(img[:, mid_y, :], cmap="gray")
+        axes[i, 1].set_title(f"Y-slice {mid_y}")
+        axes[i, 1].axis("off")
 
-        axes[i, 2].imshow(img[:, :, mid_x], cmap='gray')
-        axes[i, 2].set_title(f'X-slice {mid_x}')
-        axes[i, 2].axis('off')
+        axes[i, 2].imshow(img[:, :, mid_x], cmap="gray")
+        axes[i, 2].set_title(f"X-slice {mid_x}")
+        axes[i, 2].axis("off")
 
     plt.tight_layout()
 
@@ -72,7 +73,7 @@ def visualize_predictions(
     dataloader: DataLoader,
     device: torch.device,
     num_samples: int = 5,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
 ) -> None:
     """Visualize model predictions on a batch of images.
 
@@ -99,7 +100,7 @@ def visualize_predictions(
     label_names = {0: "CN", 1: "MCI", 2: "AD"}
 
     # Create figure
-    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5*num_samples))
+    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 5 * num_samples))
 
     # Plot each sample
     for i in range(min(num_samples, len(images))):
@@ -117,17 +118,17 @@ def visualize_predictions(
         mid_x = img.shape[2] // 2
 
         # Plot the slices
-        axes[i, 0].imshow(img[mid_z, :, :], cmap='gray')
-        axes[i, 0].set_title(f'Sample {i+1}, True: {true_label_name}, Pred: {pred_label_name}, Z-slice {mid_z}')
-        axes[i, 0].axis('off')
+        axes[i, 0].imshow(img[mid_z, :, :], cmap="gray")
+        axes[i, 0].set_title(f"Sample {i + 1}, True: {true_label_name}, Pred: {pred_label_name}, Z-slice {mid_z}")
+        axes[i, 0].axis("off")
 
-        axes[i, 1].imshow(img[:, mid_y, :], cmap='gray')
-        axes[i, 1].set_title(f'Y-slice {mid_y}')
-        axes[i, 1].axis('off')
+        axes[i, 1].imshow(img[:, mid_y, :], cmap="gray")
+        axes[i, 1].set_title(f"Y-slice {mid_y}")
+        axes[i, 1].axis("off")
 
-        axes[i, 2].imshow(img[:, :, mid_x], cmap='gray')
-        axes[i, 2].set_title(f'X-slice {mid_x}')
-        axes[i, 2].axis('off')
+        axes[i, 2].imshow(img[:, :, mid_x], cmap="gray")
+        axes[i, 2].set_title(f"X-slice {mid_x}")
+        axes[i, 2].axis("off")
 
     plt.tight_layout()
 
@@ -147,7 +148,7 @@ def plot_training_history(
     val_losses: List[float],
     train_accs: List[float],
     val_accs: List[float],
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
 ) -> None:
     """Plot training history.
 
@@ -161,20 +162,20 @@ def plot_training_history(
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 
     # Plot losses
-    ax1.plot(train_losses, label='Train Loss')
-    ax1.plot(val_losses, label='Val Loss')
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('Training and Validation Loss')
+    ax1.plot(train_losses, label="Train Loss")
+    ax1.plot(val_losses, label="Val Loss")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
+    ax1.set_title("Training and Validation Loss")
     ax1.legend()
     ax1.grid(True)
 
     # Plot accuracies
-    ax2.plot(train_accs, label='Train Accuracy')
-    ax2.plot(val_accs, label='Val Accuracy')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Accuracy')
-    ax2.set_title('Training and Validation Accuracy')
+    ax2.plot(train_accs, label="Train Accuracy")
+    ax2.plot(val_accs, label="Val Accuracy")
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Accuracy")
+    ax2.set_title("Training and Validation Accuracy")
     ax2.legend()
     ax2.grid(True)
 
@@ -194,10 +195,10 @@ def plot_training_history(
 def plot_confusion_matrix(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    class_names: List[str] = ["CN", "MCI", "AD"],
+    class_names: Optional[List[str]] = None,
     normalize: bool = True,
     save_path: Optional[str] = None,
-    title: str = "Confusion Matrix"
+    title: str = "Confusion Matrix",
 ) -> plt.Figure:
     """Plot confusion matrix.
 
@@ -212,11 +213,14 @@ def plot_confusion_matrix(
     Returns:
         Matplotlib figure
     """
+    if class_names is None:
+        class_names = ["CN", "MCI", "AD"]
+
     # Compute confusion matrix
     cm = confusion_matrix(y_true, y_pred)
 
     if normalize:
-        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        cm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
 
     # Create figure
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -225,16 +229,16 @@ def plot_confusion_matrix(
     sns.heatmap(
         cm,
         annot=True,
-        fmt='.2f' if normalize else 'd',
+        fmt=".2f" if normalize else "d",
         cmap="Blues",
         xticklabels=class_names,
         yticklabels=class_names,
-        ax=ax
+        ax=ax,
     )
 
     # Set labels and title
-    ax.set_xlabel('Predicted Label')
-    ax.set_ylabel('True Label')
+    ax.set_xlabel("Predicted Label")
+    ax.set_ylabel("True Label")
     ax.set_title(title)
 
     plt.tight_layout()
@@ -258,7 +262,7 @@ def log_sample_images_to_wandb(
     device: torch.device,
     wandb_run: Any,
     num_samples: int = 4,
-    classification_mode: str = "CN_MCI_AD"
+    classification_mode: str = "CN_MCI_AD",
 ) -> None:
     """Log sample images with predictions to WandB.
 
@@ -277,12 +281,13 @@ def log_sample_images_to_wandb(
 
     # Create a simple DataLoader without multiprocessing to avoid conflicts
     from torch.utils.data import DataLoader
+
     simple_loader = DataLoader(
         dataset,
         batch_size=num_samples,
         shuffle=True,
         num_workers=0,  # No multiprocessing to avoid conflicts
-        pin_memory=False
+        pin_memory=False,
     )
 
     # Get a batch of data
@@ -324,35 +329,36 @@ def log_sample_images_to_wandb(
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
         # Plot the slices
-        axes[0].imshow(img[mid_z, :, :], cmap='gray')
-        axes[0].set_title(f'Z-slice {mid_z}')
-        axes[0].axis('off')
+        axes[0].imshow(img[mid_z, :, :], cmap="gray")
+        axes[0].set_title(f"Z-slice {mid_z}")
+        axes[0].axis("off")
 
-        axes[1].imshow(img[:, mid_y, :], cmap='gray')
-        axes[1].set_title(f'Y-slice {mid_y}')
-        axes[1].axis('off')
+        axes[1].imshow(img[:, mid_y, :], cmap="gray")
+        axes[1].set_title(f"Y-slice {mid_y}")
+        axes[1].axis("off")
 
-        axes[2].imshow(img[:, :, mid_x], cmap='gray')
-        axes[2].set_title(f'X-slice {mid_x}')
-        axes[2].axis('off')
+        axes[2].imshow(img[:, :, mid_x], cmap="gray")
+        axes[2].set_title(f"X-slice {mid_x}")
+        axes[2].axis("off")
 
-        plt.suptitle(f'Sample {i+1} - True: {true_label_name}, Pred: {pred_label_name} ({pred_prob:.3f})',
-                    fontsize=14, y=1.02)
+        plt.suptitle(
+            f"Sample {i + 1} - True: {true_label_name}, Pred: {pred_label_name} ({pred_prob:.3f})", fontsize=14, y=1.02
+        )
         plt.tight_layout()
 
         # Convert figure to image format for WandB
         import wandb
-        wandb_images.append(wandb.Image(
-            fig,
-            caption=f"Sample {i+1}: True={true_label_name}, Pred={pred_label_name}, Prob={pred_prob:.3f}"
-        ))
+
+        wandb_images.append(
+            wandb.Image(
+                fig, caption=f"Sample {i + 1}: True={true_label_name}, Pred={pred_label_name}, Prob={pred_prob:.3f}"
+            )
+        )
 
         plt.close(fig)
 
         # Log images to WandB
-    wandb_run.log({
-        "sample_images": wandb_images
-    })
+    wandb_run.log({"sample_images": wandb_images})
 
     # Clean up the temporary DataLoader
     del simple_loader

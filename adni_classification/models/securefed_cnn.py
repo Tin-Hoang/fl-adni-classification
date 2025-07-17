@@ -26,7 +26,7 @@ class SecureFedCNN(BaseModel):
             classification_mode: Mode for classification, either "CN_MCI_AD" (3 classes) or "CN_AD" (2 classes)
         """
         # Print the model configuration for clarity
-        print(f"SecureFedCNN initializing with:")
+        print("SecureFedCNN initializing with:")
         print(f"- num_classes: {num_classes}")
         print(f"- classification_mode: {classification_mode}")
 
@@ -160,7 +160,7 @@ class SecureFedCNN(BaseModel):
         if x.size(1) != self.flat_features:
             actual_size = x.size(1)
             print(f"Warning: Flattened size {actual_size} doesn't match expected size {self.flat_features}")
-            print(f"This may indicate a mismatch between initialization and runtime input sizes.")
+            print("This may indicate a mismatch between initialization and runtime input sizes.")
 
             # For safety, we'll handle this gracefully but it shouldn't happen with proper initialization
             raise RuntimeError(

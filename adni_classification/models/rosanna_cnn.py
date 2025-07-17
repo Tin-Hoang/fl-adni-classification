@@ -1,10 +1,11 @@
 """Rosanna's 3D CNN model for ADNI classification."""
 
+import os
+from typing import Optional, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Union, List
-import os
 
 from adni_classification.models.base_model import BaseModel
 

@@ -1,23 +1,22 @@
 """Server application for ADNI Federated Learning."""
 
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Optional, Mapping, Any
-import torch
 from collections.abc import Mapping
+from typing import Dict, List, Optional, Tuple
 
-from flwr.common import Context, Metrics, Parameters, ndarrays_to_parameters
-from flwr.server import ServerApp, ServerAppComponents, ServerConfig, LegacyContext, Grid
+import torch
+from flwr.common import Context, Metrics, ndarrays_to_parameters
+from flwr.server import Grid, LegacyContext, ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.workflow import DefaultWorkflow
 
 from adni_classification.config.config import Config
-from adni_flwr.task import load_model, get_params, debug_model_architecture
-from adni_flwr.strategies import StrategyFactory
 from adni_flwr.server_fn import safe_weighted_average
+from adni_flwr.strategies import StrategyFactory
+from adni_flwr.task import debug_model_architecture, get_params, load_model
 
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
@@ -64,7 +63,7 @@ class FLWandbLogger:
                 tags=self.config.wandb.tags,
                 notes=self.config.wandb.notes,
                 config=self.config.to_dict(),
-                settings=wandb_settings
+                settings=wandb_settings,
             )
 
             if self.run:
@@ -127,7 +126,9 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 
         print(f"Weighted average received {len(metrics)} metrics")
 
-        filtered_metrics = [(num_examples, dict(m)) for num_examples, m in metrics if isinstance(m, (dict, Mapping)) and m]
+        filtered_metrics = [
+            (num_examples, dict(m)) for num_examples, m in metrics if isinstance(m, (dict, Mapping)) and m
+        ]
         if not filtered_metrics:
             print("WARNING: weighted_average filtered metrics list is empty after filtering")
             return {}
@@ -167,7 +168,9 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
                     print(f"Error processing scalar metric '{name}': {e}")
 
             # Pass through string metrics (like JSON-encoded lists)
-            elif name in ["predictions_json", "labels_json", "sample_info", "client_id"] and isinstance(sample_value, str):
+            elif name in ["predictions_json", "labels_json", "sample_info", "client_id"] and isinstance(
+                sample_value, str
+            ):
                 # Use the first client's value (arbitrary choice)
                 acc_metrics[name] = sample_value
                 print(f"Passing through string metric '{name}' with length {len(sample_value)}")
@@ -179,12 +182,15 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 
             # Error for other types that shouldn't be here
             else:
-                print(f"Skipping metric '{name}' with type {type(sample_value).__name__} - not supported for aggregation")
+                print(
+                    f"Skipping metric '{name}' with type {type(sample_value).__name__} - not supported for aggregation"
+                )
 
         print(f"Aggregated metrics keys: {list(acc_metrics.keys())}")
         return acc_metrics
     except Exception as e:
         import traceback
+
         print(f"Error in weighted_average: {e}")
         print(traceback.format_exc())
         return {}
@@ -213,30 +219,31 @@ def server_fn(context: Context):
         config = Config.from_yaml(server_config_file)
 
         # Determine which strategy to use from config - FAIL FAST if not specified
-        if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+        if not hasattr(config.fl, "strategy") or not config.fl.strategy:
             raise ValueError(
                 f"ERROR: 'strategy' not specified in server config {server_config_file}. "
                 f"You must explicitly set 'strategy' in the FL config section. "
                 f"Available strategies: fedavg, fedprox, secagg, secagg+. "
-                f"This prevents dangerous implicit defaults that could cause strategy mismatch between clients and server."
+                f"This prevents dangerous implicit defaults that could cause strategy "
+                f"mismatch between clients and server."
             )
 
         strategy_name = config.fl.strategy
         print(f"Using FL strategy: {strategy_name}")
 
-                # AUTO-DETECTION: If SecAgg+ is detected, raise error with helpful message
+        # AUTO-DETECTION: If SecAgg+ is detected, raise error with helpful message
         if strategy_name.lower() in ["secagg+", "secaggplus"]:
             raise ValueError(
-                f"🔒 SecAgg+ strategy detected!\n"
-                f"SecAgg+ requires workflow-based execution using @app.main() pattern.\n"
-                f"Your config specifies SecAgg+ but you're using the regular ServerApp pattern.\n"
-                f"\n"
-                f"Solutions:\n"
-                f"1. Use dedicated SecAgg+ app: flower-server-app adni_flwr.server_app:secagg_plus_app\n"
-                f"2. Or use auto-detecting app: flower-server-app adni_flwr.server_app:auto_app\n"
-                f"\n"
-                f"The regular 'app' cannot handle SecAgg+ due to Flower framework limitations.\n"
-                f"SecAgg+ requires Grid parameter that's only available in @app.main() context."
+                "🔒 SecAgg+ strategy detected!\n"
+                "SecAgg+ requires workflow-based execution using @app.main() pattern.\n"
+                "Your config specifies SecAgg+ but you're using the regular ServerApp pattern.\n"
+                "\n"
+                "Solutions:\n"
+                "1. Use dedicated SecAgg+ app: flower-server-app adni_flwr.server_app:secagg_plus_app\n"
+                "2. Or use auto-detecting app: flower-server-app adni_flwr.server_app:auto_app\n"
+                "\n"
+                "The regular 'app' cannot handle SecAgg+ due to Flower framework limitations.\n"
+                "SecAgg+ requires Grid parameter that's only available in @app.main() context."
             )
 
         # For regular strategies (FedAvg, FedProx, SecAgg), use standard approach
@@ -244,7 +251,7 @@ def server_fn(context: Context):
 
         # Create WandB logger with the Config object
         wandb_logger = FLWandbLogger(config)
-        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, 'enable_shared_mode') else True
+        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, "enable_shared_mode") else True
         run_id = wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
 
         # Store run ID for sharing with clients through FL communication
@@ -263,16 +270,11 @@ def server_fn(context: Context):
 
         # Convert initial model parameters to flwr.common.Parameters
         ndarrays = get_params(model)
-        initial_parameters = ndarrays_to_parameters(ndarrays)
+        ndarrays_to_parameters(ndarrays)  # Convert to flwr parameters format
 
         # Get FL-specific parameters from config
         fl_config = config.fl  # Access FLConfig
         num_rounds = fl_config.num_rounds
-        fraction_fit = fl_config.fraction_fit
-        fraction_evaluate = fl_config.fraction_evaluate
-        min_fit_clients = fl_config.min_fit_clients
-        min_evaluate_clients = fl_config.min_evaluate_clients
-        min_available_clients = fl_config.min_available_clients
 
         # Validate strategy configuration
         StrategyFactory.validate_strategy_config(strategy_name, config)
@@ -286,7 +288,7 @@ def server_fn(context: Context):
                 model=model,
                 wandb_logger=wandb_logger,
                 evaluate_metrics_aggregation_fn=weighted_average,
-                fit_metrics_aggregation_fn=weighted_average
+                fit_metrics_aggregation_fn=weighted_average,
             )
         except Exception as e:
             print(f"Error creating strategy with original weighted_average: {e}")
@@ -299,7 +301,7 @@ def server_fn(context: Context):
                 model=model,
                 wandb_logger=wandb_logger,
                 evaluate_metrics_aggregation_fn=safe_weighted_average,
-                fit_metrics_aggregation_fn=safe_weighted_average
+                fit_metrics_aggregation_fn=safe_weighted_average,
             )
 
         # Create server configuration
@@ -310,6 +312,7 @@ def server_fn(context: Context):
 
     except Exception as e:
         import traceback
+
         print(f"Error in server_fn: {e}")
         print(traceback.format_exc())
         # Still need to return a ServerAppComponents object
@@ -338,8 +341,8 @@ def secagg_plus_server_main(grid: Grid, context: Context):
 
         # Create WandB logger with the Config object
         wandb_logger = FLWandbLogger(config)
-        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, 'enable_shared_mode') else True
-        run_id = wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
+        enable_shared_mode = config.wandb.enable_shared_mode if hasattr(config.wandb, "enable_shared_mode") else True
+        wandb_logger.init_wandb(enable_shared_mode=enable_shared_mode)
 
         # Initialize model using the Config object
         model = load_model(config)
@@ -370,11 +373,11 @@ def secagg_plus_server_main(grid: Grid, context: Context):
             model=model,
             wandb_logger=wandb_logger,
             evaluate_metrics_aggregation_fn=weighted_average,
-            fit_metrics_aggregation_fn=weighted_average
+            fit_metrics_aggregation_fn=weighted_average,
         )
 
         # Get the SecAgg+ workflow
-        if not hasattr(strategy, 'get_secagg_workflow'):
+        if not hasattr(strategy, "get_secagg_workflow"):
             raise ValueError("SecAgg+ strategy does not have get_secagg_workflow method")
 
         secagg_workflow = strategy.get_secagg_workflow()
@@ -398,6 +401,7 @@ def secagg_plus_server_main(grid: Grid, context: Context):
     except Exception as e:
         print(f"❌ SecAgg+ server execution failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise
 
@@ -408,14 +412,17 @@ app = ServerApp(server_fn=server_fn)
 # Create a dedicated SecAgg+ server app using the correct Flower pattern
 secagg_plus_app = ServerApp()
 
+
 @secagg_plus_app.main()
 def main(grid: Grid, context: Context):
     """Main entry point for SecAgg+ server app using proper Flower workflow pattern."""
     print("🔒 SecAgg+ Server - Starting workflow-based execution")
     secagg_plus_server_main(grid, context)
 
+
 # Create an auto-detecting server app that chooses the right execution pattern
 auto_app = ServerApp()
+
 
 @auto_app.main()
 def auto_main(grid: Grid, context: Context):
@@ -430,7 +437,7 @@ def auto_main(grid: Grid, context: Context):
         config = Config.from_yaml(server_config_file)
 
         # Determine which strategy to use from config
-        if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+        if not hasattr(config.fl, "strategy") or not config.fl.strategy:
             raise ValueError(
                 f"ERROR: 'strategy' not specified in server config {server_config_file}. "
                 f"Available strategies: fedavg, fedprox, secagg, secagg+."
@@ -443,8 +450,8 @@ def auto_main(grid: Grid, context: Context):
             print("🔒 Using SecAgg+ workflow execution")
             secagg_plus_server_main(grid, context)
         else:
-            print(f"📊 Regular strategies require the standard ServerApp pattern")
-            print(f"Use: flower-server-app adni_flwr.server_app:app")
+            print("📊 Regular strategies require the standard ServerApp pattern")
+            print("Use: flower-server-app adni_flwr.server_app:app")
             raise ValueError(
                 f"Regular strategy '{strategy_name}' cannot be used with auto_app.\n"
                 f"Regular strategies (fedavg, fedprox, secagg) require the standard ServerApp pattern.\n"
@@ -454,6 +461,7 @@ def auto_main(grid: Grid, context: Context):
 
     except Exception as e:
         import traceback
+
         print(f"❌ Auto-detection failed: {e}")
         print(traceback.format_exc())
         raise

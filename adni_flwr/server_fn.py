@@ -1,8 +1,10 @@
 """Utility functions for server-side federated learning."""
 
-from typing import List, Tuple, Dict, Any, Optional, Union
 from collections.abc import Mapping
+from typing import Dict, List, Tuple
+
 import numpy as np
+
 
 def safe_weighted_average(metrics: List[Tuple[int, Dict]], verbose: bool = True) -> Dict:
     """A safer implementation of weighted average that handles potential serialization issues.

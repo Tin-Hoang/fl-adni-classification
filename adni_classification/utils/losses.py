@@ -1,9 +1,10 @@
 """Loss functions for ADNI classification."""
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
 
 
 class FocalLoss(nn.Module):
@@ -27,8 +28,8 @@ class FocalLoss(nn.Module):
         self,
         alpha: Optional[torch.Tensor] = None,
         gamma: float = 2.0,
-        reduction: str = 'mean',
-        ignore_index: int = -100
+        reduction: str = "mean",
+        ignore_index: int = -100,
     ):
         """Initialize Focal Loss.
 
@@ -52,7 +53,7 @@ class FocalLoss(nn.Module):
 
         # Register alpha as a buffer if it's a tensor so it gets moved to the right device
         if isinstance(alpha, torch.Tensor):
-            self.register_buffer('alpha_tensor', alpha)
+            self.register_buffer("alpha_tensor", alpha)
         else:
             self.alpha_tensor = alpha
 
@@ -68,9 +69,7 @@ class FocalLoss(nn.Module):
             Computed focal loss
         """
         # Compute standard cross-entropy loss
-        ce_loss = F.cross_entropy(
-            inputs, targets, reduction='none', ignore_index=self.ignore_index
-        )
+        ce_loss = F.cross_entropy(inputs, targets, reduction="none", ignore_index=self.ignore_index)
 
         # Compute p_t (the probability of the true class)
         p = torch.exp(-ce_loss)  # p_t = exp(-CE_loss)
@@ -91,9 +90,9 @@ class FocalLoss(nn.Module):
             focal_loss = focal_weight * ce_loss
 
         # Apply reduction
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return focal_loss.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return focal_loss.sum()
         else:
             return focal_loss
@@ -105,7 +104,7 @@ def create_loss_function(
     class_weights: Optional[torch.Tensor] = None,
     focal_alpha: Optional[float] = None,
     focal_gamma: float = 2.0,
-    device: torch.device = torch.device("cpu")
+    device: torch.device = torch.device("cpu"),
 ) -> nn.Module:
     """Create a loss function based on the specified type and parameters.
 
@@ -139,11 +138,7 @@ def create_loss_function(
                 print("Warning: Both focal_alpha and class_weights provided. Using class_weights as alpha.")
             alpha_tensor = class_weights
 
-        loss_fn = FocalLoss(
-            alpha=alpha_tensor,
-            gamma=focal_gamma,
-            reduction='mean'
-        )
+        loss_fn = FocalLoss(alpha=alpha_tensor, gamma=focal_gamma, reduction="mean")
 
         print(f"Created Focal Loss with alpha={alpha_tensor}, gamma={focal_gamma}")
 

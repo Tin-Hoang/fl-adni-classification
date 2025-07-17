@@ -1,26 +1,26 @@
 """Client application for ADNI Federated Learning."""
 
 import os
+from typing import Any, Dict, Optional
+
 import torch
-from typing import Dict, Optional, Any
-from flwr.common import Context
 from flwr.client import ClientApp
+from flwr.common import Context
+
 from adni_classification.config.config import Config
-from adni_flwr.task import (
-    load_model,
-    load_data,
-    create_criterion
-)
-from adni_flwr.strategies import StrategyFactory, StrategyAwareClient
+from adni_flwr.strategies import StrategyAwareClient, StrategyFactory
+from adni_flwr.task import create_criterion, load_data, load_model
 
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
 
 try:
     from flwr.client.mod import secaggplus_mod
+
     SECAGGPLUS_MOD_AVAILABLE = True
 except ImportError:
     SECAGGPLUS_MOD_AVAILABLE = False
@@ -77,7 +77,7 @@ class FLClientWandbLogger:
             for k, v in metrics.items():
                 if isinstance(v, (int, float, bool)):
                     loggable_metrics[k] = v
-                elif hasattr(v, '__float__'):  # Handle numpy scalars
+                elif hasattr(v, "__float__"):  # Handle numpy scalars
                     try:
                         loggable_metrics[k] = float(v)
                     except (ValueError, TypeError):
@@ -169,7 +169,7 @@ class FLClientWandbLogger:
             self.run = wandb.init(
                 id=self.server_run_id,  # Use server's run ID
                 settings=wandb_settings,
-                resume="allow"  # Allow resuming the run
+                resume="allow",  # Allow resuming the run
             )
 
             if self.run:
@@ -234,21 +234,23 @@ def client_fn(context: Context):
 
     # Ensure we have enough config files for all partitions
     if partition_id >= len(client_config_files):
-        raise ValueError(f"Partition ID {partition_id} is out of range for {len(client_config_files)} client config files")
+        raise ValueError(
+            f"Partition ID {partition_id} is out of range for {len(client_config_files)} client config files"
+        )
 
     # Get the specific config file for this client
     config_path = client_config_files[partition_id]
     config = Config.from_yaml(config_path)
 
     # Get client ID from config
-    client_id = getattr(config.fl, 'client_id', partition_id)
+    client_id = getattr(config.fl, "client_id", partition_id)
 
     # Initialize client-side WandB logger for distributed training
     client_wandb_logger = FLClientWandbLogger(config, client_id)
     client_wandb_logger.init_wandb()
 
     # Determine which strategy to use - FAIL FAST if not specified
-    if not hasattr(config.fl, 'strategy') or not config.fl.strategy:
+    if not hasattr(config.fl, "strategy") or not config.fl.strategy:
         raise ValueError(
             f"ERROR: 'strategy' not specified in client config {config_path}. "
             f"You must explicitly set 'strategy' in the FL config section. "
@@ -257,7 +259,7 @@ def client_fn(context: Context):
         )
 
     strategy_name = config.fl.strategy
-    print(f'Initializing client {client_id} with {strategy_name} strategy, config: {config_path} on device: {device}')
+    print(f"Initializing client {client_id} with {strategy_name} strategy, config: {config_path} on device: {device}")
 
     # Check for SecAgg+ and validate requirements
     if strategy_name.lower() in ["secagg+", "secaggplus"]:
@@ -299,7 +301,7 @@ def client_fn(context: Context):
         optimizer=optimizer,
         criterion=criterion,
         device=device,
-        scheduler=None  # No scheduler passed - will be managed by Context
+        scheduler=None,  # No scheduler passed - will be managed by Context
     )
 
     # Create strategy-aware client with Context for scheduler management
@@ -309,7 +311,7 @@ def client_fn(context: Context):
         client_strategy=client_strategy,
         context=context,
         total_fl_rounds=total_fl_rounds,
-        wandb_logger=client_wandb_logger
+        wandb_logger=client_wandb_logger,
     )
 
     print(f"Client {partition_id} initialized with Context-based scheduler management")
@@ -351,14 +353,14 @@ def determine_strategy_from_config():
         # Check command line arguments for config files
         config_files = []
         for arg in sys.argv:
-            if arg.endswith('.yaml') and 'client' in arg and os.path.exists(arg):
+            if arg.endswith(".yaml") and "client" in arg and os.path.exists(arg):
                 config_files.append(arg)
 
         # If we found config files, check if any use SecAgg+
         for config_file in config_files:
             try:
                 config = Config.from_yaml(config_file)
-                if hasattr(config.fl, 'strategy') and config.fl.strategy.lower() in ["secagg+", "secaggplus"]:
+                if hasattr(config.fl, "strategy") and config.fl.strategy.lower() in ["secagg+", "secaggplus"]:
                     print(f"🔒 SecAgg+ detected in config: {config_file}")
                     return True
             except Exception:

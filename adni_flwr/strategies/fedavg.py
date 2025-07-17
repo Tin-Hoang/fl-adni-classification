@@ -1,39 +1,25 @@
 """FedAvg strategy implementation."""
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from flwr.common import Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, ndarrays_to_parameters, FitIns, EvaluateIns
-from flwr.server.strategy import FedAvg
+from flwr.common import EvaluateIns, FitIns, FitRes, Parameters, ndarrays_to_parameters
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
+from flwr.server.strategy import FedAvg
+from torch.utils.data import DataLoader
 
-from .base import FLStrategyBase, ClientStrategyBase
 from adni_classification.config.config import Config
-from adni_flwr.task import set_params, get_params, safe_parameters_to_ndarrays, load_data, test_with_predictions, create_criterion
-from adni_classification.utils.visualization import plot_confusion_matrix
+from adni_flwr.task import get_params, safe_parameters_to_ndarrays, set_params
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+from .base import ClientStrategyBase, FLStrategyBase
 
 
 class FedAvgStrategy(FLStrategyBase):
     """Server-side FedAvg strategy with comprehensive WandB logging."""
 
-    def __init__(
-        self,
-        config: Config,
-        model: nn.Module,
-        wandb_logger: Optional[Any] = None,
-        **kwargs
-    ):
+    def __init__(self, config: Config, model: nn.Module, wandb_logger: Optional[Any] = None, **kwargs):
         """Initialize FedAvg strategy.
 
         Args:
@@ -46,18 +32,18 @@ class FedAvgStrategy(FLStrategyBase):
 
         # Extract specific parameters for FedAvg
         fedavg_params = {
-            'fraction_fit': getattr(config.fl, 'fraction_fit', 1.0),
-            'fraction_evaluate': getattr(config.fl, 'fraction_evaluate', 1.0),
-            'min_fit_clients': getattr(config.fl, 'min_fit_clients', 2),
-            'min_evaluate_clients': getattr(config.fl, 'min_evaluate_clients', 2),
-            'min_available_clients': getattr(config.fl, 'min_available_clients', 2),
+            "fraction_fit": getattr(config.fl, "fraction_fit", 1.0),
+            "fraction_evaluate": getattr(config.fl, "fraction_evaluate", 1.0),
+            "min_fit_clients": getattr(config.fl, "min_fit_clients", 2),
+            "min_evaluate_clients": getattr(config.fl, "min_evaluate_clients", 2),
+            "min_available_clients": getattr(config.fl, "min_available_clients", 2),
         }
 
         # Add aggregation functions if provided
-        if 'evaluate_metrics_aggregation_fn' in kwargs:
-            fedavg_params['evaluate_metrics_aggregation_fn'] = kwargs['evaluate_metrics_aggregation_fn']
-        if 'fit_metrics_aggregation_fn' in kwargs:
-            fedavg_params['fit_metrics_aggregation_fn'] = kwargs['fit_metrics_aggregation_fn']
+        if "evaluate_metrics_aggregation_fn" in kwargs:
+            fedavg_params["evaluate_metrics_aggregation_fn"] = kwargs["evaluate_metrics_aggregation_fn"]
+        if "fit_metrics_aggregation_fn" in kwargs:
+            fedavg_params["fit_metrics_aggregation_fn"] = kwargs["fit_metrics_aggregation_fn"]
 
         # Initialize standard FedAvg strategy
         self.fedavg_strategy = FedAvg(**fedavg_params)
@@ -95,8 +81,6 @@ class FedAvgStrategy(FLStrategyBase):
         """Initialize global model parameters."""
         # Instead of delegating to fedavg_strategy (which returns None),
         # provide initial parameters from our server model
-        from adni_flwr.task import get_params
-        from flwr.common import ndarrays_to_parameters
 
         print("FedAvgStrategy: Initializing parameters from server model")
         ndarrays = get_params(self.model)
@@ -105,12 +89,12 @@ class FedAvgStrategy(FLStrategyBase):
 
         return ndarrays_to_parameters(ndarrays)
 
-    def configure_fit(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, FitIns]]:
+    def configure_fit(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, FitIns]]:
         """Configure the next round of training."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_fit(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_fit(server_round, parameters, client_manager)
 
         # Add server_round to the config for each client
         updated_instructions = []
@@ -120,10 +104,7 @@ class FedAvgStrategy(FLStrategyBase):
             config["server_round"] = server_round
 
             # Create new FitIns with updated config
-            updated_fit_ins = FitIns(
-                parameters=fit_ins.parameters,
-                config=config
-            )
+            updated_fit_ins = FitIns(parameters=fit_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_fit_ins))
 
         # Add WandB run ID to instructions
@@ -140,21 +121,15 @@ class FedAvgStrategy(FLStrategyBase):
 
         # Log client training metrics
         if self.wandb_logger:
-            for client_proxy, fit_res in results:
+            for _client_proxy, fit_res in results:
                 client_metrics = fit_res.metrics
                 if client_metrics:
                     client_id = fit_res.metrics.get("client_id", "unknown")
                     metrics_to_log = {k: v for k, v in client_metrics.items() if k != "client_id"}
-                    self.wandb_logger.log_metrics(
-                        metrics_to_log,
-                        prefix=f"client_{client_id}/fit",
-                        step=server_round
-                    )
+                    self.wandb_logger.log_metrics(metrics_to_log, prefix=f"client_{client_id}/fit", step=server_round)
 
         # Aggregate parameters and metrics using base FedAvg
-        aggregated_params, aggregated_metrics = self.fedavg_strategy.aggregate_fit(
-            server_round, results, failures
-        )
+        aggregated_params, aggregated_metrics = self.fedavg_strategy.aggregate_fit(server_round, results, failures)
 
         # Load aggregated parameters into the server model instance
         if aggregated_params is not None:
@@ -169,11 +144,7 @@ class FedAvgStrategy(FLStrategyBase):
 
         # Log aggregated fit metrics
         if self.wandb_logger and metrics:
-            self.wandb_logger.log_metrics(
-                metrics,
-                prefix="server",
-                step=server_round
-            )
+            self.wandb_logger.log_metrics(metrics, prefix="server", step=server_round)
 
         # Print server model's current metrics
         print(f"Server model metrics after round {server_round}:")
@@ -181,17 +152,20 @@ class FedAvgStrategy(FLStrategyBase):
             print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
-        if self.config.training.checkpoint.save_regular and server_round % self.config.training.checkpoint.save_frequency == 0:
+        if (
+            self.config.training.checkpoint.save_regular
+            and server_round % self.config.training.checkpoint.save_frequency == 0
+        ):
             self._save_checkpoint(self.model.state_dict(), server_round)
 
         return aggregated_params, metrics
 
-    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
+    def configure_evaluate(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_evaluate(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_evaluate(server_round, parameters, client_manager)
 
         # Add server_round to the config for each client
         updated_instructions = []
@@ -201,10 +175,7 @@ class FedAvgStrategy(FLStrategyBase):
             config["server_round"] = server_round
 
             # Create new EvaluateIns with updated config
-            updated_evaluate_ins = EvaluateIns(
-                parameters=evaluate_ins.parameters,
-                config=config
-            )
+            updated_evaluate_ins = EvaluateIns(parameters=evaluate_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_evaluate_ins))
 
         # Add WandB run ID to instructions
@@ -231,7 +202,7 @@ class FedAvgClient(ClientStrategyBase):
         criterion: nn.Module,
         device: torch.device,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-        **kwargs
+        **kwargs,
     ):
         """Initialize FedAvg client strategy.
 
@@ -268,7 +239,7 @@ class FedAvgClient(ClientStrategyBase):
         print(f"FedAvgClient: Received server_params type: {type(server_params)}")
 
         # Debug the server_params structure
-        if hasattr(server_params, 'tensors'):
+        if hasattr(server_params, "tensors"):
             print(f"FedAvgClient: server_params.tensors length: {len(server_params.tensors)}")
             if len(server_params.tensors) > 0:
                 print(f"FedAvgClient: First few tensor shapes: {[t.shape for t in server_params.tensors[:5]]}")
@@ -294,6 +265,7 @@ class FedAvgClient(ClientStrategyBase):
 
         # Debug client model before loading parameters
         from adni_flwr.task import debug_model_architecture
+
         debug_model_architecture(self.model, "Client Model (before loading server params)")
 
         # Update model with server parameters
@@ -305,13 +277,7 @@ class FedAvgClient(ClientStrategyBase):
         # Reset optimizer state
         self.optimizer.zero_grad()
 
-    def train_epoch(
-        self,
-        train_loader: DataLoader,
-        epoch: int,
-        total_epochs: int,
-        **kwargs
-    ) -> Tuple[float, float]:
+    def train_epoch(self, train_loader: DataLoader, epoch: int, total_epochs: int, **kwargs) -> Tuple[float, float]:
         """Train the model for one epoch using FedAvg.
 
         Args:
@@ -366,7 +332,7 @@ class FedAvgClient(ClientStrategyBase):
 
         # Step the scheduler only once per FL round (after the last local epoch)
         if self.scheduler is not None and epoch == total_epochs - 1:  # Only on last local epoch
-            current_lr_before = self.optimizer.param_groups[0]['lr']
+            current_lr_before = self.optimizer.param_groups[0]["lr"]
 
             # Handle ReduceLROnPlateau scheduler which requires validation loss
             if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -374,9 +340,12 @@ class FedAvgClient(ClientStrategyBase):
             else:
                 self.scheduler.step()
 
-            current_lr_after = self.optimizer.param_groups[0]['lr']
+            current_lr_after = self.optimizer.param_groups[0]["lr"]
             if current_lr_before != current_lr_after:
-                print(f"FL Round {getattr(self, 'current_fl_round', '?')}: LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
+                print(
+                    f"FL Round {getattr(self, 'current_fl_round', '?')}: "
+                    f"LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}"
+                )
 
         return avg_loss, avg_accuracy
 

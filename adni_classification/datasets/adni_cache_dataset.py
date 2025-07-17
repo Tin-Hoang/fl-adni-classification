@@ -1,8 +1,9 @@
 """Dataset module for ADNI classification."""
 
+from typing import List, Optional, Union
+
 import monai
 from monai.data import CacheDataset
-from typing import Optional, List, Dict, Any, Union
 
 from adni_classification.datasets.adni_base_dataset import ADNIBaseDataset
 
@@ -48,7 +49,7 @@ class ADNICacheDataset(CacheDataset):
             img_dir=img_dir,
             classification_mode=classification_mode,
             mci_subtype_filter=mci_subtype_filter,
-            verbose=True
+            verbose=True,
         )
 
         # Access the prepared data from the base class
@@ -86,25 +87,40 @@ def test_image_path_mapping():
     It can be run directly to verify that the image path mapping logic is working correctly.
     """
     import argparse
-    import torch
     import os
+
     import pandas as pd
+    import torch
 
     parser = argparse.ArgumentParser(description="Test the ADNI dataset image path mapping")
-    parser.add_argument("--csv_path", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
-                        help="Path to the CSV file containing image metadata and labels")
-    parser.add_argument("--img_dir", type=str, default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
-                        help="Path to the directory containing the image files")
-    parser.add_argument("--csv_format", type=str, choices=["original", "alternative"],
-                        help="CSV format to test explicitly (will be auto-detected if not specified)")
-    parser.add_argument("--cache_rate", type=float, default=1.0,
-                        help="Percentage of data to cache (0.0-1.0)")
-    parser.add_argument("--num_workers", type=int, default=0,
-                        help="Number of worker processes for data loading")
-    parser.add_argument("--device", type=str, default=None,
-                        help="Device to use for transforms (e.g., 'cuda' or 'cpu')")
-    parser.add_argument("--classification_mode", type=str, choices=["CN_MCI_AD", "CN_AD"], default="CN_MCI_AD",
-                        help="Classification mode: 'CN_MCI_AD' for 3 classes or 'CN_AD' for 2 classes")
+    parser.add_argument(
+        "--csv_path",
+        type=str,
+        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_594images_client_all_train_475images.csv",
+        help="Path to the CSV file containing image metadata and labels",
+    )
+    parser.add_argument(
+        "--img_dir",
+        type=str,
+        default="data/ADNI/ALL_1.5T_bl_ScaledProcessed_MRI_611images_step3_skull_stripping",
+        help="Path to the directory containing the image files",
+    )
+    parser.add_argument(
+        "--csv_format",
+        type=str,
+        choices=["original", "alternative"],
+        help="CSV format to test explicitly (will be auto-detected if not specified)",
+    )
+    parser.add_argument("--cache_rate", type=float, default=1.0, help="Percentage of data to cache (0.0-1.0)")
+    parser.add_argument("--num_workers", type=int, default=0, help="Number of worker processes for data loading")
+    parser.add_argument("--device", type=str, default=None, help="Device to use for transforms (e.g., 'cuda' or 'cpu')")
+    parser.add_argument(
+        "--classification_mode",
+        type=str,
+        choices=["CN_MCI_AD", "CN_AD"],
+        default="CN_MCI_AD",
+        help="Classification mode: 'CN_MCI_AD' for 3 classes or 'CN_AD' for 2 classes",
+    )
     args = parser.parse_args()
 
     # Parse device
@@ -124,15 +140,15 @@ def test_image_path_mapping():
     print(df.head(10))
 
     # Print ID columns specifically for clarity
-    if 'Image Data ID' in df.columns:
+    if "Image Data ID" in df.columns:
         print("\nFirst 10 Image Data IDs in CSV:")
-        for i, img_id in enumerate(df['Image Data ID'].head(10)):
-            print(f"{i+1}. {img_id}")
+        for i, img_id in enumerate(df["Image Data ID"].head(10)):
+            print(f"{i + 1}. {img_id}")
 
-    if 'image_id' in df.columns:
+    if "image_id" in df.columns:
         print("\nFirst 10 image_ids in CSV:")
-        for i, img_id in enumerate(df['image_id'].head(10)):
-            print(f"{i+1}. {img_id}")
+        for i, img_id in enumerate(df["image_id"].head(10)):
+            print(f"{i + 1}. {img_id}")
 
     try:
         # Create a dataset with ID validation
@@ -151,15 +167,15 @@ def test_image_path_mapping():
 
         # Print information about the mapped image paths
         print("\nImage path mapping:")
-        file_formats = {'.nii': 0, '.nii.gz': 0}
+        file_formats = {".nii": 0, ".nii.gz": 0}
 
         for image_id, file_path in list(dataset.image_paths.items())[:5]:  # Show first 5 mappings
             # Determine file format
-            if file_path.endswith('.nii.gz'):
-                file_formats['.nii.gz'] += 1
+            if file_path.endswith(".nii.gz"):
+                file_formats[".nii.gz"] += 1
                 format_str = "(.nii.gz)"
-            elif file_path.endswith('.nii'):
-                file_formats['.nii'] += 1
+            elif file_path.endswith(".nii"):
+                file_formats[".nii"] += 1
                 format_str = "(.nii)"
             else:
                 format_str = "(unknown format)"
@@ -169,7 +185,10 @@ def test_image_path_mapping():
             if not row.empty:
                 label_group = row["Group"].iloc[0]
                 label_idx = dataset.label_map[label_group]
-                print(f"  {image_id} -> {os.path.basename(file_path)} {format_str} (Label: {label_group}, ID: {label_idx})")
+                print(
+                    f"  {image_id} -> {os.path.basename(file_path)} "
+                    f"{format_str} (Label: {label_group}, ID: {label_idx})"
+                )
             else:
                 print(f"  {image_id} -> {os.path.basename(file_path)} {format_str} (Label: unknown)")
 
@@ -178,10 +197,10 @@ def test_image_path_mapping():
 
         # Count all file formats
         for img_path in dataset.image_paths.values():
-            if img_path.endswith('.nii.gz'):
-                file_formats['.nii.gz'] += 1
-            elif img_path.endswith('.nii'):
-                file_formats['.nii'] += 1
+            if img_path.endswith(".nii.gz"):
+                file_formats[".nii.gz"] += 1
+            elif img_path.endswith(".nii"):
+                file_formats[".nii"] += 1
 
         print("\nFile format distribution:")
         print(f"  .nii files: {file_formats['.nii']}")

@@ -15,14 +15,14 @@ Requirements:
     - FSL (for BET skull stripping)
 """
 
-import os
-import sys
-import glob
-import subprocess
 import argparse
+import glob
 import logging
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+import os
+import subprocess
+import sys
+from typing import List, Optional
+
 from tqdm import tqdm
 
 
@@ -47,12 +47,23 @@ def parse_arguments() -> argparse.Namespace:
                         help="Input directory containing MRI image files (.nii or .nii.gz)")
     parser.add_argument("--output", type=str, default=None,
                         help="Base output directory (default: parent dir of input directory)")
-    parser.add_argument("--template", type=str, default="data/ICBM152/mni_icbm152_nlin_sym_09a/mni_icbm152_t1_tal_nlin_sym_09a_brain.nii.gz",
-                        help="Template for registration")
+    parser.add_argument(
+        "--template",
+        type=str,
+        default="data/ICBM152/mni_icbm152_nlin_sym_09a/mni_icbm152_t1_tal_nlin_sym_09a_brain.nii.gz",
+        help="Template for registration"
+    )
     parser.add_argument("--no-progress", action="store_true",
                         help="Disable progress bars")
-    parser.add_argument("--include-dirs-regex", type=str, default=None,
-                        help="Comma-separated list of regex patterns to include specific first-level subdirectories. Example: '34.*,94*'")
+    parser.add_argument(
+        "--include-dirs-regex",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of regex patterns to include specific first-level "
+            "subdirectories. Example: '34.*,94*'"
+        )
+    )
 
     args = parser.parse_args()
 
@@ -281,7 +292,13 @@ def get_relative_path(file_path: str, base_dir: str) -> str:
         return os.path.basename(file_path)
 
 
-def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, template_file: str, show_progress: bool = True) -> None:
+def preprocess_mri_file(
+    input_file: str,
+    input_dir: str,
+    output_dir: str,
+    template_file: str,
+    show_progress: bool = True
+) -> None:
     """
     Execute the full preprocessing pipeline for a single file.
 
@@ -325,19 +342,25 @@ def preprocess_mri_file(input_file: str, input_dir: str, output_dir: str, templa
         input_basename = input_basename[:-4]
 
     # Define temporary file paths for intermediate processing
-    temp_registration_prefix = os.path.join(temp_dir, f"{os.path.basename(skull_stripped_path).replace('.nii.gz', '').replace('.nii', '')}_reg_")
+    basename_clean = os.path.basename(skull_stripped_path).replace('.nii.gz', '').replace('.nii', '')
+    temp_registration_prefix = os.path.join(temp_dir, f"{basename_clean}_reg_")
 
     try:
         # Define preprocessing steps
         steps = [
             ("Skull Stripping", lambda: skull_strip(input_file, skull_stripped_path)),
-            ("Registration", lambda: register_to_template(skull_stripped_path, template_file, temp_registration_prefix, registered_path)),
+            (
+                "Registration",
+                lambda: register_to_template(
+                    skull_stripped_path, template_file, temp_registration_prefix, registered_path
+                )
+            ),
             ("Resampling", lambda: resample_image(registered_path, resampled_path))
         ]
 
         # Execute steps with progress bar if enabled
         if show_progress:
-            for step_name, step_func in tqdm(steps, desc=f"Processing {os.path.basename(input_file)}", leave=False):
+            for _step_name, step_func in tqdm(steps, desc=f"Processing {os.path.basename(input_file)}", leave=False):
                 step_func()
         else:
             for step_name, step_func in steps:
@@ -429,7 +452,13 @@ def get_last_processed_file(output_dir: str) -> Optional[str]:
     return resampled_files[-1][0]
 
 
-def process_directory(input_dir: str, output_dir: str, template_file: str, show_progress: bool = True, include_dirs_regex: Optional[List[str]] = None) -> None:
+def process_directory(
+    input_dir: str,
+    output_dir: str,
+    template_file: str,
+    show_progress: bool = True,
+    include_dirs_regex: Optional[List[str]] = None
+) -> None:
     """
     Process all NIFTI files in the input directory.
 
@@ -456,7 +485,10 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
     if last_processed:
         logging.info(f"Found last processed file: {last_processed}")
         # Remove the last processed file from the list to reprocess it
-        last_processed_input = os.path.join(input_dir, os.path.relpath(last_processed, create_step_directory(output_dir, 3, "resampling")))
+        resampling_dir = create_step_directory(output_dir, 3, "resampling")
+        last_processed_input = os.path.join(
+            input_dir, os.path.relpath(last_processed, resampling_dir)
+        )
         if last_processed_input in nifti_files:
             nifti_files.remove(last_processed_input)
             logging.info("Will reprocess the last file to ensure it's not corrupted")
@@ -477,7 +509,11 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
     input("Press Enter to continue...")
 
     # Process each file with progress bar if enabled
-    file_iterator = tqdm(files_to_process, desc="Processing MRI files", unit="file") if show_progress else files_to_process
+    file_iterator = (
+        tqdm(files_to_process, desc="Processing MRI files", unit="file")
+        if show_progress
+        else files_to_process
+    )
 
     for nifti_file in file_iterator:
         rel_path = get_relative_path(nifti_file, input_dir)
@@ -486,7 +522,10 @@ def process_directory(input_dir: str, output_dir: str, template_file: str, show_
 
     # If there was a last processed file, reprocess it
     if last_processed:
-        last_processed_input = os.path.join(input_dir, os.path.relpath(last_processed, create_step_directory(output_dir, 3, "resampling")))
+        resampling_dir = create_step_directory(output_dir, 3, "resampling")
+        last_processed_input = os.path.join(
+            input_dir, os.path.relpath(last_processed, resampling_dir)
+        )
         if os.path.exists(last_processed_input):
             logging.info("Reprocessing last file to ensure it's not corrupted...")
             preprocess_mri_file(last_processed_input, input_dir, output_dir, template_file, show_progress)

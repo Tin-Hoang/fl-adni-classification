@@ -13,13 +13,13 @@ Example:
     python scripts/calculate_adni_statistics_by_diagnosis.py "data/ADNI/3T_bl_org_MRI_UniqueSID_1220images_fullmetadata.csv"
 """
 
-import pandas as pd
-import numpy as np
 import argparse
 import sys
-from pathlib import Path
-from typing import Dict, Any, Tuple
 import warnings
+from pathlib import Path
+from typing import Any, Dict
+
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 

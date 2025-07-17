@@ -1,28 +1,21 @@
 """Secure Aggregation (SecAgg) strategy implementation."""
 
-import os
 import hashlib
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, Any, List, Tuple, Optional, Union
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from flwr.common import Parameters, FitRes, EvaluateRes, parameters_to_ndarrays, ndarrays_to_parameters, FitIns, EvaluateIns
-from flwr.server.strategy import FedAvg
+from flwr.common import EvaluateIns, FitIns, FitRes, Parameters, ndarrays_to_parameters, parameters_to_ndarrays
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
+from flwr.server.strategy import FedAvg
+from torch.utils.data import DataLoader
 
-from .base import FLStrategyBase, ClientStrategyBase
 from adni_classification.config.config import Config
-from adni_flwr.task import set_params, get_params, safe_parameters_to_ndarrays, load_data, test_with_predictions, create_criterion
-from adni_classification.utils.visualization import plot_confusion_matrix
+from adni_flwr.task import get_params, safe_parameters_to_ndarrays, set_params
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
+from .base import ClientStrategyBase, FLStrategyBase
 
 
 class SecAggStrategy(FLStrategyBase):
@@ -35,7 +28,7 @@ class SecAggStrategy(FLStrategyBase):
         wandb_logger: Optional[Any] = None,
         noise_multiplier: float = 0.1,
         dropout_rate: float = 0.0,
-        **kwargs
+        **kwargs,
     ):
         """Initialize SecAgg strategy.
 
@@ -55,18 +48,18 @@ class SecAggStrategy(FLStrategyBase):
 
         # Extract specific parameters for FedAvg
         fedavg_params = {
-            'fraction_fit': getattr(config.fl, 'fraction_fit', 1.0),
-            'fraction_evaluate': getattr(config.fl, 'fraction_evaluate', 1.0),
-            'min_fit_clients': getattr(config.fl, 'min_fit_clients', 2),
-            'min_evaluate_clients': getattr(config.fl, 'min_evaluate_clients', 2),
-            'min_available_clients': getattr(config.fl, 'min_available_clients', 2),
+            "fraction_fit": getattr(config.fl, "fraction_fit", 1.0),
+            "fraction_evaluate": getattr(config.fl, "fraction_evaluate", 1.0),
+            "min_fit_clients": getattr(config.fl, "min_fit_clients", 2),
+            "min_evaluate_clients": getattr(config.fl, "min_evaluate_clients", 2),
+            "min_available_clients": getattr(config.fl, "min_available_clients", 2),
         }
 
         # Add aggregation functions if provided
-        if 'evaluate_metrics_aggregation_fn' in kwargs:
-            fedavg_params['evaluate_metrics_aggregation_fn'] = kwargs['evaluate_metrics_aggregation_fn']
-        if 'fit_metrics_aggregation_fn' in kwargs:
-            fedavg_params['fit_metrics_aggregation_fn'] = kwargs['fit_metrics_aggregation_fn']
+        if "evaluate_metrics_aggregation_fn" in kwargs:
+            fedavg_params["evaluate_metrics_aggregation_fn"] = kwargs["evaluate_metrics_aggregation_fn"]
+        if "fit_metrics_aggregation_fn" in kwargs:
+            fedavg_params["fit_metrics_aggregation_fn"] = kwargs["fit_metrics_aggregation_fn"]
 
         # Initialize standard FedAvg strategy for basic aggregation
         self.fedavg_strategy = FedAvg(**fedavg_params)
@@ -132,11 +125,7 @@ class SecAggStrategy(FLStrategyBase):
 
         return mask
 
-    def secure_aggregate(
-        self,
-        results: List[Tuple[ClientProxy, FitRes]],
-        round_num: int
-    ) -> Optional[Parameters]:
+    def secure_aggregate(self, results: List[Tuple[ClientProxy, FitRes]], round_num: int) -> Optional[Parameters]:
         """Perform secure aggregation of client updates.
 
         Args:
@@ -168,7 +157,7 @@ class SecAggStrategy(FLStrategyBase):
 
             # Apply mask to parameters (remove the mask that was added by client)
             unmasked_params = []
-            for param, mask in zip(client_params, client_mask):
+            for param, mask in zip(client_params, client_mask, strict=False):
                 unmasked_param = param - mask
                 unmasked_params.append(unmasked_param)
 
@@ -187,7 +176,7 @@ class SecAggStrategy(FLStrategyBase):
             # Weighted sum for each parameter
             weighted_sum = np.zeros_like(masked_params_list[0][i])
 
-            for j, (params, weight) in enumerate(zip(masked_params_list, weights)):
+            for _, (params, weight) in enumerate(zip(masked_params_list, weights, strict=False)):
                 weighted_sum += params[i] * (weight / total_examples)
 
             aggregated_params.append(weighted_sum)
@@ -207,16 +196,12 @@ class SecAggStrategy(FLStrategyBase):
 
         # Log client training metrics
         if self.wandb_logger:
-            for client_proxy, fit_res in results:
+            for _client_proxy, fit_res in results:
                 client_metrics = fit_res.metrics
                 if client_metrics:
                     client_id = fit_res.metrics.get("client_id", "unknown")
                     metrics_to_log = {k: v for k, v in client_metrics.items() if k != "client_id"}
-                    self.wandb_logger.log_metrics(
-                        metrics_to_log,
-                        prefix=f"client_{client_id}/fit",
-                        step=server_round
-                    )
+                    self.wandb_logger.log_metrics(metrics_to_log, prefix=f"client_{client_id}/fit", step=server_round)
 
         # Perform secure aggregation
         aggregated_parameters = self.secure_aggregate(results, server_round)
@@ -239,19 +224,21 @@ class SecAggStrategy(FLStrategyBase):
         # Log aggregated fit metrics with SecAgg-specific information
         if self.wandb_logger and metrics:
             metrics_with_secagg = metrics.copy()
-            self.wandb_logger.log_metrics(
-                metrics_with_secagg,
-                prefix="server",
-                step=server_round
-            )
+            self.wandb_logger.log_metrics(metrics_with_secagg, prefix="server", step=server_round)
 
         # Print server model's current metrics
-        print(f"Server model metrics after round {server_round} (SecAgg noise={self.noise_multiplier}, dropout={self.dropout_rate}):")
+        print(
+            f"Server model metrics after round {server_round} "
+            f"(SecAgg noise={self.noise_multiplier}, dropout={self.dropout_rate}):"
+        )
         for metric_name, metric_value in metrics.items():
             print(f"  {metric_name}: {metric_value}")
 
         # Save frequency checkpoint
-        if self.config.training.checkpoint.save_regular and server_round % self.config.training.checkpoint.save_frequency == 0:
+        if (
+            self.config.training.checkpoint.save_regular
+            and server_round % self.config.training.checkpoint.save_frequency == 0
+        ):
             self._save_checkpoint(self.model.state_dict(), server_round)
 
         return aggregated_parameters, metrics
@@ -261,8 +248,9 @@ class SecAggStrategy(FLStrategyBase):
         """Initialize global model parameters."""
         # Instead of delegating to fedavg_strategy (which returns None),
         # provide initial parameters from our server model
-        from adni_flwr.task import get_params
         from flwr.common import ndarrays_to_parameters
+
+        from adni_flwr.task import get_params
 
         print("SecAggStrategy: Initializing parameters from server model")
         ndarrays = get_params(self.model)
@@ -271,12 +259,12 @@ class SecAggStrategy(FLStrategyBase):
 
         return ndarrays_to_parameters(ndarrays)
 
-    def configure_fit(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, FitIns]]:
+    def configure_fit(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, FitIns]]:
         """Configure the next round of training."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_fit(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_fit(server_round, parameters, client_manager)
 
         # Add server_round and SecAgg parameters to the config for each client
         updated_instructions = []
@@ -288,21 +276,18 @@ class SecAggStrategy(FLStrategyBase):
             config["dropout_rate"] = self.dropout_rate
 
             # Create new FitIns with updated config
-            updated_fit_ins = FitIns(
-                parameters=fit_ins.parameters,
-                config=config
-            )
+            updated_fit_ins = FitIns(parameters=fit_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_fit_ins))
 
         # Add WandB run ID to instructions
         return self.add_wandb_config_to_instructions(updated_instructions)
 
-    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[ClientProxy, EvaluateIns]]:
+    def configure_evaluate(
+        self, server_round: int, parameters: Parameters, client_manager: ClientManager
+    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
         # Get the base configuration from the parent class
-        client_instructions = self.fedavg_strategy.configure_evaluate(
-            server_round, parameters, client_manager
-        )
+        client_instructions = self.fedavg_strategy.configure_evaluate(server_round, parameters, client_manager)
 
         # Add server_round to the config for each client
         updated_instructions = []
@@ -312,10 +297,7 @@ class SecAggStrategy(FLStrategyBase):
             config["server_round"] = server_round
 
             # Create new EvaluateIns with updated config
-            updated_evaluate_ins = EvaluateIns(
-                parameters=evaluate_ins.parameters,
-                config=config
-            )
+            updated_evaluate_ins = EvaluateIns(parameters=evaluate_ins.parameters, config=config)
             updated_instructions.append((client_proxy, updated_evaluate_ins))
 
         # Add WandB run ID to instructions
@@ -344,7 +326,7 @@ class SecAggClient(ClientStrategyBase):
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         noise_multiplier: float = 0.1,
         dropout_rate: float = 0.0,
-        **kwargs
+        **kwargs,
     ):
         """Initialize SecAgg client strategy.
 
@@ -364,7 +346,7 @@ class SecAggClient(ClientStrategyBase):
         self.noise_multiplier = noise_multiplier
         self.dropout_rate = dropout_rate
         # Client ID must be explicitly set - FAIL FAST if not specified
-        if not hasattr(config.fl, 'client_id') or config.fl.client_id is None:
+        if not hasattr(config.fl, "client_id") or config.fl.client_id is None:
             raise ValueError(
                 "ERROR: 'client_id' not specified in client config. "
                 "You must explicitly set 'client_id' in the FL config section. "
@@ -446,7 +428,7 @@ class SecAggClient(ClientStrategyBase):
 
         for param_array in params:
             # Create dropout mask
-            mask = np.random.binomial(1, 1-self.dropout_rate, param_array.shape)
+            mask = np.random.binomial(1, 1 - self.dropout_rate, param_array.shape)
             masked_param = param_array * mask
             masked_params.append(masked_param)
 
@@ -480,13 +462,7 @@ class SecAggClient(ClientStrategyBase):
         if "dropout_rate" in round_config:
             self.dropout_rate = round_config["dropout_rate"]
 
-    def train_epoch(
-        self,
-        train_loader: DataLoader,
-        epoch: int,
-        total_epochs: int,
-        **kwargs
-    ) -> Tuple[float, float]:
+    def train_epoch(self, train_loader: DataLoader, epoch: int, total_epochs: int, **kwargs) -> Tuple[float, float]:
         """Train the model for one epoch using SecAgg.
 
         Args:
@@ -541,7 +517,7 @@ class SecAggClient(ClientStrategyBase):
 
         # Step the scheduler only once per FL round (after the last local epoch)
         if self.scheduler is not None and epoch == total_epochs - 1:  # Only on last local epoch
-            current_lr_before = self.optimizer.param_groups[0]['lr']
+            current_lr_before = self.optimizer.param_groups[0]["lr"]
 
             # Handle ReduceLROnPlateau scheduler which requires validation loss
             if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -549,9 +525,12 @@ class SecAggClient(ClientStrategyBase):
             else:
                 self.scheduler.step()
 
-            current_lr_after = self.optimizer.param_groups[0]['lr']
+            current_lr_after = self.optimizer.param_groups[0]["lr"]
             if current_lr_before != current_lr_after:
-                print(f"FL Round {getattr(self, 'current_fl_round', '?')}: LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}")
+                print(
+                    f"FL Round {getattr(self, 'current_fl_round', '?')}: "
+                    f"LR changed from {current_lr_before:.8f} to {current_lr_after:.8f}"
+                )
 
         return avg_loss, avg_accuracy
 
@@ -574,7 +553,7 @@ class SecAggClient(ClientStrategyBase):
         client_mask = self.generate_client_mask(self.current_round)
         masked_params = []
 
-        for param, mask in zip(params, client_mask):
+        for param, mask in zip(params, client_mask, strict=False):
             masked_param = param + mask
             masked_params.append(masked_param)
 
@@ -587,7 +566,4 @@ class SecAggClient(ClientStrategyBase):
             Dictionary of custom metrics
         """
         # Return SecAgg-specific metrics for WandB tracking
-        return {
-            "noise_multiplier": self.noise_multiplier,
-            "dropout_rate": self.dropout_rate
-        }
+        return {"noise_multiplier": self.noise_multiplier, "dropout_rate": self.dropout_rate}

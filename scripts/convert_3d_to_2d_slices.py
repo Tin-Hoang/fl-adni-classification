@@ -7,13 +7,13 @@ extracts middle slices in three directions (axial, coronal, sagittal),
 and saves them as 2D PNG images for easy inspection.
 """
 
-import os
 import argparse
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+import matplotlib.pyplot as plt
 import nibabel as nib
+import numpy as np
 from tqdm import tqdm
 
 
@@ -261,7 +261,7 @@ def main():
     successful_files = 0
     total_slices = 0
 
-    print(f"\nProcessing files...")
+    print("\nProcessing files...")
     for file_path in tqdm(nifti_files, desc="Converting"):
         result = process_nifti_file(file_path, output_dir)
         results.append(result)
@@ -273,7 +273,7 @@ def main():
             print(f"FAILED: {result['file']} - {result['error']}")
 
     # Print summary
-    print(f"\n=== SUMMARY ===")
+    print("\n=== SUMMARY ===")
     print(f"Total files processed: {len(nifti_files)}")
     print(f"Successful files: {successful_files}")
     print(f"Failed files: {len(nifti_files) - successful_files}")
@@ -283,14 +283,14 @@ def main():
     # Print failed files details
     failed_files = [r for r in results if not r['success']]
     if failed_files:
-        print(f"\n=== FAILED FILES ===")
+        print("\n=== FAILED FILES ===")
         for result in failed_files:
             print(f"- {result['file']}: {result['error']}")
 
     # Print some successful files info
     successful_results = [r for r in results if r['success']]
     if successful_results:
-        print(f"\n=== SAMPLE SUCCESSFUL FILES ===")
+        print("\n=== SAMPLE SUCCESSFUL FILES ===")
         for result in successful_results[:5]:  # Show first 5
             print(f"- {result['file']}: shape {result['shape']}, {result['slices_saved']} slices saved")
         if len(successful_results) > 5:

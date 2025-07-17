@@ -1,39 +1,40 @@
 """Training script for ADNI classification."""
 
-import os
 import argparse
-from typing import Optional, Dict, Any, List, Tuple
+import gc
+import os
+import tempfile
+import time
+from collections import Counter
+from typing import Any, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-import wandb
-from wandb.sdk.wandb_run import Run as WandbRun
-from torch.amp import autocast, GradScaler
 import torch.multiprocessing as mp
-from tqdm import tqdm
+import torch.nn as nn
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
 )
-from collections import Counter
-import numpy as np
-import matplotlib.pyplot as plt
-import gc
-import tempfile
-import time
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-from adni_classification.models.model_factory import ModelFactory
+import wandb
+from adni_classification.config.config import Config
 from adni_classification.datasets.dataset_factory import create_adni_dataset, get_transforms_from_config
+from adni_classification.models.model_factory import ModelFactory
+from adni_classification.utils.losses import create_loss_function
 from adni_classification.utils.torch_utils import set_seed
 from adni_classification.utils.training_utils import get_scheduler
-from adni_classification.utils.losses import create_loss_function
 from adni_classification.utils.visualization import (
+    log_sample_images_to_wandb,
+    plot_confusion_matrix,
+    plot_training_history,
     visualize_batch,
     visualize_predictions,
-    plot_training_history,
-    plot_confusion_matrix,
-    log_sample_images_to_wandb
 )
-from adni_classification.config.config import Config
+from wandb.sdk.wandb_run import Run as WandbRun
 
 
 def compute_class_weights(
@@ -70,7 +71,10 @@ def compute_class_weights(
         class_weights = [total_samples / (num_classes * count) if count > 0 else 1.0 for count in sorted_counts]
     elif weight_type == "sqrt_inverse":
         # Square root of inverse frequency (less aggressive than inverse)
-        class_weights = [np.sqrt(total_samples / (num_classes * count)) if count > 0 else 1.0 for count in sorted_counts]
+        class_weights = [
+            np.sqrt(total_samples / (num_classes * count)) if count > 0 else 1.0
+            for count in sorted_counts
+        ]
     elif weight_type == "effective":
         # Effective number of samples weighting with beta=0.9999
         beta = 0.9999
@@ -357,7 +361,19 @@ def load_checkpoint(
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[Any] = None,
     scaler: Optional[GradScaler] = None,
-) -> Tuple[nn.Module, Optional[torch.optim.Optimizer], Optional[Any], Optional[GradScaler], int, List[float], List[float], List[float], List[float], float, Optional[torch.Tensor]]:
+) -> Tuple[
+    nn.Module,
+    Optional[torch.optim.Optimizer],
+    Optional[Any],
+    Optional[GradScaler],
+    int,
+    List[float],
+    List[float],
+    List[float],
+    List[float],
+    float,
+    Optional[torch.Tensor]
+]:
     """Load training checkpoint.
 
     Args:
@@ -368,7 +384,8 @@ def load_checkpoint(
         scaler: The GradScaler to load state into (optional)
 
     Returns:
-        Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights)
+        Tuple of (model, optimizer, scheduler, scaler, start_epoch, train_losses,
+                 val_losses, train_accs, val_accs, best_val_acc, class_weights)
     """
     print(f"Loading checkpoint from: {checkpoint_path}")
 
@@ -376,7 +393,7 @@ def load_checkpoint(
     try:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
     except Exception as e:
-        raise RuntimeError(f"Failed to load checkpoint from {checkpoint_path}: {e}")
+        raise RuntimeError(f"Failed to load checkpoint from {checkpoint_path}: {e}") from e
 
     # Check if this is a proper training checkpoint format
     if not isinstance(checkpoint, dict):
@@ -408,7 +425,7 @@ def load_checkpoint(
 
         print("✓ Model state dict loaded successfully")
     except Exception as e:
-        raise RuntimeError(f"Failed to load model state dict: {e}")
+        raise RuntimeError(f"Failed to load model state dict: {e}") from e
 
     # Load optimizer state if available
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
@@ -457,7 +474,10 @@ def load_checkpoint(
 
     print(f"✓ Checkpoint loaded: epoch {start_epoch}, best val acc: {best_val_acc:.2f}%")
 
-    return model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights
+    return (
+        model, optimizer, scheduler, scaler, start_epoch,
+        train_losses, val_losses, train_accs, val_accs, best_val_acc, class_weights
+    )
 
 
 def cleanup_resources():
@@ -469,7 +489,7 @@ def cleanup_resources():
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except:
+    except Exception:
         pass
 
     # 2. Run garbage collection once
@@ -493,7 +513,7 @@ def cleanup_resources():
                             os.rmdir(path)
                     except (PermissionError, OSError):
                         pass
-    except:
+    except Exception:
         pass
 
 
@@ -515,7 +535,7 @@ def mp_cleanup():
             # Force the resource tracker to clean up
             from multiprocessing.resource_tracker import _resource_tracker
             _resource_tracker._check_trash()
-        except:
+        except Exception:
             pass
 
 
@@ -712,7 +732,11 @@ def main():
     # All models handle pretrained_checkpoint through the model factory during creation
     # This section is only for resuming training from an existing training checkpoint
     # We distinguish between pretrained weights and training checkpoints by checking the checkpoint content
-    if hasattr(config.model, 'pretrained_checkpoint') and config.model.pretrained_checkpoint and os.path.isfile(config.model.pretrained_checkpoint):
+    if (
+        hasattr(config.model, 'pretrained_checkpoint')
+        and config.model.pretrained_checkpoint
+        and os.path.isfile(config.model.pretrained_checkpoint)
+    ):
         # Load the checkpoint to check if it's a training checkpoint or pretrained weights
         try:
             checkpoint_preview = torch.load(config.model.pretrained_checkpoint, map_location='cpu')
@@ -728,20 +752,22 @@ def main():
             if is_training_checkpoint:
                 print(f"Detected training checkpoint, resuming training from: {config.model.pretrained_checkpoint}")
                 try:
-                    model, optimizer, scheduler, scaler, start_epoch, train_losses, val_losses, train_accs, val_accs, best_val_acc, loaded_weights = load_checkpoint(
-                        config.model.pretrained_checkpoint, model
-                    )
+                    (
+                        model, optimizer, scheduler, scaler, start_epoch,
+                        train_losses, val_losses, train_accs, val_accs,
+                        best_val_acc, loaded_weights
+                    ) = load_checkpoint(config.model.pretrained_checkpoint, model)
                     # We need to increment the epoch as start_epoch is the last completed epoch
                     start_epoch += 1
                     print(f"Resuming from epoch {start_epoch} with best validation accuracy: {best_val_acc:.2f}%")
 
-                    # If class weights were in the checkpoint and we're using class weights, use them only if they match our model's num_classes
                     if loaded_weights is not None and config.training.use_class_weights:
                         if loaded_weights.size(0) == model_kwargs["num_classes"]:
                             class_weights = loaded_weights.to(device)
                             print(f"Using class weights from checkpoint: {class_weights}")
                         else:
-                            print(f"Warning: Loaded class weights have shape {loaded_weights.size(0)} but model has {model_kwargs['num_classes']} classes.")
+                            print(f"Warning: Loaded class weights have shape {loaded_weights.size(0)} "
+                                  f"but model has {model_kwargs['num_classes']} classes.")
                             print("Will recompute class weights based on current dataset.")
                             class_weights = None
                 except Exception as e:
@@ -749,7 +775,7 @@ def main():
                     print("Starting training from scratch...")
                     start_epoch = 0
             else:
-                print(f"Detected pretrained weights checkpoint (handled during model creation)")
+                print("Detected pretrained weights checkpoint (handled during model creation)")
 
         except Exception as e:
             print(f"Could not preview checkpoint {config.model.pretrained_checkpoint}: {e}")
@@ -790,7 +816,8 @@ def main():
         # Verify if the dataset labels match our expected number of classes
         max_label = max(labels) if labels else 0
         if max_label >= num_classes:
-            print(f"Warning: Dataset contains labels up to {max_label} but model only has {num_classes} output classes.")
+            print(f"Warning: Dataset contains labels up to {max_label} "
+                  f"but model only has {num_classes} output classes.")
             print("This may indicate a mismatch between dataset classification_mode and model num_classes.")
 
         # Compute class weights directly from the labels provided by the dataset
@@ -830,7 +857,8 @@ def main():
     # Visualize training samples if requested
     if config.training.visualize:
         print("Visualizing training samples...")
-        visualize_batch(train_loader, num_samples=4, save_path=os.path.join(config.training.output_dir, "train_samples.png"))
+        visualize_batch(train_loader, num_samples=4,
+                        save_path=os.path.join(config.training.output_dir, "train_samples.png"))
 
     try:
         # Training loop
@@ -862,7 +890,8 @@ def main():
                 wandb_run.log(wandb_log, step=epoch + 1)
 
             # Check if validation should be run this epoch
-            should_validate = (epoch + 1) % config.training.val_epoch_freq == 0 or (epoch + 1) == config.training.num_epochs
+            should_validate = (epoch + 1) % config.training.val_epoch_freq == 0 \
+                              or (epoch + 1) == config.training.num_epochs
 
             if should_validate:
                 # Validate
@@ -976,7 +1005,8 @@ def main():
                     # Only clean up after potentially memory-intensive operations
                     torch.cuda.empty_cache()
             else:
-                print(f"\tSkipping validation for epoch {epoch + 1} (validation frequency: every {config.training.val_epoch_freq} epochs)")
+                print(f"\tSkipping validation for epoch {epoch + 1} "
+                      f"(validation frequency: every {config.training.val_epoch_freq} epochs)")
 
                 # For non-plateau schedulers, we need to step even without validation
                 if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
@@ -1001,7 +1031,7 @@ def main():
         if wandb_run is not None:
             try:
                 wandb_run.finish()
-            except:
+            except Exception:
                 pass
         raise
     finally:
@@ -1024,7 +1054,7 @@ def main():
             # Force multiprocessing cleanup
             if hasattr(mp, '_cleanup'):
                 mp._cleanup()
-        except:
+        except Exception:
             pass
 
 

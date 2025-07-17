@@ -1,13 +1,14 @@
 """Factory module for creating ADNI datasets."""
 
-from typing import Dict, Any, Union, Optional, Tuple
-import torch
-import monai
+from typing import Any, Dict, Optional, Union
 
-from adni_classification.datasets.adni_smartcache_dataset import ADNISmartCacheDataset
+import monai
+import torch
+
 from adni_classification.datasets.adni_cache_dataset import ADNICacheDataset
 from adni_classification.datasets.adni_dataset import ADNIDataset
 from adni_classification.datasets.adni_persistent_dataset import ADNIPersistentDataset
+from adni_classification.datasets.adni_smartcache_dataset import ADNISmartCacheDataset
 from adni_classification.datasets.transforms import get_transforms
 
 
@@ -22,7 +23,7 @@ def create_adni_dataset(
     cache_num: Optional[int] = None,
     cache_dir: str = "./persistent_cache",
     classification_mode: str = "CN_MCI_AD",
-    **kwargs: Any
+    **kwargs: Any,
 ) -> Union[ADNISmartCacheDataset, ADNICacheDataset, ADNIDataset, ADNIPersistentDataset]:
     """Create a dataset instance based on the specified type.
 
@@ -59,7 +60,7 @@ def create_adni_dataset(
         "img_dir": img_dir,
         "transform": transform,
         "classification_mode": classification_mode,
-        **kwargs
+        **kwargs,
     }
 
     if dataset_type.lower() == "smartcache":
@@ -68,33 +69,24 @@ def create_adni_dataset(
             num_workers=num_workers,
             replace_rate=replace_rate,
             cache_num=cache_num,
-            **common_kwargs
+            **common_kwargs,
         )
     elif dataset_type.lower() == "cache":
         # Note: CacheDataset doesn't use replace_rate, but we ignore it here for API compatibility
-        return ADNICacheDataset(
-            cache_rate=cache_rate,
-            num_workers=num_workers,
-            cache_num=cache_num,
-            **common_kwargs
-        )
+        return ADNICacheDataset(cache_rate=cache_rate, num_workers=num_workers, cache_num=cache_num, **common_kwargs)
     elif dataset_type.lower() == "persistent":
-        return ADNIPersistentDataset(
-            cache_dir=cache_dir,
-            **common_kwargs
-        )
+        return ADNIPersistentDataset(cache_dir=cache_dir, **common_kwargs)
     elif dataset_type.lower() == "normal":
-        return ADNIDataset(
-            **common_kwargs
-        )
+        return ADNIDataset(**common_kwargs)
     else:
-        raise ValueError(f"Dataset type '{dataset_type}' not supported. Available types: 'smartcache', 'cache', 'persistent', 'normal'")
+        raise ValueError(
+            f"Dataset type '{dataset_type}' not supported. "
+            f"Available types: 'smartcache', 'cache', 'persistent', 'normal'"
+        )
 
 
 def get_transforms_from_config(
-    config: Union[Dict[str, Any], Any],
-    mode: str = "train",
-    device: Optional[torch.device] = None
+    config: Union[Dict[str, Any], Any], mode: str = "train", device: Optional[torch.device] = None
 ) -> monai.transforms.Compose:
     """Get transforms based on configuration.
 
@@ -131,5 +123,5 @@ def get_transforms_from_config(
         resize_mode=resize_mode,
         use_spacing=use_spacing,
         spacing_size=spacing_size,
-        device=device
+        device=device,
     )

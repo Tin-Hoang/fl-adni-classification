@@ -1,8 +1,9 @@
 """3D DenseNet model for ADNI classification."""
 
 from typing import Optional, Tuple
-import torch
+
 import monai.networks.nets as monai_nets
+import torch
 
 from adni_classification.models.base_model import BaseModel
 

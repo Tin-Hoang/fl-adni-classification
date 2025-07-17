@@ -1,15 +1,17 @@
 """Strategy factory for dynamic FL strategy loading."""
 
-from typing import Dict, Any, Tuple, Type
+from typing import Any, Dict, Type
+
 import torch
 import torch.nn as nn
 
-from .base import FLStrategyBase, ClientStrategyBase
-from .fedavg import FedAvgStrategy, FedAvgClient
-from .fedprox import FedProxStrategy, FedProxClient
-from .secagg import SecAggStrategy, SecAggClient
-from .secaggplus import SecAggPlusStrategy, SecAggPlusClient
 from adni_classification.config.config import Config
+
+from .base import ClientStrategyBase, FLStrategyBase
+from .fedavg import FedAvgClient, FedAvgStrategy
+from .fedprox import FedProxClient, FedProxStrategy
+from .secagg import SecAggClient, SecAggStrategy
+from .secaggplus import SecAggPlusClient, SecAggPlusStrategy
 
 
 class StrategyFactory:
@@ -34,12 +36,7 @@ class StrategyFactory:
 
     @classmethod
     def create_server_strategy(
-        self,
-        strategy_name: str,
-        config: Config,
-        model: nn.Module,
-        wandb_logger: Any = None,
-        **kwargs
+        self, strategy_name: str, config: Config, model: nn.Module, wandb_logger: Any = None, **kwargs
     ) -> FLStrategyBase:
         """Create a server-side FL strategy.
 
@@ -68,12 +65,7 @@ class StrategyFactory:
 
         print(f"Creating {strategy_name} server strategy with params: {strategy_params}")
 
-        return strategy_class(
-            config=config,
-            model=model,
-            wandb_logger=wandb_logger,
-            **strategy_params
-        )
+        return strategy_class(config=config, model=model, wandb_logger=wandb_logger, **strategy_params)
 
     @classmethod
     def create_client_strategy(
@@ -85,7 +77,7 @@ class StrategyFactory:
         criterion: nn.Module,
         device: torch.device,
         scheduler: torch.optim.lr_scheduler._LRScheduler = None,
-        **kwargs
+        **kwargs,
     ) -> ClientStrategyBase:
         """Create a client-side FL strategy.
 
@@ -124,7 +116,7 @@ class StrategyFactory:
             criterion=criterion,
             device=device,
             scheduler=scheduler,
-            **strategy_params
+            **strategy_params,
         )
 
     @classmethod
@@ -141,26 +133,26 @@ class StrategyFactory:
         params = {}
 
         # Check if config has strategy-specific section
-        if hasattr(config, 'strategies') and hasattr(config.strategies, strategy_name):
+        if hasattr(config, "strategies") and hasattr(config.strategies, strategy_name):
             strategy_config = getattr(config.strategies, strategy_name)
             params = strategy_config.__dict__.copy()
 
         # Handle specific strategy parameters
         if strategy_name == "fedprox":
-            params.setdefault("mu", getattr(config.fl, 'fedprox_mu', 0.01))
+            params.setdefault("mu", getattr(config.fl, "fedprox_mu", 0.01))
 
         elif strategy_name == "secagg":
-            params.setdefault("noise_multiplier", getattr(config.fl, 'secagg_noise_multiplier', 0.1))
-            params.setdefault("dropout_rate", getattr(config.fl, 'secagg_dropout_rate', 0.0))
+            params.setdefault("noise_multiplier", getattr(config.fl, "secagg_noise_multiplier", 0.1))
+            params.setdefault("dropout_rate", getattr(config.fl, "secagg_dropout_rate", 0.0))
 
         elif strategy_name in ["secagg+", "secaggplus"]:
             # SecAgg+ parameters
-            params.setdefault("num_shares", getattr(config.fl, 'secagg_num_shares', 3))
-            params.setdefault("reconstruction_threshold", getattr(config.fl, 'secagg_reconstruction_threshold', 3))
-            params.setdefault("max_weight", getattr(config.fl, 'secagg_max_weight', 16777216))
-            params.setdefault("timeout", getattr(config.fl, 'secagg_timeout', None))
-            params.setdefault("clipping_range", getattr(config.fl, 'secagg_clipping_range', 1.0))
-            params.setdefault("quantization_range", getattr(config.fl, 'secagg_quantization_range', 2**20))
+            params.setdefault("num_shares", getattr(config.fl, "secagg_num_shares", 3))
+            params.setdefault("reconstruction_threshold", getattr(config.fl, "secagg_reconstruction_threshold", 3))
+            params.setdefault("max_weight", getattr(config.fl, "secagg_max_weight", 16777216))
+            params.setdefault("timeout", getattr(config.fl, "secagg_timeout", None))
+            params.setdefault("clipping_range", getattr(config.fl, "secagg_clipping_range", 1.0))
+            params.setdefault("quantization_range", getattr(config.fl, "secagg_quantization_range", 2**20))
 
         return params
 
@@ -171,17 +163,14 @@ class StrategyFactory:
         Returns:
             Dictionary containing server and client strategies
         """
-        return {
-            "server": self.SERVER_STRATEGIES.copy(),
-            "client": self.CLIENT_STRATEGIES.copy()
-        }
+        return {"server": self.SERVER_STRATEGIES.copy(), "client": self.CLIENT_STRATEGIES.copy()}
 
     @classmethod
     def register_strategy(
         self,
         strategy_name: str,
         server_class: Type[FLStrategyBase] = None,
-        client_class: Type[ClientStrategyBase] = None
+        client_class: Type[ClientStrategyBase] = None,
     ):
         """Register a new strategy.
 
@@ -241,7 +230,7 @@ class StrategyConfigValidator:
         Raises:
             ValueError: If configuration is invalid
         """
-        mu = getattr(config.fl, 'fedprox_mu', 0.01)
+        mu = getattr(config.fl, "fedprox_mu", 0.01)
         if not isinstance(mu, (int, float)) or mu < 0:
             raise ValueError(f"FedProx mu must be a non-negative number, got: {mu}")
         return True
@@ -259,8 +248,8 @@ class StrategyConfigValidator:
         Raises:
             ValueError: If configuration is invalid
         """
-        noise_multiplier = getattr(config.fl, 'secagg_noise_multiplier', 0.1)
-        dropout_rate = getattr(config.fl, 'secagg_dropout_rate', 0.0)
+        noise_multiplier = getattr(config.fl, "secagg_noise_multiplier", 0.1)
+        dropout_rate = getattr(config.fl, "secagg_dropout_rate", 0.0)
 
         if not isinstance(noise_multiplier, (int, float)) or noise_multiplier < 0:
             raise ValueError(f"SecAgg noise_multiplier must be a non-negative number, got: {noise_multiplier}")
@@ -283,17 +272,19 @@ class StrategyConfigValidator:
         Raises:
             ValueError: If configuration is invalid
         """
-        num_shares = getattr(config.fl, 'secagg_num_shares', 3)
-        reconstruction_threshold = getattr(config.fl, 'secagg_reconstruction_threshold', 3)
-        max_weight = getattr(config.fl, 'secagg_max_weight', 16777216)
-        timeout = getattr(config.fl, 'secagg_timeout', None)
-        clipping_range = getattr(config.fl, 'secagg_clipping_range', 1.0)
-        quantization_range = getattr(config.fl, 'secagg_quantization_range', 2**20)
+        num_shares = getattr(config.fl, "secagg_num_shares", 3)
+        reconstruction_threshold = getattr(config.fl, "secagg_reconstruction_threshold", 3)
+        max_weight = getattr(config.fl, "secagg_max_weight", 16777216)
+        timeout = getattr(config.fl, "secagg_timeout", None)
+        clipping_range = getattr(config.fl, "secagg_clipping_range", 1.0)
+        quantization_range = getattr(config.fl, "secagg_quantization_range", 2**20)
 
         if not isinstance(num_shares, (int, float)) or num_shares < 0:
             raise ValueError(f"SecAgg+ num_shares must be a non-negative number, got: {num_shares}")
         if not isinstance(reconstruction_threshold, (int, float)) or reconstruction_threshold < 0:
-            raise ValueError(f"SecAgg+ reconstruction_threshold must be a non-negative number, got: {reconstruction_threshold}")
+            raise ValueError(
+                f"SecAgg+ reconstruction_threshold must be a non-negative number, got: {reconstruction_threshold}"
+            )
         if not isinstance(max_weight, (int, float)) or max_weight < 0:
             raise ValueError(f"SecAgg+ max_weight must be a non-negative number, got: {max_weight}")
         if timeout is not None and not isinstance(timeout, (int, float)):

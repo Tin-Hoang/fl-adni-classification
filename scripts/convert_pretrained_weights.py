@@ -6,18 +6,18 @@ This script loads the original pretrained weights and converts them to be compat
 current RosannaCNN model implementation, saving in the checkpoint format used by the training script.
 """
 
-import torch
-import torch.nn as nn
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
+import torch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from adni_classification.models.rosanna_cnn import RosannaCNN, RosannaCNNConfig
+from adni_classification.models.rosanna_cnn import RosannaCNN
 
 
 def load_original_weights(weights_path: str) -> dict:
@@ -37,7 +37,7 @@ def load_original_weights(weights_path: str) -> dict:
     # Load the original weights
     original_weights = torch.load(weights_path, map_location='cpu')
 
-    print(f"Original weights loaded successfully")
+    print("Original weights loaded successfully")
     print(f"Keys in original weights: {list(original_weights.keys())}")
 
     return original_weights
@@ -207,7 +207,7 @@ def save_converted_checkpoint(checkpoint: dict, output_path: str) -> None:
     # Save the checkpoint
     torch.save(checkpoint, output_path)
 
-    print(f"✓ Converted checkpoint saved successfully")
+    print("✓ Converted checkpoint saved successfully")
 
 
 def verify_checkpoint_loading(checkpoint_path: str, num_classes: int = 2) -> bool:
@@ -220,7 +220,7 @@ def verify_checkpoint_loading(checkpoint_path: str, num_classes: int = 2) -> boo
     Returns:
         True if verification successful, False otherwise
     """
-    print(f"\nVerifying checkpoint loading...")
+    print("\nVerifying checkpoint loading...")
 
     try:
         # Create model
@@ -247,7 +247,7 @@ def verify_checkpoint_loading(checkpoint_path: str, num_classes: int = 2) -> boo
 
         # Print checkpoint metadata
         if 'pretrained_info' in checkpoint:
-            print(f"✓ Checkpoint metadata:")
+            print("✓ Checkpoint metadata:")
             for key, value in checkpoint['pretrained_info'].items():
                 print(f"    {key}: {value}")
 

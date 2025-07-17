@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Flower Multi-Machine Runner with Full Process Isolation Mode
-This version uses Flower's Process Isolation Mode on both server and client sides to enable PyTorch DataLoader multiprocessing.
+This version uses Flower's Process Isolation Mode on both server and client sides to enable
+PyTorch DataLoader multiprocessing.
 
 Features:
 - Full Process Isolation Mode (Server: SuperLink + ServerApp, Client: SuperNode + ClientApp)
@@ -24,20 +25,29 @@ Client Side:
 Process Isolation: Allows PyTorch multiprocessing without daemon restrictions on both sides
 """
 
-import paramiko
-import time
+import codecs
+import select
 import signal
+import socket
 import sys
 import threading
-import socket
-import select
-import codecs
-import os
-from typing import List, Dict
+import time
 from datetime import datetime
+from typing import Dict, List
+
+import paramiko
+
 
 class FlowerMultiMachineTmuxRunner:
-    def __init__(self, server_config: Dict, clients_config: List[Dict], project_dir: str, ssh_timeout: int = 30, ssh_auth_timeout: int = 30, ssh_banner_timeout: int = 30):
+    def __init__(
+        self,
+        server_config: Dict,
+        clients_config: List[Dict],
+        project_dir: str,
+        ssh_timeout: int = 30,
+        ssh_auth_timeout: int = 30,
+        ssh_banner_timeout: int = 30,
+    ):
         self.server_config = server_config
         self.clients_config = clients_config
         self.project_dir = project_dir
@@ -55,7 +65,9 @@ class FlowerMultiMachineTmuxRunner:
         """Generate timestamp string for log files"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def update_config_file(self, ssh_client, config_file_path: str, train_csv_path: str, val_csv_path: str, experiment_idx: int):
+    def update_config_file(
+        self, ssh_client, config_file_path: str, train_csv_path: str, val_csv_path: str, experiment_idx: int
+    ):
         """Update a config file with new data paths for sequential experiments"""
         try:
             print(f"📝 Updating config file: {config_file_path}")
@@ -74,7 +86,10 @@ class FlowerMultiMachineTmuxRunner:
                 # Try to find similar files for debugging
                 config_dir = "/".join(config_file_path.split("/")[:-1])
                 if config_dir:
-                    find_command = f"cd {self.project_dir} && find {config_dir} -name '*.yaml' -type f 2>/dev/null || echo 'Directory not found'"
+                    find_command = (
+                        f"cd {self.project_dir} && find {config_dir} -name '*.yaml' "
+                        f"-type f 2>/dev/null || echo 'Directory not found'"
+                    )
                     stdin, stdout, stderr = ssh_client.exec_command(find_command)
                     find_output = stdout.read().decode()
                     print(f"🔍 Available config files in {config_dir}:")
@@ -86,7 +101,7 @@ class FlowerMultiMachineTmuxRunner:
             # Read current config file
             read_command = f"cd {self.project_dir} && cat {config_file_path}"
             stdin, stdout, stderr = ssh_client.exec_command(read_command)
-            config_content = stdout.read().decode()
+            stdout.read().decode()  # Read to consume output but don't store
             error = stderr.read().decode()
 
             if error:
@@ -99,7 +114,8 @@ class FlowerMultiMachineTmuxRunner:
             try:
                 # Look for pattern like "seed01", "seed10", "seed42", etc.
                 import re
-                seed_match = re.search(r'seed(\d+)', train_csv_path)
+
+                seed_match = re.search(r"seed(\d+)", train_csv_path)
                 if seed_match:
                     seed_id = f"seed{seed_match.group(1)}"
                     print(f"🔍 Extracted seed ID: {seed_id}")
@@ -109,7 +125,10 @@ class FlowerMultiMachineTmuxRunner:
                 print(f"⚠️ Error extracting seed ID: {e}")
 
             # Use sed to update train_csv_path line
-            train_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*train_csv_path:.*|  train_csv_path: \"{train_csv_path}\"|' {config_file_path}"
+            train_update_command = (
+                f"cd {self.project_dir} && sed -i "
+                f"'s|^\\s*train_csv_path:.*|  train_csv_path: \"{train_csv_path}\"|' {config_file_path}"
+            )
             stdin, stdout, stderr = ssh_client.exec_command(train_update_command)
             train_error = stderr.read().decode()
 
@@ -118,7 +137,10 @@ class FlowerMultiMachineTmuxRunner:
                 return False
 
             # Use sed to update val_csv_path line
-            val_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*val_csv_path:.*|  val_csv_path: \"{val_csv_path}\"|' {config_file_path}"
+            val_update_command = (
+                f"cd {self.project_dir} && sed -i "
+                f"'s|^\\s*val_csv_path:.*|  val_csv_path: \"{val_csv_path}\"|' {config_file_path}"
+            )
             stdin, stdout, stderr = ssh_client.exec_command(val_update_command)
             val_error = stderr.read().decode()
 
@@ -132,7 +154,11 @@ class FlowerMultiMachineTmuxRunner:
 
                 # Update wandb run_name: properly remove existing seed suffix and add new one
                 # Use a more precise regex that captures everything before the -seed pattern
-                run_name_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*run_name:\\s*\"\\(.*\\)-seed[0-9]\\+\".*|  run_name: \"\\1-{seed_id}\"|' {config_file_path}"
+                run_name_update_command = (
+                    f'cd {self.project_dir} && sed -i '
+                    f'\'s|^\\s*run_name:\\s*"\\(.*\\)-seed[0-9]\\+".*|  run_name: "\\1-{seed_id}"|\' '
+                    f'{config_file_path}'
+                )
                 stdin, stdout, stderr = ssh_client.exec_command(run_name_update_command)
                 run_name_error = stderr.read().decode()
 
@@ -140,7 +166,11 @@ class FlowerMultiMachineTmuxRunner:
                     print(f"⚠️ Warning updating wandb run_name: {run_name_error}")
 
                 # Update wandb notes: properly remove existing seed suffix and add new one
-                notes_update_command = f"cd {self.project_dir} && sed -i 's|^\\s*notes:\\s*\"\\(.*\\)-seed[0-9]\\+\".*|  notes: \"\\1-{seed_id}\"|' {config_file_path}"
+                notes_update_command = (
+                    f'cd {self.project_dir} && sed -i '
+                    f'\'s|^\\s*notes:\\s*"\\(.*\\)-seed[0-9]\\+".*|  notes: "\\1-{seed_id}"|\' '
+                    f'{config_file_path}'
+                )
                 stdin, stdout, stderr = ssh_client.exec_command(notes_update_command)
                 notes_error = stderr.read().decode()
 
@@ -153,7 +183,10 @@ class FlowerMultiMachineTmuxRunner:
                     print(f"🔢 Updating training.seed with numeric value: {numeric_seed}")
 
                     # Update training.seed field
-                    training_seed_command = f"cd {self.project_dir} && sed -i 's|^\\s*seed:\\s*[0-9]\\+.*|  seed: {numeric_seed}|' {config_file_path}"
+                    training_seed_command = (
+                        f"cd {self.project_dir} && sed -i "
+                        f"'s|^\\s*seed:\\s*[0-9]\\+.*|  seed: {numeric_seed}|' {config_file_path}"
+                    )
                     stdin, stdout, stderr = ssh_client.exec_command(training_seed_command)
                     training_seed_error = stderr.read().decode()
 
@@ -170,13 +203,15 @@ class FlowerMultiMachineTmuxRunner:
                 print("⚠️ Skipping wandb update due to unknown seed ID")
 
             # Verify the changes were made
-            verify_command = f"cd {self.project_dir} && grep -E '(train_csv_path|val_csv_path|run_name|notes):' {config_file_path}"
+            verify_command = (
+                f"cd {self.project_dir} && grep -E '(train_csv_path|val_csv_path|run_name|notes):' {config_file_path}"
+            )
             stdin, stdout, stderr = ssh_client.exec_command(verify_command)
             verify_output = stdout.read().decode()
 
             if verify_output:
-                print(f"✅ Updated configuration verified:")
-                for line in verify_output.strip().split('\n'):
+                print("✅ Updated configuration verified:")
+                for line in verify_output.strip().split("\n"):
                     if line.strip():
                         print(f"   {line.strip()}")
             else:
@@ -188,6 +223,7 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ Error updating config file {config_file_path}: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -208,13 +244,7 @@ class FlowerMultiMachineTmuxRunner:
             train_csv_path = train_labels[experiment_idx]
             val_csv_path = val_labels[experiment_idx]
 
-            return self.update_config_file(
-                self.server_ssh,
-                config_file,
-                train_csv_path,
-                val_csv_path,
-                experiment_idx
-            )
+            return self.update_config_file(self.server_ssh, config_file, train_csv_path, val_csv_path, experiment_idx)
 
         except Exception as e:
             print(f"❌ Error updating server config for experiment {experiment_idx}: {e}")
@@ -247,13 +277,7 @@ class FlowerMultiMachineTmuxRunner:
                     print(f"❌ No SSH connection for client {i}")
                     continue
 
-                if self.update_config_file(
-                    ssh_client,
-                    config_file,
-                    train_csv_path,
-                    val_csv_path,
-                    experiment_idx
-                ):
+                if self.update_config_file(ssh_client, config_file, train_csv_path, val_csv_path, experiment_idx):
                     success_count += 1
 
             except Exception as e:
@@ -273,12 +297,15 @@ class FlowerMultiMachineTmuxRunner:
             if server_config.get("config_file"):
                 # Try to read strategy from server config file
                 try:
-                    read_server_config_cmd = f"cd {self.project_dir} && grep -E 'strategy:' {server_config['config_file']} | head -1"
+                    read_server_config_cmd = (
+                        f"cd {self.project_dir} && grep -E 'strategy:' {server_config['config_file']} | head -1"
+                    )
                     stdin, stdout, stderr = self.server_ssh.exec_command(read_server_config_cmd)
                     strategy_line = stdout.read().decode().strip()
                     if strategy_line:
                         # Extract strategy value from YAML line like "strategy: fedavg" or "strategy: \"secagg+\""
                         import re
+
                         strategy_match = re.search(r'strategy:\s*["\']?([^"\']+)["\']?', strategy_line)
                         if strategy_match:
                             strategy = strategy_match.group(1).strip().lower()
@@ -310,7 +337,7 @@ class FlowerMultiMachineTmuxRunner:
                 print("❌ pyproject.toml is empty")
                 return False
 
-            lines = content.split('\n')
+            lines = content.split("\n")
             updated_lines = []
             in_app_components = False
             in_app_config = False
@@ -370,14 +397,14 @@ class FlowerMultiMachineTmuxRunner:
                 # Update options.num-supernodes
                 elif in_federation_config and line.strip().startswith("options.num-supernodes"):
                     num_clients = len(clients_config)
-                    updated_lines.append(f'options.num-supernodes = {num_clients}')
+                    updated_lines.append(f"options.num-supernodes = {num_clients}")
                     print(f"📝 Updated options.num-supernodes: {num_clients}")
 
                 else:
                     updated_lines.append(line)
 
             # Write updated content back
-            updated_content = '\n'.join(updated_lines)
+            updated_content = "\n".join(updated_lines)
             write_command = f"cat > {pyproject_path} << 'EOF'\n{updated_content}\nEOF"
             stdin, stdout, stderr = self.server_ssh.exec_command(write_command)
             error = stderr.read().decode()
@@ -392,6 +419,7 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ Error updating pyproject.toml: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -441,7 +469,7 @@ class FlowerMultiMachineTmuxRunner:
         Robust UTF-8 streaming from SSH channel with proper handling of partial characters.
         Returns (should_continue, completion_detected)
         """
-        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
         try:
             if not channel.recv_ready():
@@ -460,10 +488,16 @@ class FlowerMultiMachineTmuxRunner:
                 timeout_counter_ref[0] = 0  # Reset timeout when receiving data
 
                 # Check for completion indicators
-                if any(phrase in output_buffer_ref[0].lower() for phrase in [
-                    "run finished", "completed successfully", "experiment completed",
-                    "training finished", "federation completed"
-                ]):
+                if any(
+                    phrase in output_buffer_ref[0].lower()
+                    for phrase in [
+                        "run finished",
+                        "completed successfully",
+                        "experiment completed",
+                        "training finished",
+                        "federation completed",
+                    ]
+                ):
                     print("\n🎉 Detected completion signal!")
                     return False, True  # Stop processing, completion detected
 
@@ -497,7 +531,7 @@ class FlowerMultiMachineTmuxRunner:
             # Create local socket
             local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             local_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            local_socket.bind(('127.0.0.1', local_port))
+            local_socket.bind(("127.0.0.1", local_port))
             local_socket.listen(1)
 
             self.tunnel_sockets.append(local_socket)
@@ -509,16 +543,11 @@ class FlowerMultiMachineTmuxRunner:
                     print(f"🔗 Tunnel connection from {addr}")
 
                     # Create channel through SSH
-                    channel = transport.open_channel(
-                        "direct-tcpip",
-                        (remote_host, remote_port),
-                        addr
-                    )
+                    channel = transport.open_channel("direct-tcpip", (remote_host, remote_port), addr)
 
                     # Start forwarding in a separate thread
                     forward_thread = threading.Thread(
-                        target=self.handle_tunnel_connection,
-                        args=(client_socket, channel)
+                        target=self.handle_tunnel_connection, args=(client_socket, channel)
                     )
                     forward_thread.daemon = True
                     forward_thread.start()
@@ -532,7 +561,7 @@ class FlowerMultiMachineTmuxRunner:
         finally:
             try:
                 local_socket.close()
-            except:
+            except Exception:
                 pass
 
     def handle_tunnel_connection(self, client_socket, channel):
@@ -556,7 +585,7 @@ class FlowerMultiMachineTmuxRunner:
             try:
                 client_socket.close()
                 channel.close()
-            except:
+            except Exception:
                 pass
 
     def create_ssh_tunnel_paramiko_fixed(self, ssh_client, remote_host, remote_port, local_port=9092):
@@ -574,7 +603,7 @@ class FlowerMultiMachineTmuxRunner:
             try:
                 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                server_socket.bind(('127.0.0.1', local_port))
+                server_socket.bind(("127.0.0.1", local_port))
                 server_socket.listen(5)  # Allow multiple connections
                 self.tunnel_sockets.append(server_socket)
                 print(f"🔗 Tunnel server socket bound to local port {local_port}")
@@ -594,9 +623,7 @@ class FlowerMultiMachineTmuxRunner:
                             # Create SSH channel
                             try:
                                 channel = transport.open_channel(
-                                    "direct-tcpip",
-                                    (remote_host, remote_port),
-                                    client_addr
+                                    "direct-tcpip", (remote_host, remote_port), client_addr
                                 )
                                 print(f"📡 SSH channel opened to {remote_host}:{remote_port}")
 
@@ -604,7 +631,7 @@ class FlowerMultiMachineTmuxRunner:
                                 connection_thread = threading.Thread(
                                     target=self.handle_tunnel_connection_fixed,
                                     args=(client_socket, channel),
-                                    daemon=True
+                                    daemon=True,
                                 )
                                 connection_thread.start()
 
@@ -612,7 +639,7 @@ class FlowerMultiMachineTmuxRunner:
                                 print(f"❌ Failed to open SSH channel: {e}")
                                 try:
                                     client_socket.close()
-                                except:
+                                except Exception:
                                     pass
 
                         except Exception as e:
@@ -626,7 +653,7 @@ class FlowerMultiMachineTmuxRunner:
                 finally:
                     try:
                         server_socket.close()
-                    except:
+                    except Exception:
                         pass
 
             # Start the tunnel handler thread
@@ -646,7 +673,7 @@ class FlowerMultiMachineTmuxRunner:
                 test_socket.settimeout(2)
                 # Check if the port is bound by trying to bind to it (should fail if tunnel is there)
                 try:
-                    test_socket.bind(('127.0.0.1', local_port))
+                    test_socket.bind(("127.0.0.1", local_port))
                     test_socket.close()
                     print(f"❌ Local port {local_port} is not bound - tunnel not active")
                     return False
@@ -662,6 +689,7 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ SSH tunnel creation error: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -673,7 +701,9 @@ class FlowerMultiMachineTmuxRunner:
 
             while True:
                 # Use select to check for data
-                ready_sockets, _, error_sockets = select.select([client_socket, channel], [], [client_socket, channel], 1.0)
+                ready_sockets, _, error_sockets = select.select(
+                    [client_socket, channel], [], [client_socket, channel], 1.0
+                )
 
                 if error_sockets:
                     break
@@ -710,11 +740,11 @@ class FlowerMultiMachineTmuxRunner:
             print(f"🧹 conn-{connection_id}: Connection closed")
             try:
                 client_socket.close()
-            except:
+            except Exception:
                 pass
             try:
                 channel.close()
-            except:
+            except Exception:
                 pass
 
     def start_flower_superlink_only(self, venv_activate: str):
@@ -730,14 +760,17 @@ class FlowerMultiMachineTmuxRunner:
             # Connect with debugging
             try:
                 self.server_ssh.connect(
-                    self.server_config['host'],
-                    username=self.server_config['username'],
-                    password=self.server_config['password'],
+                    self.server_config["host"],
+                    username=self.server_config["username"],
+                    password=self.server_config["password"],
                     timeout=self.ssh_timeout,
                     auth_timeout=self.ssh_auth_timeout,
-                    banner_timeout=self.ssh_banner_timeout
+                    banner_timeout=self.ssh_banner_timeout,
                 )
-                print(f"✓ SSH connection established (timeout: {self.ssh_timeout}s, auth: {self.ssh_auth_timeout}s, banner: {self.ssh_banner_timeout}s)")
+                print(
+                    f"✓ SSH connection established (timeout: {self.ssh_timeout}s, "
+                    f"auth: {self.ssh_auth_timeout}s, banner: {self.ssh_banner_timeout}s)"
+                )
             except Exception as ssh_error:
                 print(f"❌ SSH connection failed: {ssh_error}")
                 return False
@@ -748,7 +781,7 @@ class FlowerMultiMachineTmuxRunner:
                 "tmux kill-session -t flower_server 2>/dev/null || true",
                 "tmux kill-session -t flower_serverapp 2>/dev/null || true",
                 "pkill -f 'flower-superlink' || true",
-                "pkill -f 'flwr-serverapp' || true"
+                "pkill -f 'flwr-serverapp' || true",
             ]
             for cmd in cleanup_commands:
                 self.server_ssh.exec_command(cmd)
@@ -777,19 +810,19 @@ class FlowerMultiMachineTmuxRunner:
 
             # Create new tmux session for SuperLink
             print("🚀 Creating tmux session for SuperLink...")
-            session_command = f"tmux new-session -d -s flower_server"
+            session_command = "tmux new-session -d -s flower_server"
             stdin, stdout, stderr = self.server_ssh.exec_command(session_command)
             time.sleep(2)
 
             # Send SuperLink command with Process Isolation Mode
             superlink_log = f"{logs_prefix}superlink_{self.timestamp}.log"
             superlink_command = self.get_venv_command(
-                f'cd {self.project_dir} && flower-superlink --isolation process --insecure 2>&1 | tee {superlink_log}',
-                venv_activate
+                f"cd {self.project_dir} && flower-superlink --isolation process --insecure 2>&1 | tee {superlink_log}",
+                venv_activate,
             )
 
             send_command = f'tmux send-keys -t flower_server "{superlink_command}" Enter'
-            print(f"🚀 Starting SuperLink with Process Isolation Mode")
+            print("🚀 Starting SuperLink with Process Isolation Mode")
             stdin, stdout, stderr = self.server_ssh.exec_command(send_command)
 
             # Wait for SuperLink to start
@@ -810,11 +843,11 @@ class FlowerMultiMachineTmuxRunner:
             fleet_port_output = stdout.read().decode()
 
             if superlink_session_output and superlink_pids and fleet_port_output:
-                print(f"✅ SuperLink infrastructure started successfully")
+                print("✅ SuperLink infrastructure started successfully")
                 print(f"📺 SuperLink session: {superlink_session_output.strip()}")
                 print(f"🔧 SuperLink PID: {superlink_pids}")
                 print(f"🌐 Fleet API (port 9092): {fleet_port_output.strip()}")
-                print(f"🔧 ServerApp will be started fresh for each experiment")
+                print("🔧 ServerApp will be started fresh for each experiment")
                 return True
             else:
                 print("❌ Failed to start SuperLink infrastructure")
@@ -823,6 +856,7 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ Error starting SuperLink: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -845,8 +879,9 @@ class FlowerMultiMachineTmuxRunner:
             logs_prefix = "logs/" if self.ensure_logs_directory(self.server_ssh, self.project_dir) else ""
             serverapp_log = f"{logs_prefix}serverapp_exp{experiment_idx + 1}_{self.timestamp}.log"
             serverapp_command = self.get_venv_command(
-                f'cd {self.project_dir} && flwr-serverapp --serverappio-api-address 127.0.0.1:9091 --insecure 2>&1 | tee {serverapp_log}',
-                venv_activate
+                f"cd {self.project_dir} && flwr-serverapp --serverappio-api-address 127.0.0.1:9091 "
+                f"--insecure 2>&1 | tee {serverapp_log}",
+                venv_activate,
             )
 
             send_serverapp_cmd = f'tmux send-keys -t flower_serverapp "{serverapp_command}" Enter'
@@ -881,8 +916,8 @@ class FlowerMultiMachineTmuxRunner:
 
     def start_flower_client_tmux(self, client_config: Dict, venv_activate: str):
         """Start Flower client using tmux session"""
-        client_host = client_config['host']
-        partition_id = client_config.get('partition_id', 0)
+        client_host = client_config["host"]
+        partition_id = client_config.get("partition_id", 0)
         session_name = f"flower_client_{partition_id}"
 
         try:
@@ -892,17 +927,17 @@ class FlowerMultiMachineTmuxRunner:
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             ssh.connect(
                 client_host,
-                username=client_config['username'],
-                password=client_config['password'],
+                username=client_config["username"],
+                password=client_config["password"],
                 timeout=self.ssh_timeout,
                 auth_timeout=self.ssh_auth_timeout,
-                banner_timeout=self.ssh_banner_timeout
+                banner_timeout=self.ssh_banner_timeout,
             )
 
             # Clean up any existing tmux sessions and processes
             cleanup_commands = [
                 f"tmux kill-session -t {session_name} 2>/dev/null || true",
-                "pkill -f 'flower-supernode' || true"
+                "pkill -f 'flower-supernode' || true",
             ]
             for cmd in cleanup_commands:
                 ssh.exec_command(cmd)
@@ -911,7 +946,9 @@ class FlowerMultiMachineTmuxRunner:
             # Ensure logs directory exists
             print(f"📁 Creating logs directory on {client_host}...")
             if not self.ensure_logs_directory(ssh, client_config["project_dir"]):
-                print(f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root")
+                print(
+                    f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root"
+                )
                 logs_prefix = ""
             else:
                 logs_prefix = "logs/"
@@ -920,7 +957,7 @@ class FlowerMultiMachineTmuxRunner:
             print(f"🧹 Cleaning up any existing tunnels on local port {9092 + partition_id}...")
             cleanup_tunnel_processes = [
                 f"pkill -f 'ssh.*localhost:{9092 + partition_id}' || true",
-                f"fuser -k {9092 + partition_id}/tcp 2>/dev/null || true"
+                f"fuser -k {9092 + partition_id}/tcp 2>/dev/null || true",
             ]
             for cmd in cleanup_tunnel_processes:
                 ssh.exec_command(cmd)
@@ -934,13 +971,13 @@ class FlowerMultiMachineTmuxRunner:
             client_port = 9094 + partition_id
             client_log_name = f"{logs_prefix}client_{client_host.split('.')[0]}_{self.timestamp}.log"
             flower_command = self.get_venv_command(
-                f'cd {client_config["project_dir"]} && '
-                f'flower-supernode --insecure '
-                f'--superlink {self.server_config["host"]}:9092 '
-                f'--clientappio-api-address 0.0.0.0:{client_port} '
+                f"cd {client_config['project_dir']} && "
+                f"flower-supernode --insecure "
+                f"--superlink {self.server_config['host']}:9092 "
+                f"--clientappio-api-address 0.0.0.0:{client_port} "
                 f"--node-config 'partition-id={partition_id} num-partitions={len(self.clients_config)}' "
-                f'2>&1 | tee {client_log_name}',
-                venv_activate
+                f"2>&1 | tee {client_log_name}",
+                venv_activate,
             )
 
             # Send the flower command to the tmux session
@@ -998,13 +1035,14 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ Error starting client on {client_host} with tmux: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
     def start_flower_supernode_only(self, client_config: Dict, venv_activate: str):
         """Start only SuperNode with SSH tunnel (infrastructure) - ClientApp will be started per experiment"""
-        client_host = client_config['host']
-        partition_id = client_config.get('partition_id', 0)
+        client_host = client_config["host"]
+        partition_id = client_config.get("partition_id", 0)
         supernode_session = f"flower_supernode_{partition_id}"
 
         try:
@@ -1014,11 +1052,11 @@ class FlowerMultiMachineTmuxRunner:
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             ssh.connect(
                 client_host,
-                username=client_config['username'],
-                password=client_config['password'],
+                username=client_config["username"],
+                password=client_config["password"],
                 timeout=self.ssh_timeout,
                 auth_timeout=self.ssh_auth_timeout,
-                banner_timeout=self.ssh_banner_timeout
+                banner_timeout=self.ssh_banner_timeout,
             )
 
             # Clean up any existing tmux sessions and processes
@@ -1027,7 +1065,7 @@ class FlowerMultiMachineTmuxRunner:
                 f"tmux kill-session -t flower_clientapp_{partition_id} 2>/dev/null || true",
                 "pkill -f 'flower-supernode' || true",
                 "pkill -f 'flwr-clientapp' || true",
-                f"pkill -f 'ssh.*{self.server_config['host']}.*9092' || true"  # Kill existing SSH tunnels to this server
+                f"pkill -f 'ssh.*{self.server_config['host']}.*9092' || true",
             ]
             for cmd in cleanup_commands:
                 ssh.exec_command(cmd)
@@ -1036,7 +1074,9 @@ class FlowerMultiMachineTmuxRunner:
             # Ensure logs directory exists
             print(f"📁 Creating logs directory on {client_host}...")
             if not self.ensure_logs_directory(ssh, client_config["project_dir"]):
-                print(f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root")
+                print(
+                    f"⚠️ Warning: Could not create logs directory on {client_host}, logs will be saved in project root"
+                )
                 logs_prefix = ""
             else:
                 logs_prefix = "logs/"
@@ -1054,29 +1094,29 @@ class FlowerMultiMachineTmuxRunner:
 
             # SuperNode command with SSH tunnel
             supernode_command = self.get_venv_command(
-                f'cd {client_config["project_dir"]} && '
-                f'ssh -f -N -L {local_tunnel_port}:{self.server_config["host"]}:9092 '
-                f'-o StrictHostKeyChecking=no '
-                f'-o UserKnownHostsFile=/dev/null '
-                f'-o ConnectTimeout={self.ssh_timeout} '
-                f'-o PasswordAuthentication=yes '
-                f'-o NumberOfPasswordPrompts=3 '
-                f'-o ServerAliveInterval=30 '
-                f'-o ServerAliveCountMax=3 '
-                f'{self.server_config["username"]}@{self.server_config["host"]} && '
-                f'sleep 3 && '
-                f'flower-supernode --isolation process --insecure '
-                f'--superlink localhost:{local_tunnel_port} '
-                f'--clientappio-api-address 0.0.0.0:{client_port} '
+                f"cd {client_config['project_dir']} && "
+                f"ssh -f -N -L {local_tunnel_port}:{self.server_config['host']}:9092 "
+                f"-o StrictHostKeyChecking=no "
+                f"-o UserKnownHostsFile=/dev/null "
+                f"-o ConnectTimeout={self.ssh_timeout} "
+                f"-o PasswordAuthentication=yes "
+                f"-o NumberOfPasswordPrompts=3 "
+                f"-o ServerAliveInterval=30 "
+                f"-o ServerAliveCountMax=3 "
+                f"{self.server_config['username']}@{self.server_config['host']} && "
+                f"sleep 3 && "
+                f"flower-supernode --isolation process --insecure "
+                f"--superlink localhost:{local_tunnel_port} "
+                f"--clientappio-api-address 0.0.0.0:{client_port} "
                 f"--node-config 'partition-id={partition_id} num-partitions={len(self.clients_config)}' "
-                f'2>&1 | tee {supernode_log}',
-                venv_activate
+                f"2>&1 | tee {supernode_log}",
+                venv_activate,
             )
 
             # Send SuperNode command to tmux session
             send_supernode_cmd = f'tmux send-keys -t {supernode_session} "{supernode_command}" Enter'
             stdin, stdout, stderr = ssh.exec_command(send_supernode_cmd)
-            print(f"🚀 Started SuperNode infrastructure")
+            print("🚀 Started SuperNode infrastructure")
             print(f"💡 SSH tunnel will prompt for password in tmux session '{supernode_session}' on {client_host}")
             print(f"📋 To enter password: ssh {client_host} && tmux attach -t {supernode_session}")
 
@@ -1101,7 +1141,7 @@ class FlowerMultiMachineTmuxRunner:
                 print(f"📺 SuperNode session: {supernode_session_output.strip()}")
                 print(f"🔧 SSH tunnel: Active on local port {local_tunnel_port} (PID: {tunnel_pid})")
                 print(f"🔧 SuperNode PID: {supernode_pids}")
-                print(f"🔧 ClientApp will be started fresh for each experiment")
+                print("🔧 ClientApp will be started fresh for each experiment")
                 self.ssh_connections.append(ssh)
                 return True
             else:
@@ -1112,6 +1152,7 @@ class FlowerMultiMachineTmuxRunner:
         except Exception as e:
             print(f"❌ Error starting SuperNode infrastructure on {client_host}: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -1119,8 +1160,8 @@ class FlowerMultiMachineTmuxRunner:
         """Start fresh ClientApp for a specific experiment"""
         try:
             client_config = self.clients_config[client_idx]
-            partition_id = client_config.get('partition_id', 0)
-            client_host = client_config['host']
+            partition_id = client_config.get("partition_id", 0)
+            client_host = client_config["host"]
             client_port = 9094 + partition_id
             clientapp_session = f"flower_clientapp_{partition_id}"
 
@@ -1140,12 +1181,14 @@ class FlowerMultiMachineTmuxRunner:
 
             # Start fresh ClientApp
             logs_prefix = "logs/" if self.ensure_logs_directory(ssh, client_config["project_dir"]) else ""
-            clientapp_log = f"{logs_prefix}clientapp_{client_host.split('.')[0]}_exp{experiment_idx + 1}_{self.timestamp}.log"
+            clientapp_log = (
+                f"{logs_prefix}clientapp_{client_host.split('.')[0]}_exp{experiment_idx + 1}_{self.timestamp}.log"
+            )
             clientapp_command = self.get_venv_command(
-                f'cd {client_config["project_dir"]} && '
-                f'flwr-clientapp --clientappio-api-address 127.0.0.1:{client_port} --insecure '
-                f'2>&1 | tee {clientapp_log}',
-                venv_activate
+                f"cd {client_config['project_dir']} && "
+                f"flwr-clientapp --clientappio-api-address 127.0.0.1:{client_port} --insecure "
+                f"2>&1 | tee {clientapp_log}",
+                venv_activate,
             )
 
             send_clientapp_cmd = f'tmux send-keys -t {clientapp_session} "{clientapp_command}" Enter'
@@ -1158,7 +1201,10 @@ class FlowerMultiMachineTmuxRunner:
             clientapp_pids = stdout.read().decode().strip()
 
             if clientapp_pids:
-                print(f"✅ Fresh ClientApp started for experiment {experiment_idx + 1} on {client_host} (PID: {clientapp_pids})")
+                print(
+                    f"✅ Fresh ClientApp started for experiment {experiment_idx + 1} "
+                    f"on {client_host} (PID: {clientapp_pids})"
+                )
                 return True
             else:
                 print(f"❌ Failed to start ClientApp for experiment {experiment_idx + 1} on {client_host}")
@@ -1172,7 +1218,7 @@ class FlowerMultiMachineTmuxRunner:
         """Stop all ClientApps after experiment"""
         try:
             for i, ssh in enumerate(self.ssh_connections):
-                partition_id = self.clients_config[i].get('partition_id', 0)
+                partition_id = self.clients_config[i].get("partition_id", 0)
                 clientapp_session = f"flower_clientapp_{partition_id}"
                 ssh.exec_command(f"tmux kill-session -t {clientapp_session} 2>/dev/null || true")
                 ssh.exec_command("pkill -f 'flwr-clientapp' || true")
@@ -1189,11 +1235,7 @@ class FlowerMultiMachineTmuxRunner:
             print(f"🔍 Checking federation configuration in {pyproject_path} on server...")
 
             # More thorough check for pyproject.toml file
-            check_commands = [
-                f"ls -la {pyproject_path}",
-                f"file {pyproject_path}",
-                f"head -5 {pyproject_path}"
-            ]
+            check_commands = [f"ls -la {pyproject_path}", f"file {pyproject_path}", f"head -5 {pyproject_path}"]
 
             print("🔍 Detailed file check:")
             for cmd in check_commands:
@@ -1231,7 +1273,7 @@ class FlowerMultiMachineTmuxRunner:
             # Check if federation configuration exists
             federation_section = f"[tool.flwr.federations.{federation_name}]"
             if federation_section not in content:
-                print(f"📝 Adding federation configuration to existing pyproject.toml on server...")
+                print("📝 Adding federation configuration to existing pyproject.toml on server...")
 
                 # Add federation configuration
                 federation_config = f"""
@@ -1260,18 +1302,19 @@ insecure = true
         except Exception as e:
             print(f"⚠️ Error checking federation configuration: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
-            print(f"📋 Please manually add this to your pyproject.toml on the server:")
+            print("📋 Please manually add this to your pyproject.toml on the server:")
             print(f"    [tool.flwr.federations.{federation_name}]")
-            print(f"    address = \"127.0.0.1:9093\"")
-            print(f"    insecure = true")
+            print('    address = "127.0.0.1:9093"')
+            print("    insecure = true")
             return False
 
     def run_flower_app(self, venv_activate: str, federation_name: str = "multi-machine"):
         """Run the Flower App with intelligent timeout and process monitoring"""
         try:
             print(f"🚀 Running Flower App on federation '{federation_name}'...")
-            print(f"🔍 Note: Federation will connect to SuperLink REST API at localhost:9093")
+            print("🔍 Note: Federation will connect to SuperLink REST API at localhost:9093")
 
             # Ensure federation configuration exists
             if not self.ensure_federation_config(federation_name):
@@ -1291,15 +1334,14 @@ insecure = true
                 print("✅ SuperLink REST API is accessible")
 
             run_command = self.get_venv_command(
-                f'cd {self.project_dir} && flwr run . {federation_name} --stream',
-                venv_activate
+                f"cd {self.project_dir} && flwr run . {federation_name} --stream", venv_activate
             )
 
             print(f"🔍 Executing: {run_command}")
 
             # Use invoke_shell for interactive streaming
             channel = self.server_ssh.invoke_shell()
-            channel.send(run_command + '\n')
+            channel.send(run_command + "\n")
 
             print("📊 Flower App Output:")
             print("=" * 50)
@@ -1309,8 +1351,8 @@ insecure = true
             silence_counter = 0
             total_runtime = 0
             max_silence_time = 1800  # 15 minutes of silence before checking processes
-            max_total_time = 14400   # 4 hours maximum total runtime
-            check_interval = 30      # Check every 30 seconds
+            max_total_time = 14400  # 4 hours maximum total runtime
+            check_interval = 30  # Check every 30 seconds
 
             while total_runtime < max_total_time:
                 data_received = False
@@ -1318,7 +1360,7 @@ insecure = true
                 # Check for new output
                 if channel.recv_ready():
                     try:
-                        data = channel.recv(4096).decode('utf-8', errors='replace')
+                        data = channel.recv(4096).decode("utf-8", errors="replace")
                         if data:
                             output_buffer += data
                             print(data, end="")
@@ -1327,8 +1369,12 @@ insecure = true
 
                             # Check for completion indicators
                             completion_phrases = [
-                                "run finished", "completed successfully", "experiment completed",
-                                "training finished", "federation completed", "fl training completed",
+                                "run finished",
+                                "completed successfully",
+                                "experiment completed",
+                                "training finished",
+                                "federation completed",
+                                "fl training completed",
                             ]
                             if any(phrase in output_buffer.lower() for phrase in completion_phrases):
                                 print("\n🎉 Detected completion signal in output!")
@@ -1345,7 +1391,7 @@ insecure = true
                     remaining_output = ""
                     while channel.recv_ready():
                         try:
-                            remaining_data = channel.recv(4096).decode('utf-8', errors='replace')
+                            remaining_data = channel.recv(4096).decode("utf-8", errors="replace")
                             remaining_output += remaining_data
                             print(remaining_data, end="")
                         except UnicodeDecodeError:
@@ -1371,7 +1417,10 @@ insecure = true
 
                 # Periodic status updates and process checks
                 if total_runtime % check_interval == 0:
-                    print(f"\n⏱️ Runtime: {total_runtime//60}m{total_runtime%60}s, Silence: {silence_counter//60}m{silence_counter%60}s")
+                    print(
+                        f"\n⏱️ Runtime: {total_runtime // 60}m{total_runtime % 60}s, "
+                        f"Silence: {silence_counter // 60}m{silence_counter % 60}s"
+                    )
 
                     # Check if FL processes are still running
                     processes_running = self.check_fl_processes_running()
@@ -1381,7 +1430,7 @@ insecure = true
 
                     # If silent for too long, do detailed process check
                     if silence_counter > max_silence_time:
-                        print(f"⚠️ No output for {silence_counter//60} minutes - checking process status...")
+                        print(f"⚠️ No output for {silence_counter // 60} minutes - checking process status...")
 
                         # Check if flwr run process is still active
                         check_flwr_process = "pgrep -f 'flwr run' || echo 'no-process'"
@@ -1397,7 +1446,7 @@ insecure = true
 
             # Handle timeout scenarios
             if total_runtime >= max_total_time:
-                print(f"\n⏰ Maximum runtime reached ({max_total_time//3600}h {(max_total_time%3600)//60}m)")
+                print(f"\n⏰ Maximum runtime reached ({max_total_time // 3600}h {(max_total_time % 3600) // 60}m)")
                 print("🔍 Checking if processes completed successfully...")
 
                 # Final process check
@@ -1414,6 +1463,7 @@ insecure = true
         except Exception as e:
             print(f"❌ Error running Flower App: {e}")
             import traceback
+
             print(f"🔍 Traceback: {traceback.format_exc()}")
             return False
 
@@ -1431,14 +1481,17 @@ insecure = true
                     stdin, stdout, stderr = ssh.exec_command("pgrep -f 'flwr-clientapp'")
                     if stdout.read().decode().strip():
                         clientapps_running += 1
-                except:
+                except Exception:
                     pass
 
             # Consider FL running if ServerApp is running and at least one ClientApp is running
             fl_active = serverapp_running and clientapps_running > 0
 
             if fl_active:
-                print(f"🔄 FL processes active: ServerApp={serverapp_running}, ClientApps={clientapps_running}/{len(self.ssh_connections)}")
+                print(
+                    f"🔄 FL processes active: ServerApp={serverapp_running}, "
+                    f"ClientApps={clientapps_running}/{len(self.ssh_connections)}"
+                )
 
             return fl_active
 
@@ -1454,7 +1507,7 @@ insecure = true
         try:
             self.stop_serverapp()
             self.stop_clientapps()
-        except:
+        except Exception:
             pass
 
         # Cleanup server infrastructure (SuperLink)
@@ -1464,7 +1517,7 @@ insecure = true
                     "tmux kill-session -t flower_server 2>/dev/null || true",
                     "tmux kill-session -t flower_serverapp 2>/dev/null || true",
                     "pkill -f 'flower-superlink' || true",
-                    "pkill -f 'flwr-serverapp' || true"
+                    "pkill -f 'flwr-serverapp' || true",
                 ]
                 for cmd in cleanup_commands:
                     self.server_ssh.exec_command(cmd)
@@ -1476,7 +1529,7 @@ insecure = true
         # Cleanup client infrastructure (SuperNode + SSH tunnels)
         for i, ssh in enumerate(self.ssh_connections):
             try:
-                partition_id = self.clients_config[i].get('partition_id', 0)
+                partition_id = self.clients_config[i].get("partition_id", 0)
                 local_tunnel_port = 9092 + partition_id
                 cleanup_commands = [
                     f"tmux kill-session -t flower_supernode_{partition_id} 2>/dev/null || true",
@@ -1484,14 +1537,14 @@ insecure = true
                     "pkill -f 'flower-supernode' || true",
                     "pkill -f 'flwr-clientapp' || true",
                     f"pkill -f 'ssh.*-L {local_tunnel_port}:{self.server_config['host']}:9092' || true",
-                    f"fuser -k {local_tunnel_port}/tcp 2>/dev/null || true"
+                    f"fuser -k {local_tunnel_port}/tcp 2>/dev/null || true",
                 ]
                 for cmd in cleanup_commands:
                     ssh.exec_command(cmd)
                 ssh.close()
-                print(f"✓ SuperNode infrastructure and SSH tunnel stopped on client {i+1}")
+                print(f"✓ SuperNode infrastructure and SSH tunnel stopped on client {i + 1}")
             except Exception as e:
-                print(f"⚠️ Error cleaning up client {i+1}: {e}")
+                print(f"⚠️ Error cleaning up client {i + 1}: {e}")
 
         print("✅ Infrastructure cleanup completed")
 
@@ -1548,7 +1601,7 @@ insecure = true
                     tunnel_status = stdout.read().decode().strip()
                     if tunnel_status:
                         active_tunnels += 1
-                except:
+                except Exception:
                     pass
 
             print(f"🌻 Active SuperNode sessions: {active_supernodes}/{len(self.ssh_connections)}")
@@ -1575,7 +1628,10 @@ insecure = true
                     serverapp_pid = stdout.read().decode().strip()
 
                     if superlink_pid and serverapp_pid:
-                        print(f"📈 Server Process Isolation Mode running (SuperLink: {superlink_pid}, ServerApp: {serverapp_pid})")
+                        print(
+                            f"📈 Server Process Isolation Mode running "
+                            f"(SuperLink: {superlink_pid}, ServerApp: {serverapp_pid})"
+                        )
                     elif superlink_pid:
                         print(f"⚠️ SuperLink running ({superlink_pid}) but ServerApp not found!")
                     elif serverapp_pid:
@@ -1587,7 +1643,7 @@ insecure = true
                 # Check SuperNode and ClientApp status
                 active_supernodes = 0
                 active_clientapps = 0
-                for i, ssh in enumerate(self.ssh_connections):
+                for _i, ssh in enumerate(self.ssh_connections):
                     try:
                         # Check SuperNode process
                         stdin, stdout, stderr = ssh.exec_command("pgrep -f 'flower-supernode'")
@@ -1600,7 +1656,7 @@ insecure = true
                         clientapp_pid = stdout.read().decode().strip()
                         if clientapp_pid:
                             active_clientapps += 1
-                    except:
+                    except Exception:
                         pass
 
                 print(f"🌻 Active SuperNodes: {active_supernodes}/{len(self.ssh_connections)}")
@@ -1625,7 +1681,7 @@ insecure = true
         print("🔍 Debug: Configuration file paths:")
         print(f"   Server config file: {self.server_config.get('config_file', 'NOT SET')}")
         for i, client_config in enumerate(self.clients_config):
-            print(f"   Client {i+1} config file: {client_config.get('config_file', 'NOT SET')}")
+            print(f"   Client {i + 1} config file: {client_config.get('config_file', 'NOT SET')}")
         print("=" * 70)
 
         # Determine number of experiments
@@ -1651,7 +1707,7 @@ insecure = true
         # Start client infrastructure (SuperNode only)
         success_count = 0
         for i, client_config in enumerate(self.clients_config):
-            print(f"Starting SuperNode infrastructure {i+1}/{len(self.clients_config)} on {client_config['host']}...")
+            print(f"Starting SuperNode infrastructure {i + 1}/{len(self.clients_config)} on {client_config['host']}...")
             print(f"💡 To manually enter SSH password, connect to {client_config['host']} and run:")
             print(f"   tmux attach -t flower_supernode_{i}")
             print()
@@ -1682,7 +1738,7 @@ insecure = true
         # Run experiments sequentially
         successful_experiments = 0
         for experiment_idx in range(num_experiments):
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"🧪 Starting Experiment {experiment_idx + 1}/{num_experiments}")
 
             if is_sequential:
@@ -1696,7 +1752,7 @@ insecure = true
                         if "seed" in label_path:
                             seed_part = label_path.split("seed")[1].split("/")[0][:2]
                             experiment_info = f"Seed {seed_part}"
-                except:
+                except Exception:
                     pass
 
                 print(f"📊 Cross-validation fold: {experiment_info}")
@@ -1739,7 +1795,10 @@ insecure = true
                     clientapp_success_count += 1
 
             if clientapp_success_count != len(self.clients_config):
-                print(f"❌ Only {clientapp_success_count}/{len(self.clients_config)} ClientApps started for experiment {experiment_idx + 1}")
+                print(
+                    f"❌ Only {clientapp_success_count}/{len(self.clients_config)} "
+                    f"ClientApps started for experiment {experiment_idx + 1}"
+                )
                 self.stop_serverapp()
                 self.stop_clientapps()
                 continue
@@ -1782,11 +1841,11 @@ insecure = true
 
             # Add delay between experiments to allow cleanup
             if is_sequential and experiment_idx < num_experiments - 1:
-                print(f"⏳ Waiting 10 seconds before next experiment...")
+                print("⏳ Waiting 10 seconds before next experiment...")
                 time.sleep(10)
 
-        print(f"\n{'='*70}")
-        print(f"🎯 Sequential Experiment Summary:")
+        print(f"\n{'=' * 70}")
+        print("🎯 Sequential Experiment Summary:")
         print(f"   Total experiments: {num_experiments}")
         print(f"   Successful: {successful_experiments}")
         print(f"   Failed: {num_experiments - successful_experiments}")
@@ -1811,18 +1870,17 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(
         description="Flower Multi-Machine Federated Learning Runner",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "config_file",
-        help="Path to YAML configuration file (e.g., fl_server.yaml)"
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("config_file", help="Path to YAML configuration file (e.g., fl_server.yaml)")
 
     args = parser.parse_args()
 
     # Load configuration
     try:
         print(f"📄 Loading configuration from {args.config_file}...")
-        from multi_config import load_config_from_yaml, get_server_config_dict, get_clients_config_dict
+        from multi_config import get_clients_config_dict, get_server_config_dict, load_config_from_yaml
+
         config = load_config_from_yaml(args.config_file)
 
         # Validate multi-machine configuration
@@ -1843,6 +1901,7 @@ def main():
     except Exception as e:
         print(f"❌ Error loading configuration: {e}")
         import traceback
+
         print(f"🔍 Traceback: {traceback.format_exc()}")
         return
 
@@ -1860,7 +1919,9 @@ def main():
     ssh_timeout = ssh_config.timeout if ssh_config else 30
     ssh_auth_timeout = ssh_config.auth_timeout if ssh_config else 30
     ssh_banner_timeout = ssh_config.banner_timeout if ssh_config else 30
-    runner = FlowerMultiMachineTmuxRunner(server_config, clients_config, project_dir, ssh_timeout, ssh_auth_timeout, ssh_banner_timeout)
+    runner = FlowerMultiMachineTmuxRunner(
+        server_config, clients_config, project_dir, ssh_timeout, ssh_auth_timeout, ssh_banner_timeout
+    )
 
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
@@ -1902,9 +1963,11 @@ def main():
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         print(f"🔍 Traceback: {traceback.format_exc()}")
     finally:
         runner.cleanup_tmux_sessions()
+
 
 if __name__ == "__main__":
     main()
