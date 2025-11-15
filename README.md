@@ -19,102 +19,28 @@
 This project supports both centralized and federated learning approaches for Alzheimer's Disease classification.
 
 ### Centralized Training
-In centralized training, all MRI data from different institutions is aggregated in a single location for model training.
 
-```mermaid
-flowchart LR
-    subgraph "Centralized Training System"
-        direction TB
+In centralized training, all MRI data from different institutions is aggregated in a single central server for model training. The data is processed and used to train a single global model without any privacy-preserving mechanisms.
 
-        %% Centralized Training Process
-        subgraph TrainingProcess["Central Server"]
-            direction LR
-            A["All MRI Data<br/>(AD, MCI, CN)"] -->|Data Input| B["Central Server"]
-            B -->|Training| C["Model Training<br/>(3D CNN)"]
-            C -->|Output| D["Global Model"]
-            D -->|Prediction| E["Predictions"]
-        end
-
-    end
-
-    %% Styling
-    classDef data fill:#ff9999,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef training fill:#99ff99,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef updates fill:#ffcc66,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef server fill:#9999ff,stroke:#333,stroke-width:2px,border-radius:10px
-
-    class A data
-    class B training
-    class C updates
-    class D,E server
-
-    %% Arrow and layout styling
-    linkStyle default stroke:#666,stroke-width:2px
-    linkStyle 0,1,2,3 stroke:#666,stroke-width:2px,label-fill:#fff
-```
+<div align="center" style="background-color: white; padding: 20px; border-radius: 8px;">
+  <img src="docs/images/centralised-training.png" alt="Centralized Training Architecture" width="80%">
+</div>
 
 ### Federated Learning
-In federated learning, data remains distributed across participating institutions. Each client trains locally and only shares model updates, preserving data privacy.
 
-```mermaid
-flowchart LR
- subgraph C1["Client 1"]
-        B1["Local Training"]
-        A1["Local MRI Data<br>(Institution 1)"]
-        C1U["Model Updates"]
-  end
- subgraph C2["Client 2"]
-        B2["Local Training"]
-        A2["Local MRI Data<br>(Institution 2)"]
-        C2U["Model Updates"]
-  end
- subgraph CentralServer["Central Server"]
-    direction TB
-        AG["Federated Aggregation<br>(FedAvg/SecAgg+)"]
-        FS["Federation Server<br>(Flower Framework)"]
-        GM["Global Model"]
-        MD["Model Distribution"]
-  end
- subgraph subGraph3["Federated Learning System with 2 Clients"]
-    direction LR
-        C1
-        C2
-        CentralServer
-  end
-    A1 --> B1
-    B1 --> C1U
-    A2 --> B2
-    B2 --> C2U
-    FS --> AG
-    AG --> GM
-    GM --> MD
-    C1U -- Send Updates --> FS
-    C2U -- Send Updates --> FS
-    MD -- Distribute Model --> B1 & B2
+In federated learning, data remains distributed across participating institutions, ensuring strict privacy preservation. Each client trains locally on their own data and only shares encrypted model updates with the central server, never exposing raw patient data. This project implements **Adaptive Local Differential Privacy (ALDP)**, a novel contribution that dynamically adjusts privacy parameters during training to achieve superior accuracy while maintaining strong privacy guarantees.
 
-     B1:::training
-     A1:::data
-     C1U:::updates
-     B2:::training
-     A2:::data
-     C2U:::updates
-     AG:::server
-     FS:::server
-     GM:::server
-     MD:::server
-    classDef data fill:#ff9999,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef training fill:#99ff99,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef updates fill:#ffcc66,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef server fill:#9999ff,stroke:#333,stroke-width:2px,border-radius:10px
-    classDef subg fill:#e0e0e0,stroke:#333,stroke-width:2px,border-radius:10px
-    linkStyle 0 stroke:#666,stroke-width:2px,label-fill:#fff,fill:none
-    linkStyle 1 stroke:#666,stroke-width:2px,label-fill:#fff,fill:none
-    linkStyle 2 stroke:#666,stroke-width:2px,label-fill:#fff,fill:none
-    linkStyle 3 stroke:#666,stroke-width:2px,label-fill:#fff,fill:none
+#### Key Features:
+- **Privacy-Preserving**: Patient data never leaves the institution
+- **Adaptive Differential Privacy**: Dynamic noise adjustment for optimal utility-privacy trade-off
+- **Secure Aggregation**: Encrypted model updates using SecAgg+ protocol
+- **Multi-Strategy Support**: FedAvg, FedProx, and custom ALDP implementations
 
+<div align="center" style="background-color: white; padding: 20px; border-radius: 8px;">
+  <img src="docs/images/fl-dp.png" alt="Federated Learning with Adaptive Differential Privacy" width="85%">
+</div>
 
-
-```
+<p align="center"><em>Overview of the Federated Learning system with Adaptive Local Differential Privacy - a key novelty of this research</em></p>
 
 
 <details>
