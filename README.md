@@ -22,9 +22,9 @@ This project supports both centralized and federated learning approaches for Alz
 
 In centralized training, all MRI data from different institutions is aggregated in a single central server for model training. The data is processed and used to train a single global model without any privacy-preserving mechanisms.
 
-<div align="center" style="background-color: white; padding: 20px; border-radius: 8px;">
-  <img src="docs/images/centralised-training.png" alt="Centralized Training Architecture" width="80%">
-</div>
+<p align="center">
+  <img src="docs/images/centralised-training.png" alt="Centralized Training Architecture" width="80%" style="padding: 10px; background-color: white; border: 1px solid #ddd;"/>
+</p>
 
 ### Federated Learning
 
@@ -36,11 +36,11 @@ In federated learning, data remains distributed across participating institution
 - **Secure Aggregation**: Encrypted model updates using SecAgg+ protocol
 - **Multi-Strategy Support**: FedAvg, FedProx, and custom ALDP implementations
 
-<div align="center" style="background-color: white; padding: 20px; border-radius: 8px;">
-  <img src="docs/images/fl-dp.png" alt="Federated Learning with Adaptive Differential Privacy" width="85%">
-</div>
-
-<p align="center"><em>Overview of the Federated Learning system with Adaptive Local Differential Privacy - a key novelty of this research</em></p>
+<p align="center">
+  <img src="docs/images/fl-dp.png" alt="Federated Learning with Adaptive Differential Privacy" width="85%" style="padding: 10px; background-color: white; border: 1px solid #ddd;"/>
+  <br>
+  <em>Overview of the Federated Learning system with Adaptive Local Differential Privacy - a key novelty of this research</em>
+</p>
 
 
 <details>
