@@ -12,6 +12,8 @@
 [![GitHub stars](https://img.shields.io/github/stars/Tin-Hoang/fl-adni-classification?style=flat-square)](https://github.com/Tin-Hoang/fl-adni-classification/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/Tin-Hoang/fl-adni-classification?style=flat-square)](https://github.com/Tin-Hoang/fl-adni-classification/network/members)
 
+[![arXiv](https://img.shields.io/badge/arXiv-2603.15901-b31b1b.svg?style=flat-square)](https://arxiv.org/abs/2603.15901)
+
 </div>
 
 ***Abstract:** Federated learning enables medical institutions to collaboratively train diagnostic AI models while maintaining strict patient data privacy. This research advances the field by focusing on Alzheimer’s disease classification using 3D MRI scans from the ADNI dataset. We introduce a novel site-aware data partitioning method that realistically mirrors multi-institutional data boundaries and heterogeneity, addressing limitations of previous approaches. The proposed Adaptive Local Differential Privacy (ALDP) mechanism dynamically adjusts its privacy parameters during training, resulting in significant improvements in accuracy and stability compared to traditional fixed-noise methods. Through comprehensive benchmarking and ablation studies, the work demonstrates that federated optimisation algorithms like FedProx can achieve performance equal to or better than centralized models, with ALDP reaching up to 80.4% accuracy, outperforming standard local DP approaches by 5–7 percentage points. These findings provide practical standards and guidelines for deploying privacy-compliant collaborative medical AI in real-world healthcare settings.*
@@ -412,20 +414,19 @@ python scripts/preprocess_mri.py --input input_folder
 
 ## Citation
 
-If you use this code or methodology in your research, please cite:
+If you use this work, please cite:
 
 ```bibtex
-@mastersthesis{hoang2025federated,
-  title={Federated Learning for Privacy-Preserving Alzheimer's Disease Classification on 3D MRI Data},
-  author={Hoang, Tin},
-  year={2025},
-  school={University of Surrey},
-  type={MSc Dissertation},
-  note={Introduces Adaptive Local Differential Privacy (ALDP) for federated learning on medical imaging data},
-  url={https://github.com/Tin-Hoang/fl-adni-classification}
+@misc{hoang2026federatedlearningprivacypreservingmedical,
+  title={Federated Learning for Privacy-Preserving Medical AI},
+  author={Tin Hoang},
+  year={2026},
+  eprint={2603.15901},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2603.15901},
 }
 ```
-*\(\*\) arXiv link on the way...*
 
 ## License
 
