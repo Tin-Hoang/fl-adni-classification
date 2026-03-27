@@ -12,6 +12,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/Tin-Hoang/fl-adni-classification?style=flat-square)](https://github.com/Tin-Hoang/fl-adni-classification/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/Tin-Hoang/fl-adni-classification?style=flat-square)](https://github.com/Tin-Hoang/fl-adni-classification/network/members)
 
+[![Weights & Biases](https://img.shields.io/badge/W%26B-Experiments-FFBE00?style=flat-square&logo=weightsandbiases&logoColor=black)](https://wandb.ai/tin-hoang/fl-adni-classification)
 [![arXiv](https://img.shields.io/badge/arXiv-2603.15901-b31b1b.svg?style=flat-square)](https://arxiv.org/abs/2603.15901)
 
 </div>
